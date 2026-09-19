@@ -30,6 +30,15 @@ func coerceStringValue(stringValue string, valueType reflect.Type) (interface{},
 		return strconv.Atoi(stringValue)
 	case reflect.Uint, reflect.Uint16, reflect.Uint64:
 		return strconv.ParseUint(stringValue, 10, 64)
+	case reflect.Float32:
+		f, err := strconv.ParseFloat(stringValue, 32)
+		if err != nil {
+			return nil, err
+		}
+
+		return float32(f), nil
+	case reflect.Float64:
+		return strconv.ParseFloat(stringValue, 64)
 	case reflect.Slice:
 		strValues := strings.Split(stringValue, ",")
 		values := make([]interface{}, len(strValues))

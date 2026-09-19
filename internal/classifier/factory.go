@@ -3,9 +3,11 @@ package classifier
 import (
 	"fmt"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/database/search"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
-	"github.com/bitmagnet-io/bitmagnet/internal/tmdb"
+	"github.com/spencercnorton/bitagent/internal/animedb"
+	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
+	"github.com/spencercnorton/bitagent/internal/database/search"
+	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/tmdb"
 	"go.uber.org/fx"
 )
 
@@ -15,6 +17,16 @@ type Params struct {
 	TmdbConfig tmdb.Config
 	Search     lazy.Lazy[search.Search]
 	TmdbClient lazy.Lazy[tmdb.Client]
+	// LlmMatch is optional — provided by llmmatchfx. `optional:"true"` so
+	// the classifier still builds if the module is absent (e.g. tests).
+	LlmMatch *llmmatch.Client `optional:"true"`
+	// MatchDecisionObserver is optional. The capture-backed implementation is
+	// wired by the application when decision-ledger persistence is enabled.
+	MatchDecisionObserver MatchDecisionObserver `optional:"true"`
+	// AnimeResolver is optional — provided by animedbfx. When absent (e.g.
+	// tests without the module) the factory substitutes a seed-only resolver so
+	// the curated anime aliases still resolve.
+	AnimeResolver *animedb.Resolver `optional:"true"`
 }
 
 type Result struct {
@@ -36,6 +48,13 @@ func New(params Params) Result {
 			return nil, err
 		}
 
+		// The anime backbone must always resolve the curated seed set, even when
+		// the animedbfx module (and its DB-backed resolver) is absent.
+		animeResolver := params.AnimeResolver
+		if animeResolver == nil {
+			animeResolver = animedb.NewSeedResolver()
+		}
+
 		return compiler{
 			options: []compilerOption{
 				compilerFeatures(defaultFeatures),
@@ -43,10 +62,21 @@ func New(params Params) Result {
 			},
 			dependencies: dependencies{
 				search: localSearchSemaphore{
-					search:    localSearch{s},
+					search: localSearch{
+						Search:            s,
+						altTitleMatch:     params.Config.AltTitleMatch,
+						fuzzyMatchEnabled: params.Config.FuzzyMatchEnabled,
+					},
 					semaphore: make(chan struct{}, 1),
 				},
-				tmdbClient: tmdbClient,
+				tmdbClient:            tmdbClient,
+				llmMatch:              params.LlmMatch,
+				matchDecisionObserver: params.MatchDecisionObserver,
+				animeResolver:         animeResolver,
+				fuzzyMatchEnabled:     params.Config.FuzzyMatchEnabled,
+				altTitleMatch:         params.Config.AltTitleMatch,
+				singleEpisodeMaxBytes: params.Config.SingleEpisodeMaxBytes,
+				parseNoiseV2:          params.Config.ParseNoiseV2,
 			},
 		}, nil
 	})

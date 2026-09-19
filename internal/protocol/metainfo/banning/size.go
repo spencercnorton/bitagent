@@ -3,7 +3,7 @@ package banning
 import (
 	"errors"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/metainfo"
+	"github.com/spencercnorton/bitagent/internal/protocol/metainfo"
 )
 
 type sizeChecker struct {

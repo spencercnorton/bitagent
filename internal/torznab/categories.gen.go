@@ -89,6 +89,10 @@ var categoriesMap = map[int]Category{
 				ID:   5045,
 				Name: "TV/UHD",
 			},
+			{
+				ID:   5070,
+				Name: "TV/Anime",
+			},
 		},
 	},
 	5030: {
@@ -104,6 +108,11 @@ var categoriesMap = map[int]Category{
 	5045: {
 		ID:     5045,
 		Name:   "TV/UHD",
+		Subcat: []Subcategory{},
+	},
+	5070: {
+		ID:     5070,
+		Name:   "TV/Anime",
 		Subcat: []Subcategory{},
 	},
 	6000: {
@@ -166,6 +175,7 @@ var (
 	CategoryTVSD           = categoriesMap[5030]
 	CategoryTVHD           = categoriesMap[5040]
 	CategoryTVUHD          = categoriesMap[5045]
+	CategoryTVAnime        = categoriesMap[5070]
 	CategoryXXX            = categoriesMap[6000]
 	CategoryXXXOther       = categoriesMap[6070]
 	CategoryBooks          = categoriesMap[7000]

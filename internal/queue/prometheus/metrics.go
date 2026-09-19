@@ -4,15 +4,22 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/database/dao"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/telemetry/dualemit"
 	"go.uber.org/zap"
 )
 
-// namespace used in fully-qualified metrics names.
-const namespace = "bitmagnet_queue"
+// Namespace for the queue metrics. Kept as a compound string for the
+// scrape-time-computed tasksQueuedDesc below; during the BitAgent
+// Phase 2 dual-emit window we also emit the legacy `bitmagnet_queue`
+// family so any surviving dashboards keep working.
+const (
+	namespace       = "bitagent_queue"
+	legacyNamespace = "bitmagnet_queue"
+)
 
 // queueMetricsCollector gathers queue metrics.
 // It implements prometheus.Collector interface.
@@ -23,6 +30,14 @@ type queueMetricsCollector struct {
 
 var tasksQueuedDesc = prometheus.NewDesc(
 	prometheus.BuildFQName(namespace, "", "jobs_total"),
+	"Number of tasks enqueued; broken down by queue and status.",
+	[]string{"queue", "status"}, nil,
+)
+
+// Legacy desc for the dual-emit window. When dualemit.EmitLegacy is
+// false, the loop below short-circuits and this desc is never emitted.
+var tasksQueuedDescLegacy = prometheus.NewDesc(
+	prometheus.BuildFQName(legacyNamespace, "", "jobs_total"),
 	"Number of tasks enqueued; broken down by queue and status.",
 	[]string{"queue", "status"}, nil,
 )
@@ -45,6 +60,15 @@ func (qmc *queueMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 			info.Queue,
 			info.Status.String(),
 		)
+		if dualemit.EmitLegacy {
+			ch <- prometheus.MustNewConstMetric(
+				tasksQueuedDescLegacy,
+				prometheus.GaugeValue,
+				float64(info.Count),
+				info.Queue,
+				info.Status.String(),
+			)
+		}
 	}
 }
 

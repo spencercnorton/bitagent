@@ -1,8 +1,8 @@
 package classifier
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/parsers"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/classifier/parsers"
 )
 
 const parseDateName = "parse_date"

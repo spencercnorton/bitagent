@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"github.com/adrg/xdg"
-	"github.com/bitmagnet-io/bitmagnet/internal/config"
-	"github.com/bitmagnet-io/bitmagnet/internal/config/configresolver"
 	"github.com/go-playground/validator/v10"
+	"github.com/spencercnorton/bitagent/internal/config"
+	"github.com/spencercnorton/bitagent/internal/config/configresolver"
 	"go.uber.org/fx"
 )
 

@@ -1,11 +1,12 @@
 package classifier
 
 import (
-	"errors"
+	"strconv"
+	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/tmdb"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/tmdb"
 )
 
 func (c executionContext) tmdbSearchMovie(title string, year model.Year) (model.Content, error) {
@@ -13,21 +14,31 @@ func (c executionContext) tmdbSearchMovie(title string, year model.Year) (model.
 		Query:        title,
 		IncludeAdult: true,
 	}
-	if !year.IsNil() {
+	if !year.IsNil() && !c.fuzzyMatchEnabled {
+		// Exact year filter: when fuzzy mode is off, pass year to the API so
+		// TMDB pre-filters the result set, matching historical behavior.
 		req.Year = year
 	}
+	// When fuzzy mode is on the year param is omitted so TMDB returns
+	// results from any year; year proximity is used as a scoring tiebreaker
+	// inside fuzzyFindBestMatch.
 
 	searchResult, searchErr := c.tmdbClient.SearchMovie(c.Context, req)
 	if searchErr != nil {
 		return model.Content{}, searchErr
 	}
 
-	bestMatch, ok := levenshteinFindBestMatch[tmdb.SearchMovieResult](
+	queryYear := int(year)
+	bestMatch, ok := fuzzyFindBestMatch[tmdb.SearchMovieResult](
 		title,
 		searchResult.Results,
 		func(item tmdb.SearchMovieResult) []string {
 			return []string{item.Title, item.OriginalTitle}
 		},
+		func(item tmdb.SearchMovieResult) int {
+			return yearProximityPenalty(queryYear, yearFromDateString(item.ReleaseDate))
+		},
+		c.fuzzyMatchEnabled,
 	)
 
 	if !ok {
@@ -42,7 +53,8 @@ func (c executionContext) tmdbSearchTVShow(title string, year model.Year) (model
 		Query:        title,
 		IncludeAdult: true,
 	}
-	if !year.IsNil() {
+	if !year.IsNil() && !c.fuzzyMatchEnabled {
+		// Exact year filter: same logic as tmdbSearchMovie.
 		req.FirstAirDateYear = year
 	}
 
@@ -51,12 +63,17 @@ func (c executionContext) tmdbSearchTVShow(title string, year model.Year) (model
 		return model.Content{}, searchErr
 	}
 
-	bestMatch, ok := levenshteinFindBestMatch[tmdb.SearchTvResult](
+	queryYear := int(year)
+	bestMatch, ok := fuzzyFindBestMatch[tmdb.SearchTvResult](
 		title,
 		searchResult.Results,
 		func(item tmdb.SearchTvResult) []string {
 			return []string{item.Name, item.OriginalName}
 		},
+		func(item tmdb.SearchTvResult) int {
+			return yearProximityPenalty(queryYear, yearFromDateString(item.FirstAirDate))
+		},
+		c.fuzzyMatchEnabled,
 	)
 
 	if !ok {
@@ -66,39 +83,29 @@ func (c executionContext) tmdbSearchTVShow(title string, year model.Year) (model
 	return c.tmdbGetTVShowByTMDBID(bestMatch.ID)
 }
 
-func (c executionContext) tmdbGetMovieByTMDBID(id int64) (movie model.Content, err error) {
-	d, getDetailsErr := c.tmdbClient.MovieDetails(c.Context, tmdb.MovieDetailsRequest{
-		ID: id,
-	})
-	if getDetailsErr != nil {
-		if errors.Is(getDetailsErr, tmdb.ErrNotFound) {
-			getDetailsErr = classification.ErrUnmatched
-		}
-
-		err = getDetailsErr
-
-		return
+// yearFromDateString extracts the year component from a TMDB date string of
+// the form "YYYY-MM-DD". Returns 0 on parse failure or empty input.
+func yearFromDateString(s string) int {
+	if s == "" {
+		return 0
 	}
-
-	return tmdb.MovieDetailsToMovieModel(d)
+	parts := strings.SplitN(s, "-", 2)
+	if len(parts) == 0 {
+		return 0
+	}
+	y, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0
+	}
+	return y
 }
 
-func (c executionContext) tmdbGetTVShowByTMDBID(id int64) (movie model.Content, err error) {
-	d, getDetailsErr := c.tmdbClient.TvDetails(c.Context, tmdb.TvDetailsRequest{
-		SeriesID:         id,
-		AppendToResponse: []string{"external_ids"},
-	})
-	if getDetailsErr != nil {
-		if errors.Is(getDetailsErr, tmdb.ErrNotFound) {
-			getDetailsErr = classification.ErrUnmatched
-		}
+func (c executionContext) tmdbGetMovieByTMDBID(id int64) (model.Content, error) {
+	return tmdbContentByID(c.Context, c.tmdbClient, false, id)
+}
 
-		err = getDetailsErr
-
-		return
-	}
-
-	return tmdb.TvShowDetailsToTvShowModel(d)
+func (c executionContext) tmdbGetTVShowByTMDBID(id int64) (model.Content, error) {
+	return tmdbContentByID(c.Context, c.tmdbClient, true, id)
 }
 
 func (c executionContext) tmdbGetTMDBIDByExternalID(ref model.ContentRef) (int64, error) {

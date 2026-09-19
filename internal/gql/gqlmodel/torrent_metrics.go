@@ -3,8 +3,8 @@ package gqlmodel
 import (
 	"context"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/gql/gqlmodel/gen"
-	"github.com/bitmagnet-io/bitmagnet/internal/metrics/torrentmetrics"
+	"github.com/spencercnorton/bitagent/internal/gql/gqlmodel/gen"
+	"github.com/spencercnorton/bitagent/internal/metrics/torrentmetrics"
 )
 
 func (t TorrentQuery) Metrics(

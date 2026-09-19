@@ -3,7 +3,7 @@ package fts
 import (
 	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/lexer"
+	"github.com/spencercnorton/bitagent/internal/lexer"
 )
 
 func AppQueryToTsquery(str string) string {

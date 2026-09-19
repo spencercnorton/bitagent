@@ -5,7 +5,7 @@ package tmdb
 import (
 	"context"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
+	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 type Client interface {
@@ -92,6 +92,25 @@ type Genre struct {
 	Name string `json:"name"`
 }
 
+// AlternativeTitle is one entry of the alternative_titles appendix. Movies
+// return them under "titles", TV shows under "results" — same item shape.
+type AlternativeTitle struct {
+	Iso3166_1 string `json:"iso_3166_1"`
+	Title     string `json:"title"`
+	Type      string `json:"type"`
+}
+
+// Translation is one entry of the translations appendix. The translated
+// title lives under Data: "title" for movies, "name" for TV shows.
+type Translation struct {
+	Iso3166_1 string `json:"iso_3166_1"`
+	Iso639_1  string `json:"iso_639_1"`
+	Data      struct {
+		Title string `json:"title"`
+		Name  string `json:"name"`
+	} `json:"data"`
+}
+
 type MovieDetailsResponse struct {
 	Adult               bool   `json:"adult"`
 	BackdropPath        string `json:"backdrop_path"`
@@ -134,6 +153,13 @@ type MovieDetailsResponse struct {
 	Video       bool    `json:"video"`
 	VoteAverage float32 `json:"vote_average"`
 	VoteCount   int64   `json:"vote_count"`
+	// Populated when "alternative_titles" / "translations" are appended.
+	AlternativeTitles struct {
+		Titles []AlternativeTitle `json:"titles"`
+	} `json:"alternative_titles"`
+	Translations struct {
+		Translations []Translation `json:"translations"`
+	} `json:"translations"`
 }
 
 type TvDetailsRequest struct {
@@ -235,6 +261,14 @@ type TvDetailsResponse struct {
 		TwitterID   string `json:"twitter_id"`
 		ID          int64  `json:"id,omitempty"`
 	} `json:"external_ids,omitempty"`
+	// Populated when "alternative_titles" / "translations" are appended.
+	// Unlike movies, TV alternative titles come back under "results".
+	AlternativeTitles struct {
+		Results []AlternativeTitle `json:"results"`
+	} `json:"alternative_titles"`
+	Translations struct {
+		Translations []Translation `json:"translations"`
+	} `json:"translations"`
 }
 
 type FindByIDRequest struct {

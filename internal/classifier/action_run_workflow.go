@@ -3,7 +3,7 @@ package classifier
 import (
 	"fmt"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 )
 
 const runWorkflowName = "run_workflow"
@@ -42,7 +42,7 @@ func (runWorkflowAction) compileAction(ctx compilerContext) (action, error) {
 	}
 
 	return action{
-		func(ctx executionContext) (classification.Result, error) {
+		run: func(ctx executionContext) (classification.Result, error) {
 			var err error
 			cl := ctx.result
 			for _, name := range names {

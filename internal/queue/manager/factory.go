@@ -1,8 +1,8 @@
 package manager
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/database/dao"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/lazy"
 	"go.uber.org/fx"
 	"gorm.io/gorm"
 )

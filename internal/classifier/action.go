@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 )
 
 func actions(defs ...actionDefinition) feature {
@@ -47,6 +47,7 @@ outer:
 		for _, def := range c.actions {
 			a, err := def.compileAction(actionCtx.child(def.name(), rawAction))
 			if err == nil {
+				a.name = def.name()
 				actions = append(actions, a)
 				continue outer
 			}
@@ -61,7 +62,14 @@ outer:
 		return action{}, errors.Join(errs...)
 	}
 
-	return action{func(ctx executionContext) (classification.Result, error) {
+	// A single-action source needs no sequencing wrapper. Returning the inner
+	// action directly preserves its stamped name so find_match can attribute
+	// the winning stage (the multi-action composite legitimately has none).
+	if len(actions) == 1 {
+		return actions[0], nil
+	}
+
+	return action{run: func(ctx executionContext) (classification.Result, error) {
 		for _, a := range actions {
 			result, err := a.run(ctx)
 			if err != nil {
@@ -70,9 +78,12 @@ outer:
 			ctx = ctx.withResult(result)
 		}
 		return ctx.result, nil
-	}}, errors.Join(errs...)
+	}}, nil
 }
 
 type action struct {
 	run func(executionContext) (classification.Result, error)
+	// name is the actionDefinition name stamped by the compile dispatcher;
+	// find_match records it via evaltrace when the action attaches.
+	name string
 }

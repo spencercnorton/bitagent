@@ -1,7 +1,7 @@
 package classifier
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 )
 
 const attachLocalContentBySearchName = "attach_local_content_by_search"

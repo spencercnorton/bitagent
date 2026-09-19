@@ -13,7 +13,7 @@ type Profile struct {
 
 var ProfileDefault = Profile{
 	ID:           "default",
-	Title:        "bitmagnet",
+	Title:        "BitAgent",
 	DefaultLimit: 100,
 	MaxLimit:     100,
 }

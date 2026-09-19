@@ -13,6 +13,34 @@ input TorrentContentSearchQueryInput {
   orderBy: [TorrentContentOrderByInput!]
   cached: Boolean
   aggregationBudget: Float
+  """
+  Include rows whose underlying torrent was first added at or after this
+  instant. This filters immutable torrents.created_at, not a source's mutable
+  last-seen time or a classifier row that can be recreated.
+  """
+  torrentCreatedAfter: DateTime
+  """
+  Exclude rows whose underlying torrent was first added at or after this
+  instant. Together with torrentCreatedAfter this defines a stable half-open
+  [start, end) window, even while the crawler continues ingesting.
+  """
+  torrentCreatedBefore: DateTime
+  """
+  groupByContent collapses the result to one row per title (content) instead of
+  one row per torrent. The representative row for each title is its
+  highest-seeded torrent. Notes:
+  - This is MATCHED-ONLY: rows with no resolved content (content_id IS NULL —
+    currently ~53% of the corpus) are excluded, because grouping by a content
+    key is undefined for them. Browse the unmatched long tail with
+    groupByContent unset/false.
+  - totalCount is a planner estimate (totalCountIsEstimate is true) counting
+    distinct titles, not torrents; derive pagination bounds from hasNextPage,
+    not from ceil(totalCount / limit).
+  - Facet aggregations remain torrent-level counts within the matched corpus.
+  - orderBy applies across representatives; the representative itself is always
+    the highest-seeded torrent regardless of orderBy.
+  """
+  groupByContent: Boolean
 }
 
 input ContentTypeFacetInput {

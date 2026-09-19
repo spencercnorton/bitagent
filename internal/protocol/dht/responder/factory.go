@@ -3,10 +3,10 @@ package responder
 import (
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/concurrency"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spencercnorton/bitagent/internal/concurrency"
+	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -30,7 +30,7 @@ type Result struct {
 }
 
 const (
-	namespace = "bitmagnet"
+	namespace = "bitagent"
 	subsystem = "dht_responder"
 )
 

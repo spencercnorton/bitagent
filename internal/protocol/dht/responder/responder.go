@@ -6,9 +6,9 @@ import (
 	"encoding/hex"
 	"net/netip"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable"
+	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
 )
 
 type Responder interface {

@@ -53,7 +53,7 @@ func (s *socket) Receive(data []byte) (int, netip.AddrPort, error) {
 	return n, addr, nil
 }
 
-// see https://github.com/bitmagnet-io/bitmagnet/pull/203 and https://github.com/anacrolix/dht/issues/16
+// see https://github.com/spencercnorton/bitagent/pull/203 and https://github.com/anacrolix/dht/issues/16
 func ignoreReadFromError(err error) bool {
 	var errno syscall.Errno
 	if errors.As(err, &errno) {

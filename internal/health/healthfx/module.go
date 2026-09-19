@@ -1,7 +1,7 @@
 package healthfx
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/health"
+	"github.com/spencercnorton/bitagent/internal/health"
 	"go.uber.org/fx"
 )
 

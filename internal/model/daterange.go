@@ -19,6 +19,22 @@ func NewDateRangeFromYear(year Year) DateRange {
 	}
 }
 
+// NewDateRangeFromYearWindow returns a DateRange spanning [year-delta, year+delta]
+// (Jan 1 of year-delta through Dec 31 of year+delta). Used by the fuzzy-match
+// path to widen local-DB retrieval to a ±delta year window without changing the
+// exact-year path (delta=0 is identical to NewDateRangeFromYear).
+func NewDateRangeFromYearWindow(year Year, delta int) DateRange {
+	if delta == 0 {
+		return NewDateRangeFromYear(year)
+	}
+	lo := Year(int(year) - delta)
+	hi := Year(int(year) + delta)
+	return dateRange{
+		start: Date{Year: lo, Month: time.January, Day: 1},
+		end:   Date{Year: hi, Month: time.December, Day: 31},
+	}
+}
+
 func NewDateRangeFromMonthAndYear(month time.Month, year Year) DateRange {
 	return dateRangeMonthAndYear{
 		month: month,

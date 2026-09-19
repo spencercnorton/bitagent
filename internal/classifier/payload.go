@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
+	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 type HasJSONSchema interface {

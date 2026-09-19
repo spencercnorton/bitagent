@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/health"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/health"
+	"github.com/spencercnorton/bitagent/internal/lazy"
 	"go.uber.org/fx"
 )
 

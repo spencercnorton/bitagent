@@ -2,20 +2,21 @@ package gqlfx
 
 import (
 	"github.com/99designs/gqlgen/graphql"
-	"github.com/bitmagnet-io/bitmagnet/internal/blocking"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/dao"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/search"
-	"github.com/bitmagnet-io/bitmagnet/internal/gql"
-	"github.com/bitmagnet-io/bitmagnet/internal/gql/config"
-	"github.com/bitmagnet-io/bitmagnet/internal/gql/httpserver"
-	"github.com/bitmagnet-io/bitmagnet/internal/gql/resolvers"
-	"github.com/bitmagnet-io/bitmagnet/internal/health"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
-	"github.com/bitmagnet-io/bitmagnet/internal/metrics/queuemetrics"
-	"github.com/bitmagnet-io/bitmagnet/internal/metrics/torrentmetrics"
-	"github.com/bitmagnet-io/bitmagnet/internal/processor"
-	"github.com/bitmagnet-io/bitmagnet/internal/queue/manager"
-	"github.com/bitmagnet-io/bitmagnet/internal/worker"
+	"github.com/spencercnorton/bitagent/internal/blocking"
+	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/database/search"
+	"github.com/spencercnorton/bitagent/internal/evidence"
+	"github.com/spencercnorton/bitagent/internal/gql"
+	"github.com/spencercnorton/bitagent/internal/gql/config"
+	"github.com/spencercnorton/bitagent/internal/gql/httpserver"
+	"github.com/spencercnorton/bitagent/internal/gql/resolvers"
+	"github.com/spencercnorton/bitagent/internal/health"
+	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/metrics/queuemetrics"
+	"github.com/spencercnorton/bitagent/internal/metrics/torrentmetrics"
+	"github.com/spencercnorton/bitagent/internal/processor"
+	"github.com/spencercnorton/bitagent/internal/queue/manager"
+	"github.com/spencercnorton/bitagent/internal/worker"
 	"go.uber.org/fx"
 )
 
@@ -83,6 +84,7 @@ func New() fx.Option {
 							TorrentMetricsClient: tm,
 							Processor:            pr,
 							BlockingManager:      bm,
+							EvidenceStore:        p.EvidenceStore,
 						}, nil
 					}),
 				}
@@ -111,6 +113,7 @@ type Params struct {
 	TorrentMetricsClient lazy.Lazy[torrentmetrics.Client]
 	Processor            lazy.Lazy[processor.Processor]
 	BlockingManager      lazy.Lazy[blocking.Manager]
+	EvidenceStore        *evidence.Store
 }
 
 type Result struct {

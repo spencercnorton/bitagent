@@ -1,7 +1,7 @@
 package model
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/keywords"
+	"github.com/spencercnorton/bitagent/internal/keywords"
 )
 
 // Video3D represents the 3D type of a video

@@ -1,9 +1,9 @@
 package processor
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/classifier"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
 const MessageName = "process_torrent"
@@ -23,7 +23,12 @@ type MessageParams struct {
 	ClassifyMode       ClassifyMode     `json:"ClassifyMode,omitempty"`
 	ClassifierWorkflow string           `json:"ClassifierWorkflow,omitempty"`
 	ClassifierFlags    classifier.Flags `json:"ClassifierFlags,omitempty"`
-	InfoHashes         []protocol.ID    `json:"InfoHashes"`
+	// SkipContentFilter bypasses the post-classifier content filter. This is
+	// useful for deterministic local-only backlog passes where the operator
+	// explicitly wants no LLM calls from either the classifier or the language
+	// content filter.
+	SkipContentFilter bool          `json:"SkipContentFilter,omitempty"`
+	InfoHashes        []protocol.ID `json:"InfoHashes"`
 }
 
 func NewQueueJob(msg MessageParams, options ...model.QueueJobOption) (model.QueueJob, error) {

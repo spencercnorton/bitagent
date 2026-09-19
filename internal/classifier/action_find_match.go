@@ -3,7 +3,8 @@ package classifier
 import (
 	"errors"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/classifier/evaltrace"
 )
 
 const findMatchName = "find_match"
@@ -44,7 +45,7 @@ func (findMatchAction) compileAction(ctx compilerContext) (action, error) {
 	path := ctx.path
 
 	return action{
-		func(ctx executionContext) (classification.Result, error) {
+		run: func(ctx executionContext) (classification.Result, error) {
 			for _, action := range actions {
 				result, err := action.run(ctx)
 				if err != nil {
@@ -56,6 +57,7 @@ func (findMatchAction) compileAction(ctx compilerContext) (action, error) {
 						Path:  path,
 					}
 				}
+				evaltrace.Record(ctx, action.name)
 				return result, nil
 			}
 			return ctx.result, nil

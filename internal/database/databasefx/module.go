@@ -1,14 +1,15 @@
 package databasefx
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/config/configfx"
-	"github.com/bitmagnet-io/bitmagnet/internal/database"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/cache"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/dao"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/healthcheck"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/migrations"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/postgres"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/search"
+	"github.com/spencercnorton/bitagent/internal/config/configfx"
+	"github.com/spencercnorton/bitagent/internal/database"
+	"github.com/spencercnorton/bitagent/internal/database/cache"
+	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/database/healthcheck"
+	"github.com/spencercnorton/bitagent/internal/database/migrations"
+	"github.com/spencercnorton/bitagent/internal/database/pgstats/pgstatsfx"
+	"github.com/spencercnorton/bitagent/internal/database/postgres"
+	"github.com/spencercnorton/bitagent/internal/database/search"
 	"go.uber.org/fx"
 )
 
@@ -30,5 +31,6 @@ func New() fx.Option {
 		fx.Decorate(
 			cache.NewDecorator,
 		),
+		pgstatsfx.New(),
 	)
 }

@@ -9,8 +9,6 @@ tasks:
       - task gen-gql
       - task gen-protoc
       - task gen-mockery
-      - task gen-classifier-schema
-      - task gen-webui-graphql
 
   gen-go:
     cmds:
@@ -36,35 +34,14 @@ tasks:
     cmds:
       - go run github.com/vektra/mockery/v2
 
-  gen-classifier-schema:
-    cmds:
-      - go run . classifier schema --format json > ./bitmagnet.io/schemas/classifier-0.1.json
-
-  gen-webui-graphql:
-    dir: ./webui
-    cmds:
-      - npm run graphql:codegen
-
-  i18n-extract:
-    dir: ./webui
-    cmds:
-      - npm run i18n:extract
-
   lint:
     cmds:
-      # Removing golang-ci lint as the Nix package is currently broken
-      # - task lint-golangci
-      - task lint-webui
+      - task lint-golangci
       - task lint-prettier
 
   lint-golangci:
     cmds:
       - golangci-lint run --timeout=10m
-
-  lint-webui:
-    dir: ./webui
-    cmds:
-      - npm run lint
 
   lint-prettier:
     cmds:
@@ -73,18 +50,10 @@ tasks:
   test:
     cmds:
       - task test-go
-      - task test-webui
 
   test-go:
     cmds:
       - go test -v ./...
-
-  test-webui:
-    dir: ./webui
-    cmds:
-      - npm test
-    env:
-      CHROME_BIN: chromium
 
   migrate:
     cmds:
@@ -92,39 +61,7 @@ tasks:
 
   build:
     cmds:
-      - go build -ldflags "-X github.com/bitmagnet-io/bitmagnet/internal/version.GitTag=$(git describe --tags --always --dirty)"
-
-  build-webui:
-    dir: ./webui
-    cmds:
-      - npm run build
-
-  build-docsite:
-    dir: ./bitmagnet.io
-    cmds:
-      - bundle install
-      - bundle exec jekyll build
-
-  install-webui:
-    dir: ./webui
-    cmds:
-      - npm ci
-
-  serve-webui:
-    dir: ./webui
-    cmds:
-      - npm start -- --host {{.HOST}} --port {{.PORT}}
-    vars:
-      HOST: localhost
-      PORT: 3334
-
-  serve-docsite:
-    dir: ./bitmagnet.io
-    cmds:
-      - bundle exec jekyll serve --host {{.HOST}} --port {{.PORT}} --livereload
-    vars:
-      HOST: localhost
-      PORT: 3335
+      - go build -ldflags "-X github.com/spencercnorton/bitagent/internal/version.GitTag=$(git describe --tags --always --dirty)"
 
   export-data:
     cmds:

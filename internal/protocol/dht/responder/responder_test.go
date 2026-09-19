@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/anacrolix/dht/v2/krpc"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable"
-	ktable_mocks "github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable/mocks"
+	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
+	ktable_mocks "github.com/spencercnorton/bitagent/internal/protocol/dht/ktable/mocks"
 	"github.com/stretchr/testify/assert"
 )
 

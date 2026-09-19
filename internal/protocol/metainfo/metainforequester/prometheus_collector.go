@@ -5,46 +5,47 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/telemetry/dualemit"
 )
 
 type prometheusCollector struct {
 	requester           Requester
-	requestDuration     prometheus.Histogram
-	requestSuccessTotal prometheus.Counter
-	requestErrorTotal   prometheus.Counter
-	requestConcurrency  prometheus.Gauge
+	requestDuration     *dualemit.Histogram
+	requestSuccessTotal *dualemit.Counter
+	requestErrorTotal   *dualemit.Counter
+	requestConcurrency  *dualemit.Gauge
 }
 
 const (
-	namespace = "bitmagnet"
+	namespace = "bitagent"
 	subsystem = "meta_info_requester"
 )
 
 func newPrometheusCollector(requester Requester) *prometheusCollector {
 	return &prometheusCollector{
 		requester: requester,
-		requestDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+		requestDuration: dualemit.NewHistogram(prometheus.HistogramOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "duration_seconds",
 			Help:      "Duration of successful meta info requests in seconds.",
 			Buckets:   prometheus.DefBuckets,
 		}),
-		requestSuccessTotal: prometheus.NewCounter(prometheus.CounterOpts{
+		requestSuccessTotal: dualemit.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "success_total",
 			Help:      "Total number of successful meta info requests.",
 		}),
-		requestErrorTotal: prometheus.NewCounter(prometheus.CounterOpts{
+		requestErrorTotal: dualemit.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "error_total",
 			Help:      "Total number of failed meta info requests.",
 		}),
-		requestConcurrency: prometheus.NewGauge(prometheus.GaugeOpts{
+		requestConcurrency: dualemit.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      "concurrency",
@@ -55,10 +56,16 @@ func newPrometheusCollector(requester Requester) *prometheusCollector {
 
 func (l prometheusCollector) Request(ctx context.Context, infoHash protocol.ID, addr netip.AddrPort) (Response, error) {
 	l.requestConcurrency.Inc()
+	// Defer the Dec so a panic in the inner stack (TCP dial, BEP-10
+	// extension handshake, BEP-9 metadata read) does not leak the gauge
+	// permanently. Pre-2026-04-24 the bare `Inc(); ...; Dec()` pattern
+	// caused a slow positive drift on `meta_info_requester_concurrency`
+	// (observed 570 vs configured-cap 400 on the reference deployment) every time an
+	// inner code path panicked even rarely.
+	defer l.requestConcurrency.Dec()
 
 	start := time.Now()
 	resp, err := l.requester.Request(ctx, infoHash, addr)
-	l.requestConcurrency.Dec()
 
 	if err == nil {
 		l.requestDuration.Observe(time.Since(start).Seconds())

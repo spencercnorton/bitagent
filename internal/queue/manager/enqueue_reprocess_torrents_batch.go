@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier"
-	"github.com/bitmagnet-io/bitmagnet/internal/processor/batch"
+	"github.com/spencercnorton/bitagent/internal/classifier"
+	"github.com/spencercnorton/bitagent/internal/processor/batch"
 	"gorm.io/gorm"
 )
 
@@ -25,13 +25,14 @@ func (m manager) EnqueueReprocessTorrentsBatch(ctx context.Context, req EnqueueR
 	}
 
 	job, err := batch.NewQueueJob(batch.MessageParams{
-		ClassifyMode:    req.ClassifyMode,
-		ClassifierFlags: flags,
-		ChunkSize:       req.ChunkSize,
-		BatchSize:       req.BatchSize,
-		ContentTypes:    req.ContentTypes,
-		Orphans:         req.Orphans,
-		UpdatedBefore:   time.Now(),
+		ClassifyMode:      req.ClassifyMode,
+		ClassifierFlags:   flags,
+		SkipContentFilter: req.SkipContentFilter,
+		ChunkSize:         req.ChunkSize,
+		BatchSize:         req.BatchSize,
+		ContentTypes:      req.ContentTypes,
+		Orphans:           req.Orphans,
+		UpdatedBefore:     time.Now(),
 	})
 	if err != nil {
 		return err

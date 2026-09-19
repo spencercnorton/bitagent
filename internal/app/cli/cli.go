@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/version"
+	"github.com/spencercnorton/bitagent/internal/version"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -31,7 +31,7 @@ func New(p Params) (Result, error) {
 		return strings.Compare(commands[i].Name, commands[j].Name) < 0
 	})
 
-	name := "bitmagnet"
+	name := "bitagent"
 
 	if version.GitTag != "" {
 		name += " " + version.GitTag

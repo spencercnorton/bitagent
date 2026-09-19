@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable"
+	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
 )
 
 func (c *crawler) runPing(ctx context.Context) {
@@ -36,12 +36,7 @@ func (c *crawler) runPing(ctx context.Context) {
 				Reason: fmt.Errorf("failed to respond to ping: %w", err),
 			})
 		} else {
-			c.kTable.BatchCommand(ktable.PutNode{
-				ID:      nodeID,
-				Addr:    n.Addr(),
-				Options: []ktable.NodeOption{ktable.NodeResponded()},
-			},
-			)
+			c.admitNodeFromReply(nodeID, n.Addr(), res.ReadOnly)
 		}
 	})
 }

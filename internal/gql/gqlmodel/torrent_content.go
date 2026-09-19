@@ -5,12 +5,12 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
-	q "github.com/bitmagnet-io/bitmagnet/internal/database/query"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/search"
-	"github.com/bitmagnet-io/bitmagnet/internal/gql/gqlmodel/gen"
-	"github.com/bitmagnet-io/bitmagnet/internal/maps"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
+	q "github.com/spencercnorton/bitagent/internal/database/query"
+	"github.com/spencercnorton/bitagent/internal/database/search"
+	"github.com/spencercnorton/bitagent/internal/gql/gqlmodel/gen"
+	"github.com/spencercnorton/bitagent/internal/maps"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
 type TorrentContentQuery struct {
@@ -32,14 +32,18 @@ type TorrentContent struct {
 	Video3D         model.NullVideo3D
 	VideoModifier   model.NullVideoModifier
 	ReleaseGroup    model.NullString
-	SearchString    string
-	Seeders         model.NullUint
-	Leechers        model.NullUint
-	PublishedAt     time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	Torrent         model.Torrent
-	Content         *model.Content
+	// EnglishAudio + its provenance ("name" | "llm"), straight off the
+	// persisted columns — see model.DeriveEnglishAudio for semantics.
+	EnglishAudio       model.NullEnglishAudio
+	EnglishAudioSource model.NullString
+	SearchString       string
+	Seeders            model.NullUint
+	Leechers           model.NullUint
+	PublishedAt        time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	Torrent            model.Torrent
+	Content            *model.Content
 }
 
 type Episodes struct {
@@ -49,24 +53,26 @@ type Episodes struct {
 
 func NewTorrentContentFromResultItem(item search.TorrentContentResultItem) TorrentContent {
 	c := TorrentContent{
-		ID:              item.ID,
-		InfoHash:        item.InfoHash,
-		ContentType:     item.ContentType,
-		ContentSource:   item.ContentSource,
-		ContentID:       item.ContentID,
-		Title:           item.Title(),
-		VideoResolution: item.VideoResolution,
-		VideoSource:     item.VideoSource,
-		VideoCodec:      item.VideoCodec,
-		Video3D:         item.Video3D,
-		VideoModifier:   item.VideoModifier,
-		ReleaseGroup:    item.ReleaseGroup,
-		Seeders:         item.Seeders,
-		Leechers:        item.Leechers,
-		PublishedAt:     item.PublishedAt,
-		CreatedAt:       item.CreatedAt,
-		UpdatedAt:       item.UpdatedAt,
-		Torrent:         item.Torrent,
+		ID:                 item.ID,
+		InfoHash:           item.InfoHash,
+		ContentType:        item.ContentType,
+		ContentSource:      item.ContentSource,
+		ContentID:          item.ContentID,
+		Title:              item.Title(),
+		VideoResolution:    item.VideoResolution,
+		VideoSource:        item.VideoSource,
+		VideoCodec:         item.VideoCodec,
+		Video3D:            item.Video3D,
+		VideoModifier:      item.VideoModifier,
+		ReleaseGroup:       item.ReleaseGroup,
+		EnglishAudio:       item.EnglishAudio,
+		EnglishAudioSource: item.EnglishAudioSource,
+		Seeders:            item.Seeders,
+		Leechers:           item.Leechers,
+		PublishedAt:        item.PublishedAt,
+		CreatedAt:          item.CreatedAt,
+		UpdatedAt:          item.UpdatedAt,
+		Torrent:            item.Torrent,
 	}
 	if item.Content.ID != "" {
 		c.Content = &item.Content
@@ -113,9 +119,12 @@ func TorrentSourceInfosFromTorrent(t model.Torrent) []TorrentSourceInfo {
 
 type TorrentContentSearchQueryInput struct {
 	q.SearchParams
-	Facets     *gen.TorrentContentFacetsInput
-	OrderBy    []gen.TorrentContentOrderByInput
-	InfoHashes graphql.Omittable[[]protocol.ID]
+	Facets               *gen.TorrentContentFacetsInput
+	OrderBy              []gen.TorrentContentOrderByInput
+	InfoHashes           graphql.Omittable[[]protocol.ID]
+	TorrentCreatedAfter  graphql.Omittable[*time.Time]
+	TorrentCreatedBefore graphql.Omittable[*time.Time]
+	GroupByContent       model.NullBool
 }
 
 type TorrentContentSearchResult struct {
@@ -147,6 +156,23 @@ func (t TorrentContentQuery) Search(
 		options = append(options, q.Where(search.TorrentContentInfoHashCriteria(infoHashes...)))
 	}
 
+	var torrentCreatedAtCriteria []q.Criteria
+	if createdAfter, ok := input.TorrentCreatedAfter.ValueOK(); ok && createdAfter != nil {
+		torrentCreatedAtCriteria = append(
+			torrentCreatedAtCriteria,
+			search.TorrentCreatedAfterCriteria(*createdAfter),
+		)
+	}
+	if createdBefore, ok := input.TorrentCreatedBefore.ValueOK(); ok && createdBefore != nil {
+		torrentCreatedAtCriteria = append(
+			torrentCreatedAtCriteria,
+			search.TorrentCreatedBeforeCriteria(*createdBefore),
+		)
+	}
+	if len(torrentCreatedAtCriteria) > 0 {
+		options = append(options, q.Where(torrentCreatedAtCriteria...))
+	}
+
 	fullOrderBy := maps.NewInsertMap[search.TorrentContentOrderBy, search.OrderDirection]()
 
 	for _, ob := range input.OrderBy {
@@ -168,6 +194,10 @@ func (t TorrentContentQuery) Search(
 	}
 
 	options = append(options, search.TorrentContentFullOrderBy(fullOrderBy).Option())
+
+	if input.GroupByContent.Valid && input.GroupByContent.Bool {
+		options = append(options, search.TorrentContentGroupByContentOption())
+	}
 
 	result, resultErr := t.TorrentContentSearch.TorrentContent(ctx, options...)
 	if resultErr != nil {

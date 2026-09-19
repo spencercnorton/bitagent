@@ -1,7 +1,7 @@
 package blockingfx
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/blocking"
+	"github.com/spencercnorton/bitagent/internal/blocking"
 	"go.uber.org/fx"
 )
 

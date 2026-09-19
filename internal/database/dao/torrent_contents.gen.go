@@ -16,7 +16,7 @@ import (
 
 	"gorm.io/plugin/dbresolver"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
+	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 func newTorrentContent(db *gorm.DB, opts ...gen.DOOption) torrentContent {
@@ -48,6 +48,12 @@ func newTorrentContent(db *gorm.DB, opts ...gen.DOOption) torrentContent {
 	_torrentContent.PublishedAt = field.NewTime(tableName, "published_at")
 	_torrentContent.Size = field.NewUint(tableName, "size")
 	_torrentContent.FilesCount = field.NewField(tableName, "files_count")
+	_torrentContent.IsAnime = field.NewBool(tableName, "is_anime")
+	_torrentContent.ReleaseGranularity = field.NewString(tableName, "release_granularity")
+	_torrentContent.ReleaseDate = field.NewTime(tableName, "release_date")
+	_torrentContent.AnimeAbsoluteEpisode = field.NewField(tableName, "anime_absolute_episode")
+	_torrentContent.EnglishAudio = field.NewString(tableName, "english_audio")
+	_torrentContent.EnglishAudioSource = field.NewString(tableName, "english_audio_source")
 	_torrentContent.Torrent = torrentContentBelongsToTorrent{
 		db: db.Session(&gorm.Session{}),
 
@@ -137,29 +143,35 @@ func newTorrentContent(db *gorm.DB, opts ...gen.DOOption) torrentContent {
 type torrentContent struct {
 	torrentContentDo
 
-	ALL             field.Asterisk
-	ID              field.String
-	InfoHash        field.Field
-	ContentType     field.String
-	ContentSource   field.String
-	ContentID       field.String
-	Languages       field.Field
-	Episodes        field.Field
-	VideoResolution field.Field
-	VideoSource     field.Field
-	VideoCodec      field.Field
-	Video3D         field.Field
-	VideoModifier   field.Field
-	ReleaseGroup    field.Field
-	CreatedAt       field.Time
-	UpdatedAt       field.Time
-	Tsv             field.Field
-	Seeders         field.Field
-	Leechers        field.Field
-	PublishedAt     field.Time
-	Size            field.Uint
-	FilesCount      field.Field
-	Torrent         torrentContentBelongsToTorrent
+	ALL                  field.Asterisk
+	ID                   field.String
+	InfoHash             field.Field
+	ContentType          field.String
+	ContentSource        field.String
+	ContentID            field.String
+	Languages            field.Field
+	Episodes             field.Field
+	VideoResolution      field.Field
+	VideoSource          field.Field
+	VideoCodec           field.Field
+	Video3D              field.Field
+	VideoModifier        field.Field
+	ReleaseGroup         field.Field
+	CreatedAt            field.Time
+	UpdatedAt            field.Time
+	Tsv                  field.Field
+	Seeders              field.Field
+	Leechers             field.Field
+	PublishedAt          field.Time
+	Size                 field.Uint
+	FilesCount           field.Field
+	IsAnime              field.Bool
+	ReleaseGranularity   field.String
+	ReleaseDate          field.Time
+	AnimeAbsoluteEpisode field.Field
+	EnglishAudio         field.String
+	EnglishAudioSource   field.String
+	Torrent              torrentContentBelongsToTorrent
 
 	Content torrentContentBelongsToContent
 
@@ -199,6 +211,12 @@ func (t *torrentContent) updateTableName(table string) *torrentContent {
 	t.PublishedAt = field.NewTime(table, "published_at")
 	t.Size = field.NewUint(table, "size")
 	t.FilesCount = field.NewField(table, "files_count")
+	t.IsAnime = field.NewBool(table, "is_anime")
+	t.ReleaseGranularity = field.NewString(table, "release_granularity")
+	t.ReleaseDate = field.NewTime(table, "release_date")
+	t.AnimeAbsoluteEpisode = field.NewField(table, "anime_absolute_episode")
+	t.EnglishAudio = field.NewString(table, "english_audio")
+	t.EnglishAudioSource = field.NewString(table, "english_audio_source")
 
 	t.fillFieldMap()
 
@@ -215,7 +233,7 @@ func (t *torrentContent) GetFieldByName(fieldName string) (field.OrderExpr, bool
 }
 
 func (t *torrentContent) fillFieldMap() {
-	t.fieldMap = make(map[string]field.Expr, 23)
+	t.fieldMap = make(map[string]field.Expr, 28)
 	t.fieldMap["id"] = t.ID
 	t.fieldMap["info_hash"] = t.InfoHash
 	t.fieldMap["content_type"] = t.ContentType
@@ -237,6 +255,12 @@ func (t *torrentContent) fillFieldMap() {
 	t.fieldMap["published_at"] = t.PublishedAt
 	t.fieldMap["size"] = t.Size
 	t.fieldMap["files_count"] = t.FilesCount
+	t.fieldMap["is_anime"] = t.IsAnime
+	t.fieldMap["release_granularity"] = t.ReleaseGranularity
+	t.fieldMap["release_date"] = t.ReleaseDate
+	t.fieldMap["anime_absolute_episode"] = t.AnimeAbsoluteEpisode
+	t.fieldMap["english_audio"] = t.EnglishAudio
+	t.fieldMap["english_audio_source"] = t.EnglishAudioSource
 
 }
 

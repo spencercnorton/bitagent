@@ -6,11 +6,11 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/concurrency"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/responder"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spencercnorton/bitagent/internal/concurrency"
+	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/responder"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -32,10 +32,11 @@ type Result struct {
 	QuerySuccessTotal prometheus.Collector                    `group:"prometheus_collectors"`
 	QueryErrorTotal   prometheus.Collector                    `group:"prometheus_collectors"`
 	QueryConcurrency  prometheus.Collector                    `group:"prometheus_collectors"`
+	QueryLimiterWait  prometheus.Collector                    `group:"prometheus_collectors"`
 }
 
 const (
-	namespace = "bitmagnet"
+	namespace = "bitagent"
 	subsystem = "dht_server"
 )
 
@@ -64,7 +65,13 @@ func New(p Params) Result {
 					lastResponses: lastResponses,
 				},
 			},
-			queryLimiter: concurrency.NewKeyedLimiter(rate.Every(time.Second), 4, 1000, time.Second*20),
+			queryLimiter: concurrency.NewKeyedLimiter(
+				rate.Limit(p.Config.QueryLimiterRatePerSec),
+				p.Config.QueryLimiterBurst,
+				1000,
+				time.Second*20,
+			),
+			waitHist: collector.queryLimiterWait,
 		}
 		if err := s.start(); err != nil {
 			return nil, fmt.Errorf("could not start server: %w", err)
@@ -88,5 +95,6 @@ func New(p Params) Result {
 		QuerySuccessTotal: collector.querySuccessTotal,
 		QueryErrorTotal:   collector.queryErrorTotal,
 		QueryConcurrency:  collector.queryConcurrency,
+		QueryLimiterWait:  collector.queryLimiterWait,
 	}
 }

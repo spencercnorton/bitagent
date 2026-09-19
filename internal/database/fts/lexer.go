@@ -3,7 +3,7 @@ package fts
 import (
 	"errors"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/lexer"
+	"github.com/spencercnorton/bitagent/internal/lexer"
 )
 
 func newLexer(str string) ftsLexer {

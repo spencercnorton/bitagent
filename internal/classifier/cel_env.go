@@ -3,13 +3,37 @@ package classifier
 import (
 	"fmt"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/keywords"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/protobuf"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/ext"
+	"github.com/spencercnorton/bitagent/internal/keywords"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/protobuf"
 )
+
+// eachKeywordRegex compiles one regex per keyword, deduplicated so that a
+// repeated keyword cannot inflate a distinct-hit count.
+func eachKeywordRegex(kws []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(kws))
+	out := make([]string, 0, len(kws))
+
+	for _, kw := range kws {
+		if _, ok := seen[kw]; ok {
+			continue
+		}
+
+		seen[kw] = struct{}{}
+
+		r, err := keywords.NewRegexFromKeywords(kw)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, r.String())
+	}
+
+	return out, nil
+}
 
 func celEnvOption(src Source, ctx *compilerContext) error {
 	options := []cel.EnvOption{
@@ -47,11 +71,34 @@ func celEnvOption(src Source, ctx *compilerContext) error {
 			options,
 			cel.Constant("keywords."+group, cel.StringType, types.String(r.String())),
 		)
+
+		// `keywordList.<group>` is the same group as one regex per keyword, so a
+		// workflow can require N *distinct* keywords to hit instead of just one:
+		//
+		//   keywordList.xxx_weak.filter(k, text.matches(k)).size() >= 2
+		//
+		// The combined `keywords.<group>` regex cannot express that. Counting
+		// matches on it undercounts, because adjacent hits share the separator
+		// the boundary group consumes ("Big.Ass.Tits" finds one match, not two).
+		each, err := eachKeywordRegex(kws)
+		if err != nil {
+			return err
+		}
+
+		options = append(
+			options,
+			cel.Constant(
+				"keywordList."+group,
+				cel.ListType(cel.StringType),
+				types.NewStringList(types.DefaultTypeAdapter, each),
+			),
+		)
 	}
 
 	options = append(
 		options,
 		cel.Constant("keywords", cel.MapType(cel.StringType, cel.NullType), types.NullValue),
+		cel.Constant("keywordList", cel.MapType(cel.StringType, cel.NullType), types.NullValue),
 	)
 	for group, extensions := range src.Extensions {
 		options = append(

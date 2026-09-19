@@ -6,11 +6,11 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/lexer"
-	"github.com/bitmagnet-io/bitmagnet/internal/regex"
 	"github.com/hedhyw/rex/pkg/dialect"
 	"github.com/hedhyw/rex/pkg/dialect/base"
 	"github.com/hedhyw/rex/pkg/rex"
+	"github.com/spencercnorton/bitagent/internal/lexer"
+	"github.com/spencercnorton/bitagent/internal/regex"
 )
 
 func NewRegexFromKeywords(kws ...string) (*regexp.Regexp, error) {

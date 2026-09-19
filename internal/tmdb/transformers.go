@@ -1,12 +1,92 @@
 package tmdb
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
+	"sort"
 	"strconv"
+	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/slice"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/slice"
 )
+
+// maxAltTitleAttributes bounds how many alternative-title attributes a single
+// content row can accumulate — some franchise titles carry 50+ AKAs and the
+// long tail is noise for matching purposes.
+const maxAltTitleAttributes = 64
+
+// normalizeAltTitleKey collapses whitespace and case so the same title spelled
+// slightly differently across alternative_titles and translations dedupes.
+func normalizeAltTitleKey(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
+// AltTitleAttributes converts the alternative_titles + translations appendices
+// of a details response into content attributes. Titles equal to any canonical
+// title are dropped; keys are alt_title:<iso3166>:<hash8> — deterministic
+// across re-fetches (TMDB does not guarantee ordering) so repeated syncs
+// upsert the same rows instead of accumulating duplicates.
+func AltTitleAttributes(
+	canonicalTitles []string,
+	altTitles []AlternativeTitle,
+	translations []Translation,
+) []model.ContentAttribute {
+	seen := make(map[string]struct{}, len(canonicalTitles))
+	for _, t := range canonicalTitles {
+		seen[normalizeAltTitleKey(t)] = struct{}{}
+	}
+
+	var attrs []model.ContentAttribute
+
+	add := func(iso3166, title string) {
+		title = strings.TrimSpace(title)
+		if title == "" {
+			return
+		}
+
+		norm := normalizeAltTitleKey(title)
+		if _, ok := seen[norm]; ok {
+			return
+		}
+
+		seen[norm] = struct{}{}
+
+		sum := sha1.Sum([]byte(norm))
+		attrs = append(attrs, model.ContentAttribute{
+			Source: model.SourceTmdb,
+			Key: model.AltTitleAttributePrefix + strings.ToLower(
+				iso3166,
+			) + ":" + hex.EncodeToString(
+				sum[:4],
+			),
+			Value: title,
+		})
+	}
+
+	for _, t := range altTitles {
+		add(t.Iso3166_1, t.Title)
+	}
+
+	for _, t := range translations {
+		title := t.Data.Title
+		if title == "" {
+			title = t.Data.Name
+		}
+
+		add(t.Iso3166_1, title)
+	}
+
+	// Sort before capping so the retained subset is deterministic.
+	sort.Slice(attrs, func(i, j int) bool { return attrs[i].Key < attrs[j].Key })
+
+	if len(attrs) > maxAltTitleAttributes {
+		attrs = attrs[:maxAltTitleAttributes]
+	}
+
+	return attrs
+}
 
 func MovieDetailsToMovieModel(details MovieDetailsResponse) (movie model.Content, err error) {
 	releaseDate := model.Date{}
@@ -66,6 +146,12 @@ func MovieDetailsToMovieModel(details MovieDetailsResponse) (movie model.Content
 			Value:  details.BackdropPath,
 		})
 	}
+
+	attributes = append(attributes, AltTitleAttributes(
+		[]string{details.Title, details.OriginalTitle},
+		details.AlternativeTitles.Titles,
+		details.Translations.Translations,
+	)...)
 
 	releaseYear := releaseDate.Year
 
@@ -158,6 +244,12 @@ func TvShowDetailsToTvShowModel(details TvDetailsResponse) (movie model.Content,
 			Value:  details.BackdropPath,
 		})
 	}
+
+	attributes = append(attributes, AltTitleAttributes(
+		[]string{details.Name, details.OriginalName},
+		details.AlternativeTitles.Results,
+		details.Translations.Translations,
+	)...)
 
 	return model.Content{
 		Type:             model.ContentTypeTvShow,

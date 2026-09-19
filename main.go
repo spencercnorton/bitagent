@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/app"
 	_ "github.com/joho/godotenv/autoload"
+	"github.com/spencercnorton/bitagent/internal/app"
 )
 
 func main() {

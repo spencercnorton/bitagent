@@ -1,22 +1,24 @@
 package httpserver
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/httpserver"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
-	"github.com/bitmagnet-io/bitmagnet/internal/torznab"
 	"github.com/gin-gonic/gin"
+	"github.com/spencercnorton/bitagent/internal/httpserver"
+	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/torznab"
 )
 
-func New(lazyClient lazy.Lazy[torznab.Client], config torznab.Config) httpserver.Option {
+func New(lazyClient lazy.Lazy[torznab.Client], config torznab.Config, metrics *Metrics) httpserver.Option {
 	return builder{
 		lazyClient: lazyClient,
 		config:     config,
+		metrics:    metrics,
 	}
 }
 
 type builder struct {
 	lazyClient lazy.Lazy[torznab.Client]
 	config     torznab.Config
+	metrics    *Metrics
 }
 
 func (builder) Key() string {
@@ -30,8 +32,9 @@ func (b builder) Apply(e *gin.Engine) error {
 	}
 
 	h := handler{
-		config: b.config,
-		client: client,
+		config:  b.config,
+		client:  client,
+		metrics: b.metrics,
 	}
 	e.GET("/torznab/*any", h.handleRequest)
 

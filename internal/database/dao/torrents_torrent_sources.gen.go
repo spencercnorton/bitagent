@@ -16,7 +16,7 @@ import (
 
 	"gorm.io/plugin/dbresolver"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
+	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 func newTorrentsTorrentSource(db *gorm.DB, opts ...gen.DOOption) torrentsTorrentSource {

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/classifier"
+	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
 	"gopkg.in/yaml.v3"

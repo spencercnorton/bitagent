@@ -7,15 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"net/netip"
 	"time"
 
 	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/peer_protocol"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/metainfo"
+	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/protocol/metainfo"
 )
 
 type Requester interface {
@@ -225,7 +224,16 @@ type extDict struct {
 	Piece   int `bencode:"piece"`
 }
 
-const maxMetadataSize = 10 * 1024 * 1024
+type metadataResponseHeader struct {
+	MsgType   int `bencode:"msg_type"`
+	Piece     int `bencode:"piece"`
+	TotalSize int `bencode:"total_size"`
+}
+
+const (
+	metadataPieceSize = 16 * 1024
+	maxMetadataSize   = 10 * 1024 * 1024
+)
 
 func exHandshake(rw io.ReadWriter) (metadataSize uint, utMetadata uint8, err error) {
 	if _, writeErr := rw.Write([]byte("\x00\x00\x00\x1a\x14\x00d1:md11:ut_metadatai1eee")); err != nil {
@@ -264,7 +272,7 @@ func exHandshake(rw io.ReadWriter) (metadataSize uint, utMetadata uint8, err err
 }
 
 func requestAllPieces(w io.Writer, metadataSize uint, utMetadata uint8) error {
-	nPieces := int(math.Ceil(float64(metadataSize) / math.Pow(2, 14)))
+	nPieces := metadataPieceCount(metadataSize)
 	for piece := range nPieces {
 		extDictDump, err := bencode.Marshal(extDict{
 			MsgType: 0,
@@ -286,6 +294,15 @@ func requestAllPieces(w io.Writer, metadataSize uint, utMetadata uint8) error {
 	return nil
 }
 
+func metadataPieceCount(metadataSize uint) int {
+	nPieces := metadataSize / metadataPieceSize
+	if metadataSize%metadataPieceSize != 0 {
+		nPieces++
+	}
+
+	return int(nPieces)
+}
+
 func uintToBigEndian4(i uint) []byte {
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, uint32(i))
@@ -294,55 +311,92 @@ func uintToBigEndian4(i uint) []byte {
 }
 
 func readAllPieces(r io.Reader, metadataSize uint) ([]byte, error) {
-	metadataBytes := make([]byte, metadataSize)
+	if metadataSize == 0 || metadataSize >= maxMetadataSize {
+		return nil, fmt.Errorf("invalid metadata size: %d", metadataSize)
+	}
 
-	receivedSize := uint(0)
-	for receivedSize < metadataSize {
+	metadataBytes := make([]byte, metadataSize)
+	nPieces := metadataPieceCount(metadataSize)
+	seen := make([]bool, nPieces)
+
+	receivedPieces := 0
+	for receivedPieces < nPieces {
 		rUmMessage, err := readUmMessage(r)
 		if err != nil {
 			return nil, err
 		}
 		// run TestDecoder() function in leech_test.go in case you have any doubts.
 		rMessageBuf := bytes.NewBuffer(rUmMessage[2:])
-		rExtDict := new(extDict)
-
-		if decodeErr := bencode.NewDecoder(rMessageBuf).Decode(rExtDict); decodeErr != nil {
-			return nil, decodeErr
+		// Sentinels distinguish missing mandatory fields from valid zero values.
+		rExtDict := metadataResponseHeader{
+			MsgType:   -1,
+			Piece:     -1,
+			TotalSize: -1,
 		}
 
-		if rExtDict.MsgType == 2 { // reject
-			return nil, errors.New("remote peer rejected sending metadataBytes")
+		if decodeErr := bencode.NewDecoder(rMessageBuf).Decode(&rExtDict); decodeErr != nil {
+			return nil, fmt.Errorf("decode ut_metadata header: %w", decodeErr)
 		}
 
-		if rExtDict.MsgType == 1 { // data
-			// Get the unread bytes!
-			metadataPiece := rMessageBuf.Bytes()
-			// BEP 9 explicitly states:
-			//   > If the piece is the last piece of the metadata, it may be less than 16kiB. If
-			//   > it is not the last piece of the metadata, it MUST be 16kiB.
-			//
-			// Hence...
-			//   ... if the length of metadataPiece is more than 16kiB, we err.
-			if len(metadataPiece) > 16*1024 {
-				return nil, errors.New("metadataPiece > 16kiB")
+		if rExtDict.MsgType < 0 {
+			return nil, errors.New("ut_metadata header is missing msg_type")
+		}
+
+		piece := rExtDict.Piece
+		if piece < 0 || piece >= nPieces {
+			return nil, fmt.Errorf("ut_metadata piece index %d out of range [0,%d)", piece, nPieces)
+		}
+
+		metadataPiece := rMessageBuf.Bytes()
+		switch rExtDict.MsgType {
+		case 0: // request from the remote peer; this requester has no metadata to serve.
+			if len(metadataPiece) != 0 {
+				return nil, errors.New("ut_metadata request contains trailing payload")
+			}
+			continue
+		case 1: // data
+			if rExtDict.TotalSize != int(metadataSize) {
+				return nil, fmt.Errorf(
+					"ut_metadata total_size %d does not match handshake size %d",
+					rExtDict.TotalSize,
+					metadataSize,
+				)
 			}
 
-			receivedSize += uint(len(metadataPiece))
-			// ... if the length of @metadataPiece is less than 16kiB AND metadataBytes is NOT
-			// complete then we err.
-			if len(metadataPiece) < 16*1024 && receivedSize != metadataSize {
-				return nil, errors.New("metadataPiece < 16 kiB but incomplete")
+			start := piece * metadataPieceSize
+			expectedLength := metadataPieceSize
+			if piece == nPieces-1 {
+				expectedLength = int(metadataSize) - start
+			}
+			if len(metadataPiece) != expectedLength {
+				return nil, fmt.Errorf(
+					"ut_metadata piece %d has length %d, expected %d",
+					piece,
+					len(metadataPiece),
+					expectedLength,
+				)
 			}
 
-			if receivedSize > metadataSize {
-				return nil, errors.New("receivedSize > metadataSize")
+			end := start + expectedLength
+			if seen[piece] {
+				if !bytes.Equal(metadataBytes[start:end], metadataPiece) {
+					return nil, fmt.Errorf("ut_metadata piece %d conflicts with an earlier copy", piece)
+				}
+
+				continue
 			}
 
-			piece := rExtDict.Piece
-			copy(
-				metadataBytes[piece*int(math.Pow(2, 14)):piece*int(math.Pow(2, 14))+len(metadataPiece)],
-				metadataPiece,
-			)
+			copy(metadataBytes[start:end], metadataPiece)
+			seen[piece] = true
+			receivedPieces++
+		case 2: // reject
+			if len(metadataPiece) != 0 {
+				return nil, errors.New("ut_metadata reject contains trailing payload")
+			}
+
+			return nil, fmt.Errorf("remote peer rejected metadata piece %d", piece)
+		default:
+			return nil, fmt.Errorf("unknown ut_metadata msg_type %d", rExtDict.MsgType)
 		}
 	}
 

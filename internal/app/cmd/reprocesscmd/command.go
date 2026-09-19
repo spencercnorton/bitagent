@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/dao"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/processor"
-	"github.com/bitmagnet-io/bitmagnet/internal/processor/batch"
+	"github.com/spencercnorton/bitagent/internal/classifier"
+	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/processor"
+	"github.com/spencercnorton/bitagent/internal/processor/batch"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -74,6 +74,11 @@ func New(p Params) (Result, error) {
 				Value: false,
 				Usage: "disable local search queries for the classifier workflow",
 			},
+			&cli.BoolFlag{
+				Name:  "skipContentFilter",
+				Value: false,
+				Usage: "skip the post-classifier content filter hook",
+			},
 		},
 		Action: p.action,
 	}}, nil
@@ -112,13 +117,14 @@ func (p Params) action(ctx *cli.Context) error {
 	}
 
 	job, err := batch.NewQueueJob(batch.MessageParams{
-		ClassifyMode:    classifyMode,
-		ClassifierFlags: flags,
-		ChunkSize:       ctx.Uint("chunkSize"),
-		BatchSize:       ctx.Uint("batchSize"),
-		ContentTypes:    contentTypes,
-		Orphans:         ctx.Bool("orphans"),
-		UpdatedBefore:   time.Now(),
+		ClassifyMode:      classifyMode,
+		ClassifierFlags:   flags,
+		SkipContentFilter: ctx.Bool("skipContentFilter"),
+		ChunkSize:         ctx.Uint("chunkSize"),
+		BatchSize:         ctx.Uint("batchSize"),
+		ContentTypes:      contentTypes,
+		Orphans:           ctx.Bool("orphans"),
+		UpdatedBefore:     time.Now(),
 	})
 	if err != nil {
 		return err

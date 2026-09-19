@@ -4,13 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/database/dao"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/processor"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/blocking"
+	"github.com/spencercnorton/bitagent/internal/csamblocklist"
+	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/processor"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 	"gorm.io/gorm/clause"
 )
 
@@ -48,6 +51,16 @@ type importer struct {
 	dao         *dao.Query
 	bufferSize  uint
 	maxWaitTime time.Duration
+	// csamBlocklist + blockingManager close the /import bypass (design
+	// §2.3, exam P2): before this, persistItems inserted any infohash
+	// straight into the DB, skipping the CSAM feed bloom and the
+	// self-observed blocklist bloom that the dhtcrawler enforces at
+	// triage. Both are always non-nil in the fx graph (csam has a NoOp
+	// fallback); nil only in narrow direct-construction tests, where the
+	// gate degrades to pass-through.
+	csamBlocklist   csamblocklist.Manager
+	blockingManager blocking.Manager
+	metrics         *Metrics
 }
 
 var ErrImportClosed = errors.New("import closed")
@@ -173,7 +186,69 @@ func (i *activeImport) flushLocked() {
 	i.itemBuffer = make([]Item, 0, i.bufferSize)
 }
 
+// gateItems runs the imported infohashes through the SAME ordered filter the
+// dhtcrawler enforces at triage, closing the /import bloom bypass (design
+// §2.3, mechanisms 6+7). CSAM first, unconditional and pure (a bloom test
+// that cannot error). Blocking second, and it CAN error (a lazy bloom flush):
+// on error we FAIL the whole batch rather than import unfiltered — a blocking
+// lookup failure must never fall through to inserting a possibly-blocked
+// hash. Returns the surviving items; a fully-filtered batch returns an empty
+// slice and no error.
+func (i *activeImport) gateItems(items []Item) ([]Item, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+	hashes := make([]protocol.ID, len(items))
+	for idx, it := range items {
+		hashes[idx] = it.InfoHash
+	}
+
+	before := len(hashes)
+	if i.csamBlocklist != nil {
+		hashes = i.csamBlocklist.Filter(hashes)
+		if dropped := before - len(hashes); dropped > 0 {
+			i.metrics.Gated("csam", dropped)
+		}
+	}
+
+	if i.blockingManager != nil {
+		afterCsam := len(hashes)
+		kept, err := i.blockingManager.Filter(i.ctx, hashes)
+		if err != nil {
+			// Fail closed: refuse the batch, never import unfiltered.
+			return nil, fmt.Errorf("import blocking gate: %w", err)
+		}
+		hashes = kept
+		if dropped := afterCsam - len(hashes); dropped > 0 {
+			i.metrics.Gated("blocking", dropped)
+		}
+	}
+
+	if len(hashes) == len(items) {
+		return items, nil // nothing dropped — avoid the rebuild
+	}
+	keep := make(map[protocol.ID]struct{}, len(hashes))
+	for _, h := range hashes {
+		keep[h] = struct{}{}
+	}
+	out := make([]Item, 0, len(hashes))
+	for _, it := range items {
+		if _, ok := keep[it.InfoHash]; ok {
+			out = append(out, it)
+		}
+	}
+	return out, nil
+}
+
 func (i *activeImport) persistItems(items ...Item) error {
+	items, gateErr := i.gateItems(items)
+	if gateErr != nil {
+		return gateErr
+	}
+	if len(items) == 0 {
+		return nil // whole batch filtered out — nothing to persist
+	}
+
 	var sources []*model.TorrentSource
 
 	sourcesMap := make(map[string]struct{})

@@ -1,16 +1,16 @@
 package devfx
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/app/cli"
-	"github.com/bitmagnet-io/bitmagnet/internal/app/cli/args"
-	"github.com/bitmagnet-io/bitmagnet/internal/config/configfx"
-	"github.com/bitmagnet-io/bitmagnet/internal/database"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/migrations"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/postgres"
-	"github.com/bitmagnet-io/bitmagnet/internal/dev/app/cmd/gormcmd"
-	"github.com/bitmagnet-io/bitmagnet/internal/dev/app/cmd/migratecmd"
-	"github.com/bitmagnet-io/bitmagnet/internal/logging/loggingfx"
-	"github.com/bitmagnet-io/bitmagnet/internal/validation/validationfx"
+	"github.com/spencercnorton/bitagent/internal/app/cli"
+	"github.com/spencercnorton/bitagent/internal/app/cli/args"
+	"github.com/spencercnorton/bitagent/internal/config/configfx"
+	"github.com/spencercnorton/bitagent/internal/database"
+	"github.com/spencercnorton/bitagent/internal/database/migrations"
+	"github.com/spencercnorton/bitagent/internal/database/postgres"
+	"github.com/spencercnorton/bitagent/internal/dev/app/cmd/gormcmd"
+	"github.com/spencercnorton/bitagent/internal/dev/app/cmd/migratecmd"
+	"github.com/spencercnorton/bitagent/internal/logging/loggingfx"
+	"github.com/spencercnorton/bitagent/internal/validation/validationfx"
 	"go.uber.org/fx"
 )
 

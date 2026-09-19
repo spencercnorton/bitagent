@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht"
 	"go.uber.org/zap"
 )
 

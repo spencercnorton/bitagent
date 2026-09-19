@@ -3,8 +3,8 @@ package bloom
 import (
 	"encoding/binary"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht"
 	"github.com/bits-and-blooms/bloom/v3"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht"
 )
 
 type Filter = bloom.BloomFilter

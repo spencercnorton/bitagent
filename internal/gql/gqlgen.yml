@@ -61,13 +61,13 @@ nullable_input_omittable: true
 # skip_validation: true
 
 # Optional: set to skip running `go mod tidy` when generating server code
-# skip_mod_tidy: true
+skip_mod_tidy: true
 
 # gqlgen will search for any type names in the schema in these go packages
 # if they match it will use them, otherwise it will generate them.
 autobind:
-  - "github.com/bitmagnet-io/bitmagnet/internal/gql/gqlmodel"
-  - "github.com/bitmagnet-io/bitmagnet/internal/model"
+  - "github.com/spencercnorton/bitagent/internal/gql/gqlmodel"
+  - "github.com/spencercnorton/bitagent/internal/model"
 
 # This section declares type mapping between the GraphQL and go type systems
 #
@@ -84,7 +84,7 @@ models:
   String:
     model:
       - github.com/99designs/gqlgen/graphql.String
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullString
+      - github.com/spencercnorton/bitagent/internal/model.NullString
   Int:
     model:
       - github.com/99designs/gqlgen/graphql.Int
@@ -93,20 +93,20 @@ models:
       - github.com/99designs/gqlgen/graphql.Uint
       - github.com/99designs/gqlgen/graphql.Uint32
       - github.com/99designs/gqlgen/graphql.Uint64
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullUint
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullUint16
+      - github.com/spencercnorton/bitagent/internal/model.NullUint
+      - github.com/spencercnorton/bitagent/internal/model.NullUint16
   Float:
     model:
       - github.com/99designs/gqlgen/graphql.Float
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullFloat32
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullFloat64
+      - github.com/spencercnorton/bitagent/internal/model.NullFloat32
+      - github.com/spencercnorton/bitagent/internal/model.NullFloat64
   Boolean:
     model:
       - github.com/99designs/gqlgen/graphql.Boolean
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullBool
+      - github.com/spencercnorton/bitagent/internal/model.NullBool
   Date:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/model.Date
+      - github.com/spencercnorton/bitagent/internal/model.Date
   DateTime:
     model:
       - github.com/99designs/gqlgen/graphql.Time
@@ -115,68 +115,72 @@ models:
       - github.com/99designs/gqlgen/graphql.Duration
   Hash20:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/protocol.ID
+      - github.com/spencercnorton/bitagent/internal/protocol.ID
   ContentType:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/model.ContentType
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullContentType
+      - github.com/spencercnorton/bitagent/internal/model.ContentType
+      - github.com/spencercnorton/bitagent/internal/model.NullContentType
   FileType:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/model.FileType
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullFileType
+      - github.com/spencercnorton/bitagent/internal/model.FileType
+      - github.com/spencercnorton/bitagent/internal/model.NullFileType
   Year:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/model.Year
+      - github.com/spencercnorton/bitagent/internal/model.Year
   LanguageInfo:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/model.Language
+      - github.com/spencercnorton/bitagent/internal/model.Language
+  EnglishAudio:
+    model:
+      - github.com/spencercnorton/bitagent/internal/model.EnglishAudio
+      - github.com/spencercnorton/bitagent/internal/model.NullEnglishAudio
   VideoResolution:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/model.VideoResolution
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullVideoResolution
+      - github.com/spencercnorton/bitagent/internal/model.VideoResolution
+      - github.com/spencercnorton/bitagent/internal/model.NullVideoResolution
   VideoSource:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/model.VideoSource
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullVideoSource
+      - github.com/spencercnorton/bitagent/internal/model.VideoSource
+      - github.com/spencercnorton/bitagent/internal/model.NullVideoSource
   VideoCodec:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/model.VideoCodec
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullVideoCodec
+      - github.com/spencercnorton/bitagent/internal/model.VideoCodec
+      - github.com/spencercnorton/bitagent/internal/model.NullVideoCodec
   Video3D:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/model.Video3D
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullVideo3D
+      - github.com/spencercnorton/bitagent/internal/model.Video3D
+      - github.com/spencercnorton/bitagent/internal/model.NullVideo3D
   VideoModifier:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/model.VideoModifier
-      - github.com/bitmagnet-io/bitmagnet/internal/model.NullVideoModifier
+      - github.com/spencercnorton/bitagent/internal/model.VideoModifier
+      - github.com/spencercnorton/bitagent/internal/model.NullVideoModifier
   SearchQueryInput:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/database/query.SearchParams
+      - github.com/spencercnorton/bitagent/internal/database/query.SearchParams
   TorrentContentResult:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/database/search.TorrentContentResult
+      - github.com/spencercnorton/bitagent/internal/database/search.TorrentContentResult
   TorrentFilesQueryResult:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/database/search.TorrentFilesResult
+      - github.com/spencercnorton/bitagent/internal/database/search.TorrentFilesResult
   TorrentSuggestTagsResult:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/database/search.TorrentSuggestTagsResult
+      - github.com/spencercnorton/bitagent/internal/database/search.TorrentSuggestTagsResult
   SuggestedTag:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/database/search.SuggestedTag
+      - github.com/spencercnorton/bitagent/internal/database/search.SuggestedTag
   FacetAggregationInput:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/database/query.FacetAggregationConfig
+      - github.com/spencercnorton/bitagent/internal/database/query.FacetAggregationConfig
   QueueMetricsBucket:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/metrics/queuemetrics.Bucket
+      - github.com/spencercnorton/bitagent/internal/metrics/queuemetrics.Bucket
   QueuePurgeJobsInput:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/queue/manager.PurgeJobsRequest
+      - github.com/spencercnorton/bitagent/internal/queue/manager.PurgeJobsRequest
   QueueEnqueueReprocessTorrentsBatchInput:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/queue/manager.EnqueueReprocessTorrentsBatchRequest
+      - github.com/spencercnorton/bitagent/internal/queue/manager.EnqueueReprocessTorrentsBatchRequest
   TorrentMetricsBucket:
     model:
-      - github.com/bitmagnet-io/bitmagnet/internal/metrics/torrentmetrics.Bucket
+      - github.com/spencercnorton/bitagent/internal/metrics/torrentmetrics.Bucket

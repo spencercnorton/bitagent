@@ -4,9 +4,9 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/database/exclause"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/logger"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/database/exclause"
+	"github.com/spencercnorton/bitagent/internal/database/logger"
+	"github.com/spencercnorton/bitagent/internal/lazy"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"

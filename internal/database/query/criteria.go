@@ -1,7 +1,7 @@
 package query
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/maps"
+	"github.com/spencercnorton/bitagent/internal/maps"
 	"gorm.io/gen/field"
 	"gorm.io/gorm"
 )

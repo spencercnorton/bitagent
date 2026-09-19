@@ -8,13 +8,13 @@ import (
 	"context"
 	"sort"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/database/query"
-	"github.com/bitmagnet-io/bitmagnet/internal/gql"
-	"github.com/bitmagnet-io/bitmagnet/internal/gql/gqlmodel"
-	"github.com/bitmagnet-io/bitmagnet/internal/gql/gqlmodel/gen"
-	"github.com/bitmagnet-io/bitmagnet/internal/health"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/version"
+	"github.com/spencercnorton/bitagent/internal/database/query"
+	"github.com/spencercnorton/bitagent/internal/gql"
+	"github.com/spencercnorton/bitagent/internal/gql/gqlmodel"
+	"github.com/spencercnorton/bitagent/internal/gql/gqlmodel/gen"
+	"github.com/spencercnorton/bitagent/internal/health"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/version"
 )
 
 // Version is the resolver for the version field.
@@ -102,6 +102,13 @@ func (r *queryResolver) Torrent(ctx context.Context) (gqlmodel.TorrentQuery, err
 func (r *queryResolver) TorrentContent(ctx context.Context) (gqlmodel.TorrentContentQuery, error) {
 	return gqlmodel.TorrentContentQuery{
 		TorrentContentSearch: r.Search,
+	}, nil
+}
+
+// Evidence is the resolver for the evidence field.
+func (r *queryResolver) Evidence(ctx context.Context) (gqlmodel.EvidenceQuery, error) {
+	return gqlmodel.EvidenceQuery{
+		Store: r.EvidenceStore,
 	}, nil
 }
 

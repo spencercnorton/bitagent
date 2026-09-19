@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
 )
 
 func (c *crawler) runScrape(ctx context.Context) {
@@ -41,11 +41,7 @@ func (c *crawler) requestScrape(
 		return infoHashWithScrape{}, err
 	}
 
-	c.kTable.BatchCommand(ktable.PutNode{
-		ID:      res.ID,
-		Addr:    req.node,
-		Options: []ktable.NodeOption{ktable.NodeResponded()},
-	})
+	c.admitNodeFromReply(res.ID, req.node, res.ReadOnly)
 
 	if len(res.Nodes) > 0 {
 		cancelCtx, cancel := context.WithTimeout(ctx, time.Second)

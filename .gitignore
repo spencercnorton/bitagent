@@ -1,19 +1,19 @@
 .env
 .env.*
+!examples/.env.example
 .direnv
 .idea
 /data
 /bitmagnet
-/bitmagnet.io/_site
+/llmeval
 /export.sql
 dump.rdb
-.jekyll-cache
-.sass-cache
 
-# Node
-/webui/node_modules
-npm-debug.log
-yarn-error.log
+# Raw BitAgent evaluation admission identities are local-only. Evaluation
+# docs require all source/review/result artifacts to live outside this repo;
+# this extra pattern prevents the most sensitive sidecar from being staged by
+# accident when an operator uses the recommended suffix.
+*privacy-sidecar*.json
 
 # IDEs and editors
 .idea/
@@ -33,8 +33,6 @@ yarn-error.log
 .history/*
 
 # Miscellaneous
-/webui/.angular/cache
-.sass-cache/
 testem.log
 
 # System files

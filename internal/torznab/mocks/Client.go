@@ -5,7 +5,7 @@ package torznab_mocks
 import (
 	context "context"
 
-	torznab "github.com/bitmagnet-io/bitmagnet/internal/torznab"
+	torznab "github.com/spencercnorton/bitagent/internal/torznab"
 	mock "github.com/stretchr/testify/mock"
 )
 

@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/config/configresolver"
 	"github.com/go-playground/validator/v10"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/iancoleman/strcase"
+	"github.com/spencercnorton/bitagent/internal/config/configresolver"
 	"go.uber.org/fx"
 )
 

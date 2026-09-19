@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable/btree"
+	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable/btree"
 )
 
 type ID = protocol.ID
@@ -29,6 +29,15 @@ type TableQuery interface {
 	GetHashOrClosestNodes(id ID) GetHashOrClosestNodesResult
 	// SampleHashesAndNodes returns a random sample of up to 8 hashes and nodes, and the total hashes count.
 	SampleHashesAndNodes() SampleHashesAndNodesResult
+	// SnapshotNodeAddrs returns up to `limit` in-routing-table
+	// node addresses suitable for persisting as a warm-start
+	// bootstrap list. Ordering is unspecified; callers MUST NOT
+	// assume recency. The Kademlia invariant keeps stale nodes
+	// out of the table (they get evicted on PING failure), so a
+	// random sample of in-table addrs is a reasonable seed set.
+	//
+	// Does NOT include the node's own origin address.
+	SnapshotNodeAddrs(limit int) []netip.AddrPort
 }
 
 type Table interface {
@@ -156,4 +165,26 @@ func (t *table) SampleHashesAndNodes() SampleHashesAndNodesResult {
 	defer t.mutex.RUnlock()
 
 	return SampleHashesAndNodes{}.execReturn(t)
+}
+
+func (t *table) SnapshotNodeAddrs(limit int) []netip.AddrPort {
+	t.mutex.RLock()
+	defer t.mutex.RUnlock()
+
+	if limit <= 0 {
+		return nil
+	}
+
+	nodes := t.nodes.getRandom(limit)
+	addrs := make([]netip.AddrPort, 0, len(nodes))
+
+	for _, n := range nodes {
+		addr := n.Addr()
+		if !addr.IsValid() {
+			continue
+		}
+		addrs = append(addrs, addr)
+	}
+
+	return addrs
 }

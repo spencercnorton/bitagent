@@ -4,8 +4,9 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable/btree"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable/btree"
+	"github.com/spencercnorton/bitagent/internal/telemetry/dualemit"
 	"go.uber.org/fx"
 )
 
@@ -89,7 +90,7 @@ func New(p Params) Result {
 }
 
 const (
-	namespace = "bitmagnet"
+	namespace = "bitagent"
 	subsystem = "dht_ktable"
 )
 
@@ -101,19 +102,19 @@ func patchPrometheusCollector[
 ](itemName string, ks *keyspace[Input, Option, ItemPublic, ItemPrivate]) btree.PrometheusCollector {
 	collector := btree.PrometheusCollector{
 		Btree: ks.btree,
-		CountGauge: prometheus.NewGauge(prometheus.GaugeOpts{
+		CountGauge: dualemit.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      itemName + "_count",
 			Help:      "Number of " + itemName + " in routing table.",
 		}),
-		AddedCounter: prometheus.NewCounter(prometheus.CounterOpts{
+		AddedCounter: dualemit.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      itemName + "_added",
 			Help:      "Total number of " + itemName + " added to routing table.",
 		}),
-		DroppedCounter: prometheus.NewCounter(prometheus.CounterOpts{
+		DroppedCounter: dualemit.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
 			Name:      itemName + "_dropped",

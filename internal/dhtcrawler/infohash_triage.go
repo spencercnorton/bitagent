@@ -5,8 +5,8 @@ import (
 	"database/sql/driver"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
 // runInfoHashTriage receives discovered hashes on the infoHashTriage channel, determines if they should be crawled,
@@ -37,6 +37,32 @@ func (c *crawler) runInfoHashTriage(ctx context.Context) {
 				reqMap[r.infoHash] = r
 			}
 
+			// CSAM blocklist (community-feed double-hashes) runs FIRST,
+			// before BlockingManager. Reasons for the order:
+			//
+			//   - The CSAM blocklist is a hard policy filter — we want
+			//     it to short-circuit before any other code observes
+			//     the hash. The earlier the rejection in the pipeline,
+			//     the smaller the swarm-touching exposure window
+			//     (issue #494).
+			//
+			//   - Both filters are in-memory bloom-filter tests, so
+			//     ordering has no measurable performance impact.
+			//
+			// The Manager is always non-nil (NoOp when no feeds are
+			// configured); the Filter call on an empty Manager is a
+			// pass-through.
+			// Snapshot BEFORE Filter: csamblocklist.Filter compacts
+			// in place (out := in[:0:len(in)]), mutating allHashes'
+			// backing array, so the reject diff must run against an
+			// independent copy — allHashes[:0:0] forces a fresh array.
+			preFilter := append(allHashes[:0:0], allHashes...)
+			csamKept := c.csamBlocklist.Filter(allHashes)
+			// Phase-C: dual-write a csam verdict for each community-feed
+			// reject (recording-only; the drop itself is unchanged).
+			c.recordCsamRejects(ctx, preFilter, csamKept, "triage")
+			allHashes = csamKept
+
 			filteredHashes, filterErr := c.blockingManager.Filter(ctx, allHashes)
 			if filterErr != nil {
 				c.logger.Errorf("failed to filter infohashes: %s", filterErr.Error())
@@ -45,6 +71,42 @@ func (c *crawler) runInfoHashTriage(ctx context.Context) {
 
 			if len(filteredHashes) == 0 {
 				break
+			}
+
+			// Phase-B verdict-ledger consult (design §4): one batched
+			// BlockedSet lookup piggybacking on this triage batch.
+			// Shadow while verdictsLive is false (metric only); live
+			// drops quarantined/blacklisted/tombstoned hashes before
+			// get_peers/scrape routing — skip-fetch only, killing the
+			// infinite BEP-9 refetch loop for judged hashes. Errors are
+			// advisory (fail-open): crawling availability dominates and
+			// the CSAM bloom egress gate above is separate.
+			if c.verdicts != nil {
+				raw := make([][]byte, 0, len(filteredHashes))
+				for _, h := range filteredHashes {
+					raw = append(raw, h.Bytes())
+				}
+				blocked, verr := c.verdicts.BlockedSet(ctx, raw)
+				switch {
+				case verr != nil:
+					c.verdictsMetrics.Reader("crawler", "error", 1)
+					c.logger.Debugw("verdicts blocked-set lookup failed; continuing unfiltered", "err", verr)
+				case len(blocked) > 0 && c.verdictsLive:
+					kept := make([]protocol.ID, 0, len(filteredHashes))
+					for _, h := range filteredHashes {
+						if _, isBlocked := blocked[h.String()]; isBlocked {
+							continue
+						}
+						kept = append(kept, h)
+					}
+					c.verdictsMetrics.Reader("crawler", "skipped", len(filteredHashes)-len(kept))
+					filteredHashes = kept
+				case len(blocked) > 0:
+					c.verdictsMetrics.Reader("crawler", "would_skip", len(blocked))
+				}
+				if len(filteredHashes) == 0 {
+					break
+				}
 			}
 
 			filteredHashMap := make(map[protocol.ID]struct{}, len(filteredHashes))

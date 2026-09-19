@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/bloom"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/bloom"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
 type Manager interface {

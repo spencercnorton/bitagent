@@ -15,7 +15,7 @@ package bloom
 //
 //
 // import (
-//	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
+//	"github.com/spencercnorton/bitagent/internal/protocol"
 //	"testing"
 // )
 //

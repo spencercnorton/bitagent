@@ -1,7 +1,7 @@
 package model
 
 // ContentType represents the type of content
-// ENUM(movie, tv_show, music, ebook, comic, audiobook, game, software, xxx)
+// ENUM(movie, tv_show, music, ebook, comic, audiobook, game, software, xxx, course)
 type ContentType string
 
 func (c ContentType) Label() string {

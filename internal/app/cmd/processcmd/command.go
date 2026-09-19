@@ -3,10 +3,10 @@ package processcmd
 import (
 	"encoding/json"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier"
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
-	"github.com/bitmagnet-io/bitmagnet/internal/processor"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/classifier"
+	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/processor"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -46,6 +46,11 @@ func New(p Params) (Result, error) {
 					Value: false,
 					Usage: "disable local search queries for the classifier workflow",
 				},
+				&cli.BoolFlag{
+					Name:  "skipContentFilter",
+					Value: false,
+					Usage: "skip the post-classifier content filter hook",
+				},
 			},
 			Action: func(ctx *cli.Context) error {
 				pr, err := p.Processor.Get()
@@ -75,9 +80,10 @@ func New(p Params) (Result, error) {
 					return err
 				}
 				return pr.Process(ctx.Context, processor.MessageParams{
-					ClassifyMode:    processor.ClassifyModeRematch,
-					ClassifierFlags: flags,
-					InfoHashes:      infoHashes,
+					ClassifyMode:      processor.ClassifyModeRematch,
+					ClassifierFlags:   flags,
+					SkipContentFilter: ctx.Bool("skipContentFilter"),
+					InfoHashes:        infoHashes,
 				})
 			},
 		},

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/spencercnorton/bitagent/internal/lazy"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )

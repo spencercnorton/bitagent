@@ -4,7 +4,7 @@ import (
 	"os"
 
 	"github.com/adrg/xdg"
-	"github.com/bitmagnet-io/bitmagnet/internal/tmdb"
+	"github.com/spencercnorton/bitagent/internal/tmdb"
 	"gopkg.in/yaml.v3"
 )
 
@@ -129,6 +129,16 @@ func (c configSourceProvider) source() (Source, error) {
 
 	if c.config.DeleteXxx {
 		fs["delete_xxx"] = true
+	}
+
+	if len(c.config.DeleteContentTypes) > 0 {
+		// content_type_list flags decode from []any (see FlagType.celVal).
+		vals := make([]any, len(c.config.DeleteContentTypes))
+		for i, ct := range c.config.DeleteContentTypes {
+			vals[i] = ct
+		}
+
+		fs["delete_content_types"] = vals
 	}
 
 	if !c.tmdbEnabled {

@@ -9,7 +9,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/slice"
+	"github.com/spencercnorton/bitagent/internal/slice"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )

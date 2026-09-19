@@ -1,9 +1,9 @@
 package protobuf
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/slice"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/slice"
 )
 
 func NewTorrent(t model.Torrent) *Torrent {
@@ -158,10 +158,20 @@ func NewClassification(c classification.Result) *Classification {
 		contentSource = &c.Content.Source
 	}
 
+	// baseTitle is emitted only when present, so an absent title reads as
+	// unset in CEL rather than as the empty string — a rule guarded by
+	// hasBaseTitle and one guarded by baseTitle != "" then agree.
+	var baseTitle *string
+	if c.BaseTitle.Valid {
+		bt := c.BaseTitle.String
+		baseTitle = &bt
+	}
+
 	return &Classification{
 		ContentType:        NewContentType(c.ContentType),
 		HasAttachedContent: c.Content != nil,
 		HasBaseTitle:       c.BaseTitle.Valid,
+		BaseTitle:          baseTitle,
 		// Year:               year,
 		Languages:       languages,
 		Episodes:        episodes,
@@ -195,6 +205,8 @@ func NewContentType(ct model.NullContentType) Classification_ContentType {
 			return Classification_software
 		case model.ContentTypeXxx:
 			return Classification_xxx
+		case model.ContentTypeCourse:
+			return Classification_course
 		}
 	}
 

@@ -54,6 +54,12 @@ message Classification {
   optional string releaseGroup = 11;
   optional string contentId = 12;
   optional string contentSource = 13;
+  // The parsed release title with scene noise stripped, as a string.
+  // hasBaseTitle (3) has always exposed only its PRESENCE, which means a
+  // workflow rule can ask "is there a title?" but never "what is it?" — so
+  // any keyword rule is forced to match the whole torrent.baseName and
+  // cannot tell a language word in the TITLE from a language TAG.
+  optional string baseTitle = 14;
 
   enum ContentType {
     unknown = 0;
@@ -66,6 +72,7 @@ message Classification {
     game = 7;
     software = 8;
     xxx = 9;
+    course = 10;
   }
 }
 

@@ -3,10 +3,10 @@ package cors
 import (
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/httpserver"
 	"github.com/gin-gonic/gin"
 	"github.com/rs/cors"
 	gincors "github.com/rs/cors/wrapper/gin"
+	"github.com/spencercnorton/bitagent/internal/httpserver"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"

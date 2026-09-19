@@ -8,6 +8,7 @@ enum ContentType {
   game
   software
   xxx
+  course
 }
 
 enum FacetLogic {
@@ -96,6 +97,17 @@ enum Language {
   yi
   zh
   zu
+}
+
+"""
+English availability of an anime release: an English audio dub, English
+subtitles over Japanese audio, or a raw with neither. Null = unknown or not
+anime (Western releases are English-audio by convention).
+"""
+enum EnglishAudio {
+  dub
+  sub
+  none
 }
 
 enum Video3D {

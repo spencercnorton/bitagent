@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 )
 
 // NullInt - nullable int
@@ -251,6 +252,12 @@ func (n *NullFloat32) UnmarshalGQL(v interface{}) error {
 		n.Float32 = v
 	case float64:
 		n.Float32 = float32(v)
+	case json.Number:
+		f, err := strconv.ParseFloat(v.String(), 32)
+		if err != nil {
+			return err
+		}
+		n.Float32 = float32(f)
 	case string:
 		_, err := fmt.Sscanf(v, "%f", &n.Float32)
 		if err != nil {
@@ -331,6 +338,12 @@ func (n *NullFloat64) UnmarshalGQL(v interface{}) error {
 		n.Float64 = float64(v)
 	case float64:
 		n.Float64 = v
+	case json.Number:
+		f, err := v.Float64()
+		if err != nil {
+			return err
+		}
+		n.Float64 = f
 	case string:
 		_, err := fmt.Sscanf(v, "%f", &n.Float64)
 		if err != nil {

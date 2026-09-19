@@ -1,8 +1,8 @@
 package classifier
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 const setContentTypeName = "set_content_type"
@@ -28,7 +28,7 @@ func (setContentTypeAction) compileAction(ctx compilerContext) (action, error) {
 	}
 
 	return action{
-		func(ctx executionContext) (classification.Result, error) {
+		run: func(ctx executionContext) (classification.Result, error) {
 			cl := ctx.result
 			cl.ContentType = contentType
 			return cl, nil

@@ -3,9 +3,9 @@ package query
 import (
 	"context"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/database/cache"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/dao"
-	"github.com/bitmagnet-io/bitmagnet/internal/maps"
+	"github.com/spencercnorton/bitagent/internal/database/cache"
+	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/maps"
 	"gorm.io/gen/field"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/schema"
@@ -94,6 +94,24 @@ func SelectAll() Option {
 func Group(columns ...clause.Column) Option {
 	return func(ctx OptionBuilder) (OptionBuilder, error) {
 		return ctx.Group(columns...), nil
+	}
+}
+
+// GroupByDistinctOn switches the search into grouped mode: the result collapses
+// to one representative row per distinct key via a DISTINCT-ON derived table.
+//
+//   - distinctOnSQL is the DISTINCT ON (...) key expression list.
+//   - innerOrderSQL is the inner ORDER BY that picks each group's representative;
+//     it MUST begin with distinctOnSQL's columns (Postgres requires the DISTINCT
+//     ON expressions to match the leading ORDER BY) and MUST end in a
+//     group-unique column so the representative is deterministic across page
+//     fetches.
+//
+// Both fragments are trusted, caller-supplied SQL (never user input) — see
+// search.TorrentContentGroupByContentOption for the torrent_contents wiring.
+func GroupByDistinctOn(distinctOnSQL, innerOrderSQL string) Option {
+	return func(ctx OptionBuilder) (OptionBuilder, error) {
+		return ctx.GroupByDistinctOn(distinctOnSQL, innerOrderSQL), nil
 	}
 }
 

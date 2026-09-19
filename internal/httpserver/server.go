@@ -9,9 +9,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/httpserver/ginzap"
-	"github.com/bitmagnet-io/bitmagnet/internal/worker"
 	"github.com/gin-gonic/gin"
+	"github.com/spencercnorton/bitagent/internal/httpserver/ginzap"
+	"github.com/spencercnorton/bitagent/internal/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )

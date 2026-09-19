@@ -4,8 +4,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/lexer"
 	"github.com/mozillazg/go-unidecode/table"
+	"github.com/spencercnorton/bitagent/internal/lexer"
 )
 
 func Tokenize(str string) [][]string {

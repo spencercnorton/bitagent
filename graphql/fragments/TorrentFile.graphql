@@ -1,9 +1,0 @@
-fragment TorrentFile on TorrentFile {
-  infoHash
-  index
-  path
-  size
-  fileType
-  createdAt
-  updatedAt
-}

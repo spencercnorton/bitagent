@@ -1,8 +1,8 @@
 package classifier
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 const addTagName = "add_tag"
@@ -44,7 +44,7 @@ func (addTagAction) compileAction(ctx compilerContext) (action, error) {
 	}
 
 	return action{
-		func(ctx executionContext) (classification.Result, error) {
+		run: func(ctx executionContext) (classification.Result, error) {
 			cl := ctx.result
 			if cl.Tags == nil {
 				cl.Tags = make(map[string]struct{})

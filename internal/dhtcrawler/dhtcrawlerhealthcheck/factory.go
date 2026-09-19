@@ -3,9 +3,9 @@ package dhtcrawlerhealthcheck
 import (
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/concurrency"
-	"github.com/bitmagnet-io/bitmagnet/internal/health"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/server"
+	"github.com/spencercnorton/bitagent/internal/concurrency"
+	"github.com/spencercnorton/bitagent/internal/health"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/server"
 	"go.uber.org/fx"
 )
 

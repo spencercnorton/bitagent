@@ -3,14 +3,18 @@ package server
 import (
 	"context"
 	"net/netip"
+	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/concurrency"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spencercnorton/bitagent/internal/concurrency"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht"
+	"github.com/spencercnorton/bitagent/internal/telemetry/dualemit"
 )
 
 type queryLimiter struct {
 	server       Server
 	queryLimiter concurrency.KeyedLimiter
+	waitHist     *dualemit.HistogramVec
 }
 
 func (s queryLimiter) start() error {
@@ -27,8 +31,12 @@ func (s queryLimiter) Query(
 	q string,
 	args dht.MsgArgs,
 ) (r dht.RecvMsg, err error) {
+	waitStart := time.Now()
 	if limitErr := s.queryLimiter.Wait(ctx, addr.Addr().String()); limitErr != nil {
 		return r, limitErr
+	}
+	if s.waitHist != nil {
+		s.waitHist.With(prometheus.Labels{labelQuery: q}).Observe(time.Since(waitStart).Seconds())
 	}
 
 	return s.server.Query(ctx, addr, q, args)

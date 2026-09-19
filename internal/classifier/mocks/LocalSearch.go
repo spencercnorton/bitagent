@@ -5,7 +5,7 @@ package classifier_mocks
 import (
 	context "context"
 
-	model "github.com/bitmagnet-io/bitmagnet/internal/model"
+	model "github.com/spencercnorton/bitagent/internal/model"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -150,4 +150,33 @@ func NewLocalSearch(t interface {
 	t.Cleanup(func() { mock.AssertExpectations(t) })
 
 	return mock
+}
+
+// ContentCandidatesBySearch provides a mock function with given fields: _a0, _a1, _a2, _a3, _a4
+func (_m *LocalSearch) ContentCandidatesBySearch(_a0 context.Context, _a1 model.ContentType, _a2 string, _a3 model.Year, _a4 int) ([]model.Content, error) {
+	ret := _m.Called(_a0, _a1, _a2, _a3, _a4)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ContentCandidatesBySearch")
+	}
+
+	var r0 []model.Content
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, model.ContentType, string, model.Year, int) ([]model.Content, error)); ok {
+		return rf(_a0, _a1, _a2, _a3, _a4)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, model.ContentType, string, model.Year, int) []model.Content); ok {
+		r0 = rf(_a0, _a1, _a2, _a3, _a4)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]model.Content)
+		}
+	}
+	if rf, ok := ret.Get(1).(func(context.Context, model.ContentType, string, model.Year, int) error); ok {
+		r1 = rf(_a0, _a1, _a2, _a3, _a4)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
 }

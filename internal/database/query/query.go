@@ -9,11 +9,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/database/dao"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/exclause"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/fts"
-	"github.com/bitmagnet-io/bitmagnet/internal/maps"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
+	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/database/exclause"
+	"github.com/spencercnorton/bitagent/internal/database/fts"
+	"github.com/spencercnorton/bitagent/internal/maps"
+	"github.com/spencercnorton/bitagent/internal/model"
 	"gorm.io/gen"
 	"gorm.io/gen/field"
 	"gorm.io/gorm"
@@ -160,6 +160,14 @@ func (gq *genericQuery[_]) doCount() {
 // The CTE strategy uses a stopping point, and will only return items where there are fewer than the stopping point.
 func (gq *genericQuery[T]) doItems() {
 	if !gq.builder.hasZeroLimit() || gq.builder.needsNextPage() {
+		if gq.builder.groupingSpec() != nil {
+			// Grouped mode has its own single-strategy execution: the default and
+			// CTE strategies below build flat (ungrouped) queries and would return
+			// torrent-level rows. Never race them here.
+			gq.doItemsGrouped()
+			return
+		}
+
 		var finalItems []T
 
 		doneChan := make(chan error)
@@ -279,6 +287,68 @@ func (gq *genericQuery[T]) doItems() {
 	}
 }
 
+// doItemsGrouped executes the grouped (DISTINCT ON per key) item query as an
+// inner/outer derived table:
+//
+//	SELECT * FROM (
+//	  SELECT DISTINCT ON (<key>) <table>.*, <user-order exprs AS _order_N>
+//	  FROM <table> <joins> WHERE <facets + matched-only>
+//	  ORDER BY <key>, <representative tiebreak>   -- picks highest-seeded per key
+//	) grouped
+//	ORDER BY <user _order_N> LIMIT <n+1> OFFSET <k>
+//
+// The inner subquery is built by the framework (newSubQuery -> applySelect with
+// the DISTINCT ON, applyPre with joins/facets/tsquery/matched-only scope), so
+// every facet, the full-text predicate and the order-by joins compose for free.
+// It is rendered to SQL and wrapped exactly like the CTE strategy in doItems
+// (dao.ToSQL + string append), because the framework has no derived-table
+// primitive. Hydration of the representative's Torrent/Content happens via the
+// usual callbacks. Grouped mode never races the default/CTE strategies.
+func (gq *genericQuery[T]) doItemsGrouped() {
+	spec := gq.builder.groupingSpec()
+
+	sqInner, sqErr := gq.newSubQuery(gq.ctx, true)
+	if sqErr != nil {
+		gq.addError(sqErr)
+		return
+	}
+
+	// Representative-selection ORDER BY. Appended as raw SQL (mirroring the CTE
+	// strategy's "+ LIMIT" pattern) so it lands outside/after the framework's
+	// rendered inner SELECT. spec.innerOrderSQL leads with the DISTINCT ON key
+	// (a Postgres requirement) and ends in a group-unique tiebreak.
+	innerSQL := dao.ToSQL(sqInner.UnderlyingDB()) + " ORDER BY " + spec.innerOrderSQL
+
+	// Outer: re-order the representatives by the user's orderBy (_order_N aliases
+	// projected into the derived table by the inner) and paginate. applyPost adds
+	// the ORDER BY / LIMIT(+1 for hasNextPage) / OFFSET.
+	outerDB := gq.factory(gq.ctx, gq.daoQ).UnderlyingDB().Table("(" + innerSQL + ") AS grouped")
+	if postErr := gq.builder.applyPost(outerDB); postErr != nil {
+		gq.addError(postErr)
+		return
+	}
+
+	var items []T
+	if scanErr := outerDB.Scan(&items).Error; scanErr != nil {
+		gq.addError(scanErr)
+		return
+	}
+
+	if gq.builder.hasNextPage(len(items)) {
+		gq.result.HasNextPage = true
+		items = items[:len(items)-1]
+	}
+
+	if len(items) > 0 {
+		if cbErr := gq.builder.applyCallbacks(gq.ctx, items); cbErr != nil {
+			gq.addError(cbErr)
+			return
+		}
+	}
+
+	gq.result.Items = items
+}
+
 type BaseSubQuery interface {
 	Count() (int64, error)
 	TableName() string
@@ -373,6 +443,7 @@ type OptionBuilder interface {
 	Limit(uint) OptionBuilder
 	Offset(uint) OptionBuilder
 	Group(...clause.Column) OptionBuilder
+	GroupByDistinctOn(distinctOnSQL, innerOrderSQL string) OptionBuilder
 	Facet(...Facet) OptionBuilder
 	Preload(...field.RelationField) OptionBuilder
 	Callback(...Callback) OptionBuilder
@@ -393,6 +464,7 @@ type OptionBuilder interface {
 	hasNextPage(nItems int) bool
 	withCurrentFacet(string) OptionBuilder
 	shouldTryCteStrategy() bool
+	groupingSpec() *groupingSpec
 	createContext(context.Context) context.Context
 }
 
@@ -405,6 +477,7 @@ type optionBuilder struct {
 	scopes            []Scope
 	selections        []clause.Expr
 	groupBy           []clause.Column
+	grouping          *groupingSpec
 	orderBy           []OrderByColumn
 	limit             model.NullUint
 	nextPage          bool
@@ -416,6 +489,30 @@ type optionBuilder struct {
 	aggregationBudget float64
 	callbacks         []Callback
 	contextFn         func(context.Context) context.Context
+}
+
+// groupingSpec configures a DISTINCT-ON-per-key grouping executed as a derived
+// table: one representative row is emitted per distinct key, and the outer
+// query re-orders those representatives by the user's orderBy and paginates.
+//
+// It exists because the framework otherwise builds a single flat query
+// (applySelect -> applyPre -> applyPost on one *gorm.DB); grouping needs an
+// inner/outer split because DISTINCT ON requires its own key-leading ORDER BY
+// to pick representatives, which differs from the user's page ORDER BY.
+//
+// distinctOnSQL and innerOrderSQL are trusted, caller-supplied SQL fragments
+// (never user input — see search.TorrentContentGroupByContentOption), mirroring
+// the raw-SQL ordering fragments already used in order_torrent_content.go.
+type groupingSpec struct {
+	// distinctOnSQL is the DISTINCT ON (...) key expression list, e.g.
+	// "torrent_contents.content_type, torrent_contents.content_source, torrent_contents.content_id".
+	distinctOnSQL string
+	// innerOrderSQL is the inner ORDER BY that selects each group's
+	// representative. It MUST begin with distinctOnSQL's columns (a Postgres
+	// DISTINCT ON requirement) and MUST end in a column unique within a group so
+	// representative selection is deterministic across page fetches, e.g.
+	// "...content_id, COALESCE(torrent_contents.seeders, -1) DESC, torrent_contents.info_hash".
+	innerOrderSQL string
 }
 
 type RawJoin struct {
@@ -491,6 +588,19 @@ func (b optionBuilder) Select(selections ...clause.Expr) OptionBuilder {
 func (b optionBuilder) Group(columns ...clause.Column) OptionBuilder {
 	b.groupBy = append(b.groupBy, columns...)
 	return b
+}
+
+func (b optionBuilder) GroupByDistinctOn(distinctOnSQL, innerOrderSQL string) OptionBuilder {
+	b.grouping = &groupingSpec{
+		distinctOnSQL: distinctOnSQL,
+		innerOrderSQL: innerOrderSQL,
+	}
+
+	return b
+}
+
+func (b optionBuilder) groupingSpec() *groupingSpec {
+	return b.grouping
 }
 
 func (b optionBuilder) OrderBy(columns ...OrderByColumn) OptionBuilder {
@@ -597,9 +707,19 @@ func (b optionBuilder) applySelect(db *gorm.DB, withOrderSelect bool) error {
 
 	selectQueryArgs := make([]interface{}, 0)
 
-	if len(b.selections) == 0 {
+	switch {
+	case b.grouping != nil:
+		// Grouped mode: one representative row per distinct key. Select the full
+		// base-table row (qualified to avoid column collisions when order-by
+		// requires a join, e.g. torrent name) so the outer derived-table scan can
+		// hydrate the representative. b.selections is intentionally ignored here.
+		selectQueryParts = append(
+			selectQueryParts,
+			"DISTINCT ON ("+b.grouping.distinctOnSQL+") "+b.tableName+".*",
+		)
+	case len(b.selections) == 0:
 		selectQueryParts = append(selectQueryParts, "*")
-	} else {
+	default:
 		for _, s := range b.selections {
 			selectQueryParts = append(selectQueryParts, s.SQL)
 			selectQueryArgs = append(selectQueryArgs, s.Vars...)
@@ -810,6 +930,12 @@ func (b optionBuilder) applyCallbacks(ctx context.Context, results any) error {
 }
 
 func (b optionBuilder) shouldTryCteStrategy() bool {
+	if b.grouping != nil {
+		// Grouped mode has its own single execution strategy (doItemsGrouped) and
+		// must never race the CTE strategy, which builds an ungrouped query.
+		return false
+	}
+
 	if !b.limit.Valid || len(b.orderBy) == 0 {
 		return false
 	}

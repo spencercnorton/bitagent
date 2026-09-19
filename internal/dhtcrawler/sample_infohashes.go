@@ -5,10 +5,60 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
 )
 
+// nextSampleInterval is the backoff this crawler will wait before
+// re-querying a given peer's BEP-51 endpoint.
+//
+// BEP-51 (§"interval") allows a responder to advertise any value in
+// [0, 21600] seconds and requires clients to respect it. The original
+// upstream bitmagnet behaviour clamped productive peers to 60 s
+// regardless of their advertised interval — that is spec-hostile and
+// invites rate-limiting / blacklisting from well-behaved peers.
+//
+// Policy: **honour the peer's advertised interval unchanged.** If the
+// crawler needs more throughput, the right answer is to query more
+// peers, diversify targets, or improve peer selection — not to
+// violate the interval a peer asked for.
+//
+// `discoveredNew` is retained in the signature (rather than inlining
+// `fromPeer` at every call site) so future policy work can reason
+// about "did this peer give us anything useful" without reshaping
+// the caller again.
+func nextSampleInterval(fromPeer, discoveredNew int) int {
+	_ = discoveredNew
+
+	return fromPeer
+}
+
 func (c *crawler) getNodesForSampleInfoHashes(ctx context.Context) {
+	// BEP-42 enforcers reject sample_infohashes from nodes whose ID
+	// doesn't derive from their external IP. When we booted in
+	// random-fallback mode (external IP unresolvable → non-compliant
+	// node ID), every outbound sample_infohashes query is bandwidth
+	// we spend on a response that won't come — so we gate the
+	// feeder off until either the container is restarted by the
+	// external-IP watcher with a fresh compliant ID, or
+	// this process is stopped.
+	//
+	// Inbound sample_infohashes responses from peers still work
+	// (served by the responder on our server socket); we're only
+	// quieting our outbound side. Other RPCs (ping / find_node /
+	// get_peers / scrape) stay active because peers don't enforce
+	// BEP-42 on those.
+	if c.randomFallback {
+		c.logger.Warn(
+			"outbound sample_infohashes gated: crawler booted with random-fallback " +
+				"node ID (BEP-42 non-compliant). The external-IP watcher will " +
+				"restart the container once a valid egress IP is observable; " +
+				"inbound queries and all other RPCs remain active.",
+		)
+		<-ctx.Done()
+
+		return
+	}
+
 	for {
 		peers := c.kTable.GetNodesForSampleInfoHashes(60)
 		for _, p := range peers {
@@ -59,22 +109,19 @@ func (c *crawler) runSampleInfoHashes(ctx context.Context) {
 			}
 		}
 
-		interval := res.Interval
-		// most nodes request a 6 hour backoff time(!)
-		// if we're still discovering info hashes from them then let's set a respectful interval instead
-		if len(discoveredHashes) > 0 && interval > 300 {
-			interval = 60
-		}
+		interval := nextSampleInterval(res.Interval, len(discoveredHashes))
 
-		c.kTable.BatchCommand(ktable.PutNode{ID: n.ID(), Addr: n.Addr(), Options: []ktable.NodeOption{
-			ktable.NodeResponded(),
+		c.admitNodeFromReply(
+			n.ID(),
+			n.Addr(),
+			res.ReadOnly,
 			ktable.NodeBep51Support(true),
 			ktable.NodeSampleInfoHashesRes(
 				len(discoveredHashes),
 				res.Num,
 				time.Now().Add(time.Duration(interval)*time.Second),
 			),
-		}})
+		)
 
 		if len(res.Nodes) > 0 {
 			// block on the channel for up to a second trying to add sampled nodes to the discoveredNodes

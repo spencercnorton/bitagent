@@ -3,14 +3,14 @@
 package ktable_mocks
 
 import (
-	ktable "github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable"
-	btree "github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable/btree"
+	ktable "github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
+	btree "github.com/spencercnorton/bitagent/internal/protocol/dht/ktable/btree"
 
 	mock "github.com/stretchr/testify/mock"
 
 	netip "net/netip"
 
-	protocol "github.com/bitmagnet-io/bitmagnet/internal/protocol"
+	protocol "github.com/spencercnorton/bitagent/internal/protocol"
 
 	time "time"
 )
@@ -572,6 +572,54 @@ func (_c *Table_SampleHashesAndNodes_Call) Return(_a0 ktable.SampleHashesAndNode
 }
 
 func (_c *Table_SampleHashesAndNodes_Call) RunAndReturn(run func() ktable.SampleHashesAndNodesResult) *Table_SampleHashesAndNodes_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SnapshotNodeAddrs provides a mock function with given fields: limit
+func (_m *Table) SnapshotNodeAddrs(limit int) []netip.AddrPort {
+	ret := _m.Called(limit)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SnapshotNodeAddrs")
+	}
+
+	var r0 []netip.AddrPort
+	if rf, ok := ret.Get(0).(func(int) []netip.AddrPort); ok {
+		r0 = rf(limit)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]netip.AddrPort)
+		}
+	}
+
+	return r0
+}
+
+// Table_SnapshotNodeAddrs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SnapshotNodeAddrs'.
+type Table_SnapshotNodeAddrs_Call struct {
+	*mock.Call
+}
+
+// SnapshotNodeAddrs is a helper method to define mock.On call
+//   - limit int
+func (_e *Table_Expecter) SnapshotNodeAddrs(limit interface{}) *Table_SnapshotNodeAddrs_Call {
+	return &Table_SnapshotNodeAddrs_Call{Call: _e.mock.On("SnapshotNodeAddrs", limit)}
+}
+
+func (_c *Table_SnapshotNodeAddrs_Call) Run(run func(limit int)) *Table_SnapshotNodeAddrs_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(int))
+	})
+	return _c
+}
+
+func (_c *Table_SnapshotNodeAddrs_Call) Return(_a0 []netip.AddrPort) *Table_SnapshotNodeAddrs_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *Table_SnapshotNodeAddrs_Call) RunAndReturn(run func(int) []netip.AddrPort) *Table_SnapshotNodeAddrs_Call {
 	_c.Call.Return(run)
 	return _c
 }

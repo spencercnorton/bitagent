@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/keywords"
+	"github.com/spencercnorton/bitagent/internal/keywords"
 )
 
 // VideoSource represents the source of a video

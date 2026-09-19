@@ -1,0 +1,3323 @@
+# Labelled corpus for the deterministic exclusion classifiers.
+#
+# Every case is run through the REAL core workflow by
+# internal/classifier/exclusion_precision_test.go under the live production
+# flags (delete_xxx=true, delete_content_types=music,ebook,audiobook,comic,
+# game,software,course).
+#
+#   expect: keep    -> the workflow must NOT return ErrDeleteTorrent.
+#                      A violation fails the build. There is no acceptable
+#                      count above zero: the delete drops the torrents row and
+#                      adds the infohash to the blocking bloom filter, which has
+#                      no removal operation.
+#   expect: delete  -> the workflow should return ErrDeleteTorrent.
+#                      Misses are reported and gated by recallFloor, not by
+#                      zero: a missed adult or course release falls through to
+#                      the LLM/quarantine path, which is recoverable.
+#
+#   type            -> what the content actually is. Used only to group the
+#                      reported precision/recall table.
+#   files           -> "path|sizeMB". The extension rules are size-weighted, so
+#                      realistic sizes matter.
+#
+# WHEN A WRONG CALL IS FOUND IN PRODUCTION, ADD IT HERE. That is the whole
+# feedback loop — the row is what stops the same call being made twice.
+
+cases:
+- name: The.Matrix.1999.NTSC.DVD9.Untouched-SANTi
+  files:
+  - The.Matrix.1999.NTSC.DVD9-SANTi.iso|7850
+  - santi-matrix.nfo|0.01
+  - santi-matrix.sfv|0.01
+  expect: keep
+  type: movie
+  why: 'software rule: ''iso'' is in BOTH extensions.software and extensions.video, so 7850MB software - 0.02MB other > 0 -> software -> HARD DELETE. Wrong: this is a retail DVD9 movie image, and Merge() will not let parse_video_c'
+- name: Heat.1995.COMPLETE.BLURAY-UNTOUCHED
+  files:
+  - Heat.1995.COMPLETE.BLURAY-UNTOUCHED.iso|44100
+  - untouched-heat.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'software rule fires on the single BD50 .iso (44100MB software - 0.01 other > 0) -> software -> deleted. Wrong: full-disc Blu-ray of a catalogued film.'
+- name: Serenity.2005.COMPLETE.HDDVD-HDCLUB
+  files:
+  - Serenity.2005.COMPLETE.HDDVD-HDCLUB.iso|24800
+  - hdclub.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'software rule fires on the HD DVD .iso (24800MB) -> software -> deleted. Wrong: same defect applies to every optical-disc video image format, not just DVD/BD.'
+- name: Spirited.Away.2001.NTSC.DVD9.REMASTERED-DiAMOND
+  files:
+  - SPIRITED_AWAY_D1.iso|7620
+  - spirited.nfo|0.01
+  - cover.jpg|1.4
+  expect: keep
+  type: movie
+  why: 'software rule: 7620MB .iso - 1.41MB other > 0 -> software -> deleted. The .jpg counts as ''other'' but is far too small to save it. Wrong: animated feature film.'
+- name: Dune.2021.COMPLETE.UHD.BLURAY-TERMiNAL
+  files:
+  - Dune.2021.COMPLETE.UHD.BLURAY-TERMiNAL.iso|82500
+  expect: keep
+  type: movie
+  why: 'software rule fires on an 82500MB UHD BD100 .iso -> software -> deleted. Wrong: the largest, most valuable movie releases in the swarm are exactly the ones this rule eats.'
+- name: The.Sopranos.S01.NTSC.DVD9.COMPLETE-REPLiCA
+  files:
+  - Sopranos.S01.D1.iso|7810
+  - Sopranos.S01.D2.iso|7790
+  - Sopranos.S01.D3.iso|7830
+  - Sopranos.S01.D4.iso|7250
+  - replica.nfo|0.01
+  expect: keep
+  type: tv_show
+  why: 'software rule: 30680MB of .iso - 0.01MB other > 0 -> software -> deleted. Wrong: a complete-season TV DVD boxset; no video rule exists to win first.'
+- name: Band.of.Brothers.2001.COMPLETE.BLURAY-HDMaNiAcS
+  files:
+  - BOB.D1.iso|45000
+  - BOB.D2.iso|45000
+  - BOB.D3.iso|43200
+  - hdmaniacs.nfo|0.01
+  expect: keep
+  type: tv_show
+  why: 'software rule fires on 133200MB of Blu-ray .iso -> software -> deleted. Wrong: miniseries disc set.'
+- name: Cowboy.Bebop.1998.COMPLETE.NTSC.DVD.BOXSET-ANiME
+  files:
+  - CB_DISC1.iso|4400
+  - CB_DISC2.iso|4400
+  - CB_DISC3.iso|4380
+  - CB_DISC4.iso|4410
+  - anime.nfo|0.01
+  expect: keep
+  type: tv_show
+  why: 'software rule fires on 17590MB of DVD5 .iso -> software -> deleted. Wrong: anime series DVD boxset. Nothing earlier in the chain (audiobook/comic/ebook/music) matches.'
+- name: Planet.Earth.2006.COMPLETE.BLURAY-HDCLUB
+  files:
+  - Planet.Earth.D1.iso|44800
+  - Planet.Earth.D2.iso|44600
+  - hdclub-pe.nfo|0.01
+  expect: keep
+  type: tv_show
+  why: 'software rule fires on 89400MB of .iso -> software -> deleted. Wrong: documentary series; the BBC disc set has no software content whatsoever.'
+- name: Twin.Peaks.S01.1990.NTSC.DVD5.COMPLETE-TDF
+  files:
+  - TWIN_PEAKS_S1_D1.iso|4390
+  - TWIN_PEAKS_S1_D2.iso|4400
+  - TWIN_PEAKS_S1_D3.iso|4370
+  - tdf-tp.nfo|0.01
+  expect: keep
+  type: tv_show
+  why: 'software rule: 13160MB .iso - 0.01 other > 0 -> software -> deleted. Wrong: TV season DVD set.'
+- name: Stop.Making.Sense.1984.COMPLETE.BLURAY-HDMaNiAcS
+  files:
+  - Stop.Making.Sense.1984.COMPLETE.BLURAY.iso|23100
+  - sms.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'software rule fires on the 23100MB .iso -> software -> deleted. Note the music rule does NOT fire first: extensions.music is only ape/dsf/flac and no keywords.music token matches this title, so the concert film is lost t'
+- name: Apocalypse.Now.Redux.1979.PAL.DVD9-DiAMOND
+  files:
+  - APOCALYPSE_NOW_REDUX.iso|7900
+  - diamond.nfo|0.01
+  - diamond.sfv|0.01
+  expect: keep
+  type: movie
+  why: 'software rule: 7900MB .iso dominates -> software -> deleted. Wrong: feature film DVD9 image.'
+- name: Seinfeld.S04.NTSC.DVD5.COMPLETE-TDF
+  files:
+  - SEINFELD_S4_D1.iso|4380
+  - SEINFELD_S4_D2.iso|4400
+  - SEINFELD_S4_D3.iso|4360
+  - SEINFELD_S4_D4.iso|4340
+  expect: keep
+  type: tv_show
+  why: 'software rule fires on 17480MB of .iso -> software -> deleted. Wrong: sitcom season DVD boxset.'
+- name: Alien.1979.COMPLETE.BLURAY-UNTOUCHED
+  files:
+  - Alien.1979.COMPLETE.BLURAY-UNTOUCHED.iso|43800
+  - untouched.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'software rule fires on the 43800MB BD50 .iso -> software -> deleted. Wrong: catalogued feature film.'
+- name: Mad.Max.Fury.Road.2015.3D.COMPLETE.BLURAY-BLUEBIRD
+  files:
+  - Mad.Max.Fury.Road.2015.3D.BLURAY.iso|46200
+  - bluebird.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'software rule fires on the 46200MB 3D BD .iso -> software -> deleted. Wrong: 3D disc images are the only distribution format for this version, so the whole category is unrecoverable.'
+- name: The.Godfather.1972.NTSC.DVD9.REMASTERED-DiAMOND
+  files:
+  - THE_GODFATHER_1972.iso|7840
+  - Booklet/the-godfather-booklet.pdf|28
+  - diamond.nfo|0.01
+  expect: keep
+  type: movie
+  why: ebook rule runs first but does not fire (28MB pdf - 7840MB other < 0); software rule then fires on the .iso (7840 - 28 > 0) -> software -> deleted. A bundled PDF booklet is nowhere near enough to shift the outcome.
+- name: The.Blair.Witch.Project.1999.SVCD-DVL
+  files:
+  - dvl-bwp-cd1.bin|795
+  - dvl-bwp-cd1.cue|0.01
+  - dvl-bwp-cd2.bin|780
+  - dvl-bwp-cd2.cue|0.01
+  - dvl-bwp.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'software rule fires on ''bin'' (1575MB - 0.03MB other > 0) -> software -> deleted. Worse than the iso case: ''bin'' is software-ONLY, so a VCD/SVCD movie rip has zero video bytes by the classifier''s reckoning.'
+- name: Das.Boot.1981.Directors.Cut.PAL.DVD9-CULT
+  files:
+  - Das.Boot.1981.DC.PAL.DVD9.iso|7780
+  - Das.Boot.1981.DC.PAL.DVD9.mds|0.6
+  - cult.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'software rule fires on the .iso (7780MB); the .mds sidecar is an unlisted extension so it only adds 0.6MB to ''other'' -> software -> deleted. Wrong: feature film disc image.'
+- name: CBT.Nuggets.Cisco.CCNA.200-301.Complete.Course
+  files:
+  - 01-Network.Fundamentals.mp4|980
+  - 02-Network.Access.mp4|1120
+  - 03-IP.Connectivity.mp4|860
+  - 04-Security.Fundamentals.mp4|540
+  - Lab/CentOS-7-x86_64-DVD-2009.iso|4400
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): software rule: 4400MB lab .iso - 3500MB of mp4 = +900 > 0 -> software -> deleted. This is the non-obvious false positive: a video training course tips over the line purely because it ships one bootable lab image.'
+- name: Battlestar.Galactica.S01.2004.NTSC.DVD9.COMPLETE-REPLiCA
+  files:
+  - BSG_S1_D1.iso|7800
+  - BSG_S1_D2.iso|7790
+  - BSG_S1_D3.iso|7810
+  - BSG_S1_D4.iso|7460
+  - replica-bsg.nfo|0.01
+  expect: keep
+  type: tv_show
+  why: 'software rule fires on 30860MB of .iso -> software -> deleted. Wrong: TV season DVD boxset.'
+- name: Amadeus.1984.Directors.Cut.NTSC.DVD9-SANTi
+  files:
+  - AMADEUS_DC.iso|7860
+  - santi-amadeus.nfo|0.01
+  expect: keep
+  type: movie
+  why: software rule fires on the 7860MB .iso -> software -> deleted. Note 'classical' is a keywords.music token but does not appear in the name, so music does not intercept; software still kills it.
+- name: The.Wire.S01.NTSC.DVD9.COMPLETE-REPLiCA
+  files:
+  - THE_WIRE_S1_D1.iso|7820
+  - THE_WIRE_S1_D2.iso|7790
+  - THE_WIRE_S1_D3.iso|7800
+  - THE_WIRE_S1_D4.iso|7180
+  expect: keep
+  type: tv_show
+  why: 'software rule fires on 30590MB of .iso -> software -> deleted. Wrong: TV season disc set.'
+- name: Neon.Genesis.Evangelion.1995.COMPLETE.NTSC.DVD-ANiME
+  files:
+  - NGE_D1.iso|4400
+  - NGE_D2.iso|4390
+  - NGE_D3.iso|4400
+  - NGE_D4.iso|4370
+  - NGE_D5.iso|4380
+  expect: keep
+  type: tv_show
+  why: 'software rule fires on 21940MB of DVD5 .iso -> software -> deleted. Wrong: anime series DVD set.'
+- name: The.Big.Lebowski.1998.DVDRip.XviD-DiAMOND
+  files:
+  - The.Big.Lebowski.1998.DVDRip.XviD-DiAMOND.avi|1396
+  - Codecs/K-Lite.Codec.Pack.Basic.exe|45
+  - diamond-tbl.nfo|0.01
+  - Sample/sample.avi|24
+  expect: keep
+  type: movie
+  why: 'CONTROL: software rule does NOT fire — 45MB .exe - 1420MB other < 0 -> stays unknown, survives. Answers the probe: a bundled installer in a normal movie release never dominates, because the video is 30x its size.'
+- name: Casino.Royale.2006.PAL.DVDR.VIDEO_TS-TDF
+  files:
+  - VIDEO_TS/VTS_01_1.VOB|1024
+  - VIDEO_TS/VTS_01_2.VOB|1024
+  - VIDEO_TS/VTS_01_3.VOB|1024
+  - VIDEO_TS/VTS_01_0.IFO|0.1
+  - VIDEO_TS/VTS_01_0.BUP|0.1
+  - VIDEO_TS/VIDEO_TS.IFO|0.05
+  expect: keep
+  type: movie
+  why: 'CONTROL: an unpacked VIDEO_TS DVD rip has no software extension at all (''vob'' is video-only; ifo/bup are unlisted) -> no rule fires, survives. Same disc, same content, opposite outcome purely because of the container.'
+- name: Akira.1988.COMPLETE.BLURAY-CtrlHD
+  files:
+  - BDMV/STREAM/00001.m2ts|38400
+  - BDMV/STREAM/00002.m2ts|1200
+  - BDMV/index.bdmv|0.03
+  - CERTIFICATE/id.bdmv|0.01
+  expect: keep
+  type: movie
+  why: 'CONTROL: a folder-structure Blu-ray rip uses .m2ts, which is in NO extension list -> no rule fires, survives. Demonstrates the coverage is arbitrary: the .iso of this exact disc would be deleted.'
+- name: Ghost.in.the.Shell.1995.PAL.DVDR-CULT
+  files:
+  - Ghost.in.the.Shell.1995.PAL.DVDR.mdf|4310
+  - Ghost.in.the.Shell.1995.PAL.DVDR.mds|0.6
+  - cult-gits.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'CONTROL: an Alcohol 120% .mdf/.mds disc image is unlisted in every extension set -> no rule fires, survives. Identical content to a deleted .iso; the rule is format-lottery, not content-based.'
+- name: The.Thing.1982.1080p.BluRay.x264.DTS-HD.MA.5.1-FGT
+  files:
+  - The.Thing.1982.1080p.BluRay.x264-FGT.mkv|9520
+  - Extras/The.Thing.Bonus.Disc.iso|4400
+  - fgt.nfo|0.01
+  - The.Thing.1982.eng.srt|0.1
+  expect: keep
+  type: movie
+  why: 'CONTROL / near miss: software = 4400MB .iso, other = 9520MB mkv -> 4400 - 9520 < 0, does not fire, survives. A bonus-disc image only kills the torrent if it outweighs the main video.'
+- name: Interstellar.2014.2160p.UHD.BluRay.x265.HDR.DTS-HD.MA.5.1-TERMiNAL
+  files:
+  - Interstellar.2014.2160p.UHD.BluRay.x265-TERMiNAL.mkv|54800
+  - Interstellar.2014.eng.srt|0.12
+  - terminal.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'CONTROL: pure .mkv release, no software extension present -> software rule does not fire, survives. The normal-shaped movie torrent is safe; only disc images are at risk.'
+- name: Fullmetal.Alchemist.Brotherhood.S01.1080p.BluRay.x264-CtrlHD
+  files:
+  - FMAB.S01E01.1080p.BluRay.x264-CtrlHD.mkv|1420
+  - FMAB.S01E02.1080p.BluRay.x264-CtrlHD.mkv|1390
+  - FMAB.S01E03.1080p.BluRay.x264-CtrlHD.mkv|1405
+  - rename.bat|0.002
+  - ctrlhd.nfo|0.01
+  expect: keep
+  type: tv_show
+  why: 'CONTROL: ''bat'' is a software extension but the rename script is 2KB against 4215MB of mkv -> 0.002 - 4215 < 0, does not fire, survives. Tiny helper scripts are harmless to the rule.'
+- name: The.Web.Developer.Bootcamp.2024.Colt.Steele.Udemy
+  files:
+  - 01-Introduction/01-Course.Orientation.mp4|180
+  - 02-HTML/01-HTML.Basics.mp4|240
+  - 03-CSS/02-Flexbox.mp4|310
+  - 04-JavaScript/03-Async.mp4|420
+  - project-files.zip|85
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): CONTROL: mp4 lessons plus a .zip (unlisted) -> no software extension present, software rule does not fire, survives. Contrast with the CBT Nuggets case: only the bundled lab .iso creates the false positive.'
+- name: ubuntu-24.04.1-desktop-amd64.iso
+  files:
+  - ubuntu-24.04.1-desktop-amd64.iso|6100
+  - SHA256SUMS|0.001
+  expect: delete
+  type: software
+  why: 'software rule fires on the 6100MB .iso -> software -> deleted. Correct: this genuinely is an operating system installer image.'
+- name: debian-12.7.0-amd64-DVD-1.iso
+  files:
+  - debian-12.7.0-amd64-DVD-1.iso|3800
+  - SHA512SUMS|0.001
+  expect: delete
+  type: software
+  why: 'software rule fires on the .iso -> software -> deleted. Correct: Linux distribution image, the intended target of the rule.'
+- name: Windows.11.Pro.23H2.x64.en-US.Retail.ISO
+  files:
+  - Win11_23H2_English_x64.iso|6400
+  - readme.txt|0.002
+  expect: delete
+  type: software
+  why: 'software rule fires on the .iso -> software -> deleted. Correct: OS installer.'
+- name: Adobe.Photoshop.2024.v25.3.1.macOS.Multilingual-TNT
+  files:
+  - Adobe.Photoshop.2024.v25.3.1.dmg|3900
+  - Install.pkg|12
+  - readme-tnt.txt|0.002
+  expect: delete
+  type: software
+  why: 'software rule fires on ''dmg'' + ''pkg'' (3912MB - 0.002 other > 0) -> software -> deleted. Correct: commercial application.'
+- name: Microsoft.Office.LTSC.ProPlus.2021.x64.VL-ISO
+  files:
+  - Office.LTSC.ProPlus.2021.x64.iso|4200
+  - activator/setup.exe|8
+  expect: delete
+  type: software
+  why: 'software rule fires on ''iso'' + ''exe'' -> software -> deleted. Correct: office suite installer.'
+- name: Kali.Linux.2024.3.Installer.amd64.iso
+  files:
+  - kali-linux-2024.3-installer-amd64.iso|4300
+  expect: delete
+  type: software
+  why: 'software rule fires on the .iso -> software -> deleted. Correct: Linux distribution image.'
+- name: macOS.Sonoma.14.5.23F79.InstallAssistant
+  files:
+  - Install.macOS.Sonoma.14.5.dmg|13200
+  - InstallAssistant.pkg|12800
+  expect: delete
+  type: software
+  why: 'software rule fires on ''dmg'' and ''pkg'' -> software -> deleted. Correct: operating system installer.'
+- name: Spotify.Premium.v8.9.44.MOD.APK.Android
+  files:
+  - Spotify.Premium.v8.9.44.apk|94
+  - install-instructions.txt|0.002
+  expect: delete
+  type: software
+  why: 'software rule fires on ''apk'' (94MB - 0.002 other > 0) -> software -> deleted. Correct: an Android application package. Note the music rule does not intercept despite the name — extensions.music/audio contain no apk.'
+- name: Shadow.of.the.Colossus.PS2.NTSC-U.iso
+  files:
+  - Shadow.of.the.Colossus.PS2.NTSC-U.iso|4300
+  - cover.jpg|1.1
+  expect: delete
+  type: game
+  why: 'software rule fires on the 4300MB .iso -> typed software -> deleted. Deletion is the correct live outcome (game is also in delete_content_types) but the LABEL is wrong: no game rule exists, so every console disc image la'
+  gap: true
+- name: Metroid.Prime.GCN.NTSC.iso
+  files:
+  - Metroid.Prime.GCN.NTSC.iso|1350
+  - gc-cover.png|0.9
+  expect: delete
+  type: game
+  why: 'software rule fires on the 1350MB GameCube .iso -> software -> deleted. Correct outcome under the live config, wrong content type: this is ''game'', which has no rule of its own.'
+  gap: true
+- name: Super.Mario.Galaxy.Wii.NTSC.Scrubbed.iso
+  files:
+  - Super.Mario.Galaxy.Wii.NTSC.iso|4400
+  - readme.txt|0.001
+  expect: delete
+  type: game
+  why: 'software rule fires on the 4400MB Wii .iso -> software -> deleted. Right outcome, wrong type. Contrast: the same dump as .wbfs or .rvz matches no extension list and would survive.'
+  gap: true
+- name: Halo.3.XBOX360.NTSC.XGD3-COMPLEX
+  files:
+  - complex-halo3.iso|7200
+  - complex-halo3.nfo|0.01
+  - complex-halo3.sfv|0.01
+  expect: delete
+  type: game
+  why: software rule fires on the 7200MB Xbox 360 .iso -> software -> deleted. Correct live outcome; the type should be 'game'.
+  gap: true
+- name: The.Witcher.3.Wild.Hunt.GOTY.GOG.v4.04-FitGirl
+  files:
+  - setup_the_witcher_3_goty_4.04.exe|1040
+  - setup_the_witcher_3_goty_4.04-1.bin|4000
+  - setup_the_witcher_3_goty_4.04-2.bin|4000
+  - setup_the_witcher_3_goty_4.04-3.bin|3600
+  - fg-optional/readme.txt|0.002
+  expect: delete
+  type: game
+  why: software rule fires on 'exe' + 'bin' (12640MB - 0.002 other > 0) -> software -> deleted. Correct live outcome; a PC game installer is indistinguishable from application software by extension alone.
+  gap: true
+- name: Minecraft.Java.1.20.1.Forge.All.The.Mods.9.Modpack
+  files:
+  - mods/atm9-core.jar|180
+  - mods/jei-1.20.1.jar|22
+  - forge-1.20.1-installer.jar|8
+  - config/settings.txt|0.01
+  expect: delete
+  type: game
+  why: software rule fires on 'jar' (210MB - 0.01 other > 0) -> software -> deleted. Correct live outcome; the type should be 'game' (mod content), and .jar cannot distinguish a modpack from a Java application.
+  gap: true
+- name: Pink.Floyd-The.Dark.Side.Of.The.Moon-SACD-ISO-1973-remastered
+  files:
+  - Pink.Floyd-The.Dark.Side.Of.The.Moon.SACD.iso|4180
+  - scans/front.jpg|8
+  - info.txt|0.002
+  expect: delete
+  type: music
+  why: music rule does NOT fire (extensions.music is ape/dsf/flac only — the DSD layer is sealed inside the .iso — and no keywords.music token appears in the name); software rule then fires on the 4180MB .iso -> software -> del
+- name: Daft.Punk-Discovery-2001-CDImage.BIN.CUE-EOS
+  files:
+  - Daft.Punk-Discovery-2001.bin|782
+  - Daft.Punk-Discovery-2001.cue|0.002
+  - eos-dp.nfo|0.01
+  expect: delete
+  type: music
+  why: 'music rule does NOT fire: no ape/dsf/flac bytes, and the keyword ''disco'' cannot match ''Discovery'' because keywords compile to (^|\W+)(disco)(\W+|$) — whole-word only. Software rule then fires on ''bin'' -> software -> dele'
+- name: The.King.of.Kong.A.Fistful.of.Quarters.2007.1080p.WEB-DL.DD5.1.H.264-NTb
+  files:
+  - The.King.of.Kong.A.Fistful.of.Quarters.2007.1080p.WEB-DL.DD5.1.H.264-NTb.mkv|5400
+  - The.King.of.Kong.A.Fistful.of.Quarters.2007.1080p.WEB-DL.DD5.1.H.264-NTb.nfo|0.01
+  - Subs/English.srt|0.09
+  expect: keep
+  type: movie
+  why: No deterministic rule fires (no audio/comic/ebook/music/software ext, no xxx keyword) so it stays unknown and reaches video parsing as a movie - correct. Sole risk is an external feed hinting 'game' because the subject i
+- name: Indie.Game.The.Movie.2012.1080p.BluRay.x264-SPRiNTER
+  files:
+  - indie.game.the.movie.2012.1080p.bluray.x264-sprinter.mkv|8200
+  - indie.game.the.movie.2012.1080p.bluray.x264-sprinter.nfo|0.01
+  - Sample/sample.mkv|48
+  expect: keep
+  type: movie
+  why: keywords.music 'indie' DOES match baseName as a whole word, but the music rule's second branch also needs sum(audio bytes)-sum(other) > 0 and there are zero audio files, so music does not fire - correct keep. A feed cate
+- name: Video.Games.The.Movie.2014.1080p.WEB-DL.AAC2.0.H.264-GROUP
+  files:
+  - Video.Games.The.Movie.2014.1080p.WEB-DL.AAC2.0.H.264-GROUP.mkv|6100
+  - Video.Games.The.Movie.2014.1080p.WEB-DL.AAC2.0.H.264-GROUP.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'No rule matches (''game''/''games'' is not a keyword in any list) so it survives to movie parsing - correct. Highest-risk mis-hint shape in the whole corpus: the literal word ''Video Games'' in the title is exactly what a scra'
+- name: Free.to.Play.2014.1080p.WEB-DL.AAC2.0.H.264-GROUP
+  files:
+  - Free.to.Play.2014.1080p.WEB-DL.AAC2.0.H.264-GROUP.mp4|4800
+  - free.to.play.nfo|0.01
+  expect: keep
+  type: movie
+  why: Valve's Dota 2 documentary; no ext or keyword rule fires so it is kept - correct. 'Free to Play' is also a game-monetisation term, so a title-keyed external categoriser is likely to hint 'game' and delete a real document
+- name: Atari.Game.Over.2014.720p.WEBRip.x264-RARBG
+  files:
+  - Atari.Game.Over.2014.720p.WEBRip.x264-RARBG.mkv|1400
+  - Subs/Atari.Game.Over.2014.eng.srt|0.07
+  - RARBG.txt|0.001
+  expect: keep
+  type: movie
+  why: 'Nothing fires; .txt is in no extension list and the mkv keeps every size-weighted sum negative - correct keep. Mis-hint risk only: the string ''Atari'' plus ''Game'' is a near-certain ''Games'' category in any imported dump.'
+- name: High.Score.S01.1080p.NF.WEB-DL.DDP5.1.x264-NTb
+  files:
+  - High.Score.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|2300
+  - High.Score.S01E02.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|2250
+  - High.Score.S01E03.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|2400
+  - High.Score.S01E04.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|2180
+  - High.Score.S01E05.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|2260
+  - High.Score.S01E06.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|2310
+  expect: keep
+  type: tv_show
+  why: Netflix video-game docuseries; pure mkv payload means audiobook/comic/ebook/music/software/xxx all evaluate negative - correct keep. Only a 'game' hint from the import feed deletes it, and there is no file evidence the h
+- name: Arcane.S01E01.Welcome.to.the.Playground.1080p.NF.WEB-DL.DDP5.1.Atmos.H.264-NTb
+  files:
+  - Arcane.S01E01.Welcome.to.the.Playground.1080p.NF.WEB-DL.DDP5.1.Atmos.H.264-NTb.mkv|3100
+  - Arcane.S01E01.eng.srt|0.06
+  expect: keep
+  type: tv_show
+  why: No rule fires - correct keep. But 'Arcane' resolves to League of Legends in any game database, so a title-matched external hint of 'game' is plausible and would hard-delete an Emmy-winning series with no quarantine step.
+- name: The.Last.of.Us.S01E05.Endure.and.Survive.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb
+  files:
+  - The.Last.of.Us.S01E05.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb.mkv|3400
+  - The.Last.of.Us.S01E05.eng.srt|0.08
+  expect: keep
+  type: tv_show
+  why: 'Deterministic rules all evaluate negative on a single mkv - correct keep. The name is byte-identical to the Naughty Dog game title, the canonical mis-hint case: any feed doing title lookup against a game DB returns ''game'
+- name: Fallout.S01.COMPLETE.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX
+  files:
+  - Fallout.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX.mkv|3600
+  - Fallout.S01E02.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX.mkv|3520
+  - Fallout.S01E03.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX.mkv|3480
+  - Fallout.S01E04.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX.mkv|3610
+  - Fallout.S01E05.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX.mkv|3400
+  - Fallout.S01E06.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX.mkv|3550
+  expect: keep
+  type: tv_show
+  why: 'No ext/keyword rule matches - correct keep. Same mis-hint shape as The Last of Us: ''Fallout'' is a Bethesda franchise, and a hinted ''game'' bypasses the whole find_match block and goes straight to delete.'
+- name: Cyberpunk.Edgerunners.S01.1080p.NF.WEB-DL.DDP5.1.x264-NTb
+  files:
+  - Cyberpunk.Edgerunners.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|1900
+  - Cyberpunk.Edgerunners.S01E02.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|1850
+  - Cyberpunk.Edgerunners.S01E03.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|1920
+  - Cyberpunk.Edgerunners.S01E04.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|1880
+  expect: keep
+  type: tv_show
+  why: Nothing fires on pure mkv - correct keep. 'Cyberpunk' matches the game Cyberpunk 2077 for any fuzzy title-to-category mapper, so the hint path is the only false-positive vector and it is unguarded.
+- name: Red.vs.Blue.S01.1080p.WEB-DL.AAC2.0.H.264-GROUP
+  files:
+  - Red.vs.Blue.S01E01.1080p.WEB-DL.AAC2.0.H.264-GROUP.mp4|180
+  - Red.vs.Blue.S01E02.1080p.WEB-DL.AAC2.0.H.264-GROUP.mp4|175
+  - Red.vs.Blue.S01E03.1080p.WEB-DL.AAC2.0.H.264-GROUP.mp4|182
+  - Red.vs.Blue.S01E04.1080p.WEB-DL.AAC2.0.H.264-GROUP.mp4|168
+  expect: keep
+  type: tv_show
+  why: 'Rooster Teeth machinima series; all rules negative on mp4-only content - correct keep. Machinima is the worst hint case: it is literally rendered inside Halo, so a source that categorises by production method or engine w'
+- name: Tetris.2023.2160p.ATVP.WEB-DL.DDP5.1.Atmos.HDR.H.265-FLUX
+  files:
+  - Tetris.2023.2160p.ATVP.WEB-DL.DDP5.1.Atmos.HDR.H.265-FLUX.mkv|18400
+  - Tetris.2023.2160p.ATVP.WEB-DL.eng.srt|0.11
+  expect: keep
+  type: movie
+  why: No deterministic rule fires - correct keep. The baseName is exactly a game title with no disambiguating token other than the year, making it the single most likely film in this corpus to receive an external contentType=g
+- name: Gran.Turismo.2023.1080p.BluRay.DTS-HD.MA.5.1.x264-GROUP
+  files:
+  - Gran.Turismo.2023.1080p.BluRay.DTS-HD.MA.5.1.x264-GROUP.mkv|12800
+  - gran.turismo.2023.nfo|0.01
+  - Sample/sample.mkv|52
+  expect: keep
+  type: movie
+  why: No rule matches; software sum is negative because there is no .iso/.exe - correct keep. Title collides exactly with the PlayStation franchise, so the risk is entirely on the unvalidated hint path.
+- name: Free.Guy.2021.2160p.DSNP.WEB-DL.DDP5.1.Atmos.HDR.H.265-FLUX
+  files:
+  - Free.Guy.2021.2160p.DSNP.WEB-DL.DDP5.1.Atmos.HDR.H.265-FLUX.mkv|16200
+  - Free.Guy.2021.eng.srt|0.09
+  expect: keep
+  type: movie
+  why: No ext or keyword rule fires - correct keep. Game-themed film with no game-title collision, so hint risk is lower than Tetris/Fallout; included as the control that shows subject matter alone does not endanger a release.
+- name: Ready.Player.One.2018.1080p.BluRay.x264-SPARKS
+  files:
+  - ready.player.one.2018.1080p.bluray.x264-sparks.mkv|11400
+  - ready.player.one.2018.1080p.bluray.x264-sparks.nfo|0.01
+  - Subs/2_English.srt|0.1
+  expect: keep
+  type: movie
+  why: All six content-type rules evaluate negative - correct keep. 'Player One' is arcade jargon and a plausible 'Games' category assignment in a scraped dump, which is the only way this gets deleted.
+- name: Assassins.Creed.2016.1080p.BluRay.x264-DRONES
+  files:
+  - assassins.creed.2016.1080p.bluray.x264-drones.mkv|9600
+  - assassins.creed.2016.1080p.bluray.x264-drones.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'Deliberate keyword-boundary probe: keywords.xxx ''ass'' compiles to (^|\W+)(ass)(\W+|$) so it does NOT match ''Assassins'' - the xxx rule correctly stays silent. Correct keep; only an Ubisoft-title hint of ''game'' would delet'
+- name: The.Super.Mario.Bros.Movie.2023.1080p.WEB-DL.DDP5.1.Atmos.H.264-FLUX
+  files:
+  - The.Super.Mario.Bros.Movie.2023.1080p.WEB-DL.DDP5.1.Atmos.H.264-FLUX.mkv|7300
+  - The.Super.Mario.Bros.Movie.2023.eng.srt|0.08
+  expect: keep
+  type: movie
+  why: No rule fires - correct keep. Title stems to 'Super Mario Bros', an NES game, so a fuzzy title-to-game-DB match in an upstream feed is the realistic delete path for a billion-dollar film.
+- name: A.Minecraft.Movie.2025.2160p.WEB-DL.DDP5.1.Atmos.H.265-FLUX
+  files:
+  - A.Minecraft.Movie.2025.2160p.WEB-DL.DDP5.1.Atmos.H.265-FLUX.mkv|17800
+  - A.Minecraft.Movie.2025.eng.srt|0.1
+  expect: keep
+  type: movie
+  why: Nothing matches on a single mkv - correct keep. 'Minecraft' is one of the highest-frequency game tokens in existence; any keyword- or title-based external categoriser hints 'game' here and the delete rule executes with n
+- name: Five.Nights.at.Freddys.2023.1080p.WEB-DL.DDP5.1.Atmos.H.264-FLUX
+  files:
+  - Five.Nights.at.Freddys.2023.1080p.WEB-DL.DDP5.1.Atmos.H.264-FLUX.mkv|6900
+  - Five.Nights.at.Freddys.2023.eng.srt|0.07
+  expect: keep
+  type: movie
+  why: No deterministic rule fires - correct keep. Exact franchise-title collision with the Scott Cawthon games; hint-only false-positive risk.
+- name: Halo.S02E01.1080p.PMTP.WEB-DL.DDP5.1.H.264-NTb
+  files:
+  - Halo.S02E01.1080p.PMTP.WEB-DL.DDP5.1.H.264-NTb.mkv|2900
+  - Halo.S02E01.eng.srt|0.07
+  expect: keep
+  type: tv_show
+  why: 'All rules negative on a single mkv - correct keep. Single-word title identical to the Bungie/343 franchise: the most likely of all TV shows to be hinted ''game'' by a title-keyed importer.'
+- name: Twisted.Metal.S01E01.1080p.PCOK.WEB-DL.DDP5.1.H.264-NTb
+  files:
+  - Twisted.Metal.S01E01.1080p.PCOK.WEB-DL.DDP5.1.H.264-NTb.mkv|1800
+  - Twisted.Metal.S01E01.eng.srt|0.06
+  expect: keep
+  type: tv_show
+  why: 'Two-rule probe: keywords.music ''metal'' DOES match ''Twisted.Metal'' as a whole word, but the music branch also requires sum(audio)-sum(other) > 0 and there are no audio files, so music correctly does not fire. Keep is corr'
+- name: Sword.Art.Online.S01.EP.01-25.1080p.BluRay.x264.10bit-GROUP
+  files:
+  - Sword.Art.Online.EP.01.1080p.BluRay.x264.10bit-GROUP.mkv|1400
+  - Sword.Art.Online.EP.02.1080p.BluRay.x264.10bit-GROUP.mkv|1380
+  - Sword.Art.Online.EP.03.1080p.BluRay.x264.10bit-GROUP.mkv|1420
+  - Sword.Art.Online.EP.04.1080p.BluRay.x264.10bit-GROUP.mkv|1390
+  expect: keep
+  type: tv_show
+  why: 'Probe for keywords.music ''ep'': ''EP.'' with a non-word separator on both sides DOES match the baseName, but sum(audio)-sum(other) is hugely negative so music does not fire - correct keep. Add one bundled OST folder of .fla'
+- name: The.Angry.Video.Game.Nerd.The.Movie.2014.1080p.WEB-DL.x264-GROUP
+  files:
+  - The.Angry.Video.Game.Nerd.The.Movie.2014.1080p.WEB-DL.x264-GROUP.mkv|7100
+  - avgn.the.movie.nfo|0.01
+  expect: keep
+  type: movie
+  why: No rule fires - correct keep. Contains the literal token 'Game' in the title; harmless to the deterministic classifier (no 'game' keyword list exists) but a magnet for a 'Games' category hint from an imported dump.
+- name: Console.Wars.2020.1080p.WEB-DL.DDP5.1.H.264-GROUP
+  files:
+  - Console.Wars.2020.1080p.WEB-DL.DDP5.1.H.264-GROUP.mkv|5600
+  - Console.Wars.2020.eng.srt|0.08
+  expect: keep
+  type: movie
+  why: Sega-vs-Nintendo documentary; all rules evaluate negative - correct keep. 'Console' is a category-mapping trap for any feed that buckets by hardware platform.
+- name: Man.vs.Snake.The.Long.and.Twisted.Tale.of.Nibbler.2015.1080p.WEB-DL.x264-GROUP
+  files:
+  - Man.vs.Snake.2015.1080p.WEB-DL.x264-GROUP.mkv|5100
+  - Man.vs.Snake.2015.eng.srt|0.07
+  expect: keep
+  type: movie
+  why: Arcade world-record documentary; no ext or keyword rule matches - correct keep. Niche enough that a mis-hinted delete would be unrecoverable and unnoticed - no quarantine, no LLM review.
+- name: WarGames.1983.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GROUP
+  files:
+  - WarGames.1983.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-GROUP.mkv|24500
+  - WarGames.1983.eng.srt|0.09
+  expect: keep
+  type: movie
+  why: No rule fires on a remux mkv - correct keep. 'WarGames' is a single token containing 'games'; keyword matching is whole-word so nothing fires locally, but a substring-based external categoriser will hint 'game'.
+- name: Warcraft.2016.1080p.BluRay.x264-GROUP
+  files:
+  - warcraft.2016.1080p.bluray.x264-group.mkv|10200
+  - Extras/Subtitle.Installer.exe|3.2
+  - warcraft.2016.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'Software-rule guard probe: sum(software)-sum(other) = 3.2 - 10200 < 0 so the bundled .exe does NOT trigger the software delete - correct keep. Confirms small executables in a video release are safe; only ext bytes that d'
+- name: Insert.Coin.2020.1080p.WEB-DL.DDP2.0.H.264-GROUP
+  files:
+  - Insert.Coin.2020.1080p.WEB-DL.DDP2.0.H.264-GROUP.mkv|5800
+  - Extras/Midway.Press.Kit.pdf|46
+  - Insert.Coin.2020.eng.srt|0.07
+  expect: keep
+  type: movie
+  why: 'Ebook-rule guard probe: sum(ebook)-sum(other) = 46 - 5800 < 0 so the bundled PDF does not type this as ebook - correct keep. The PDF would have to outweigh the video to cause a delete.'
+- name: Dungeons.and.Dragons.Honor.Among.Thieves.2023.1080p.WEB-DL.DDP5.1.Atmos.H.264-FLUX
+  files:
+  - Dungeons.and.Dragons.Honor.Among.Thieves.2023.1080p.WEB-DL.DDP5.1.Atmos.H.264-FLUX.mkv|8100
+  - dnd.2023.eng.srt|0.09
+  expect: keep
+  type: movie
+  why: 'No rule fires - correct keep. Tabletop-game franchise title: feeds that map any ''game'' franchise to contentType=game will hint ''game'' on a mainstream theatrical film.'
+- name: The.King.of.Kong.A.Fistful.of.Quarters.2007.NTSC.DVD9.ISO-GROUP
+  files:
+  - The.King.of.Kong.2007.NTSC.DVD9.iso|7350
+  - the.king.of.kong.2007.dvd9.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'REAL false positive with no hint needed: ''iso'' is in BOTH the video and software extension lists, and software is checked before any video handling, so sum(software)-sum(other) = 7350-0.01 > 0 types this documentary as s'
+- name: Tron.Legacy.2010.COMPLETE.BLURAY-UNTOUCHED
+  files:
+  - Tron.Legacy.2010.COMPLETE.BLURAY-UNTOUCHED.iso|44200
+  - tron.legacy.2010.bluray.nfo|0.02
+  expect: keep
+  type: movie
+  why: 'REAL false positive: a full untouched Blu-ray image is a single .iso, software sum is +44200, so the software rule fires before anything video-aware runs and the film is deleted. Every BD/UHD ISO release in the swarm has'
+- name: The.Last.of.Us.S01.COMPLETE.BLURAY-UNTOUCHED
+  files:
+  - The.Last.of.Us.S01.DISC1.BLURAY.iso|43800
+  - The.Last.of.Us.S01.DISC2.BLURAY.iso|44100
+  - The.Last.of.Us.S01.DISC3.BLURAY.iso|41900
+  - tlou.s01.bluray.nfo|0.02
+  expect: keep
+  type: tv_show
+  why: 'REAL false positive: multi-disc TV box set as .iso images gives software sum +129800, so software matches and the season is hard-deleted. Compounds with the hint risk - the same title would also be a prime candidate for '
+- name: Sonic.the.Hedgehog.2020.COMPLETE.UHD.BLURAY-GROUP
+  files:
+  - Sonic.the.Hedgehog.2020.COMPLETE.UHD.BLURAY-GROUP.iso|61500
+  - sonic.2020.uhd.bluray.nfo|0.02
+  expect: keep
+  type: movie
+  why: 'REAL false positive: UHD BD image types as software via the ''iso'' ext collision and is deleted. Note the double jeopardy - if the software rule somehow missed it, the title still invites a ''game'' hint from any Sega-aware'
+- name: Chasing.Ghosts.Beyond.the.Arcade.2007.NTSC.DVD5.ISO-GROUP
+  files:
+  - Chasing.Ghosts.Beyond.the.Arcade.2007.NTSC.DVD5.iso|4380
+  - chasing.ghosts.2007.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'REAL false positive: DVD5 image, software sum +4380 > 0, typed software and hard-deleted. Rare arcade documentary that exists mainly as a DVD rip, so the ISO shape is the normal distribution format, not an edge case.'
+- name: Mortal.Kombat.1995.VCD.2CD-GROUP
+  files:
+  - Mortal.Kombat.1995.CD1.bin|795
+  - Mortal.Kombat.1995.CD1.cue|0.002
+  - Mortal.Kombat.1995.CD2.bin|780
+  - Mortal.Kombat.1995.CD2.cue|0.002
+  expect: keep
+  type: movie
+  why: 'REAL false positive via a second video/software ext collision: ''.bin'' is in the software list, so sum(software)-sum(other) = 1575 > 0 and a VCD film rip is typed software and deleted. Same shape hits any .bin/.cue disc i'
+- name: Elden.Ring.Shadow.of.the.Erdtree.v1.14-EMPRESS
+  files:
+  - EMPRESS.Elden.Ring.v1.14.iso|58200
+  - EMPRESS.nfo|0.01
+  - crack/steam_api64.dll|0.3
+  expect: delete
+  type: software
+  why: 'software rule: sum(software: iso+dll)-sum(other) = +58200 > 0, typed software and deleted. Correct outcome, and it shows the ''game'' hint is largely redundant - real PC game releases already self-identify via .iso/.exe/.d'
+- name: Cyberpunk.2077.Ultimate.Edition.v2.21-RUNE
+  files:
+  - setup.exe|28
+  - rune-cyberpunk2077.bin|41500
+  - rune.nfo|0.01
+  - Redist/vcredist_x64.exe|24
+  expect: delete
+  type: software
+  why: 'software rule fires on exe+bin (+41552) before any other rule could apply - correct delete. Confirms (b): PC games reach the software type on file evidence alone, no external hint required.'
+- name: Baldurs.Gate.3.v4.1.1.7115914-FitGirl.Repack
+  files:
+  - setup.exe|8.4
+  - fg-01.bin|24800
+  - fg-02.bin|24600
+  - fg-selective-english.bin|3100
+  - FitGirl.nfo|0.01
+  expect: delete
+  type: software
+  why: Repack layout is setup.exe plus .bin blobs, both software exts, so the software sum is +52500 and the delete is correct. 'Gate' and 'Baldur' hit no keyword list, so software - not a hint - is doing the work.
+- name: Disco.Elysium.The.Final.Cut.v1.0.0.1-GOG
+  files:
+  - setup_disco_elysium_1.0.0.1.exe|2400
+  - setup_disco_elysium_1.0.0.1-1.bin|4100
+  - goggame-1421404581.info|0.01
+  expect: delete
+  type: software
+  why: 'software rule fires on exe+bin (+6500) - correct delete. Worth flagging that keywords.music ''disco'' matches ''Disco'' as a whole word here, but music is evaluated AFTER... no: music runs before software, and its audio-byte'
+- name: Minecraft.Pocket.Edition.v1.21.0.03.Mod.apk
+  files:
+  - Minecraft.PE.v1.21.0.03.Mod.apk|920
+  expect: delete
+  type: software
+  why: 'software rule: apk sum +920 > 0, typed software and deleted - correct. Mobile games always self-identify via .apk, so the ''game'' hint adds nothing on this shape.'
+- name: Stardew.Valley.v1.6.15.macOS-GOG
+  files:
+  - setup_stardew_valley_1.6.15.dmg|1150
+  - goggame.info|0.01
+  expect: delete
+  type: software
+  why: 'software rule: .dmg sum +1150 > 0 - correct delete. Same story for .pkg, .deb, .rpm and .sh installers; the ext list covers every mainstream game distribution container except console formats.'
+- name: The.Legend.of.Zelda.Tears.of.the.Kingdom.v1.2.1.NSW-VENOM
+  files:
+  - The.Legend.of.Zelda.Tears.of.the.Kingdom.v1.2.1.xci|15800
+  - VENOM.nfo|0.01
+  expect: delete
+  type: game
+  why: 'MISS, not a false positive: .xci (and .nsp, .wbfs, .3ds, .cia) are in NO extension list, so every rule evaluates negative and the torrent stays unknown and survives. Console games are deleted only if an external source h'
+  gap: true
+- name: Nintendo.64.No-Intro.Romset.2024.Complete
+  files:
+  - Nintendo - Nintendo 64 (BigEndian) (20240115).7z|9800
+  - romset.dat|4
+  - README.txt|0.01
+  expect: delete
+  type: game
+  why: 'MISS: .7z/.dat/.txt are in no extension list, so the romset stays unknown and is retained. Deleting it would require a ''game'' hint from the import feed; the deterministic classifier has no reach here at all.'
+  gap: true
+- name: God.of.War.II.2007.PS2.PAL.MULTi5.ISO-GROUP
+  files:
+  - God.of.War.II.PS2.PAL.MULTi5.iso|7420
+  - gow2.ps2.nfo|0.01
+  expect: delete
+  type: software
+  why: software rule fires on the .iso (+7420) - correct delete of an actual game, but note it lands there through the SAME ext collision that destroys film DVD/BD ISOs. The rule cannot tell a PS2 game image from a movie DVD im
+- name: NieR.Automata.Original.Soundtrack.2017.WEB.FLAC.24bit-GROUP
+  files:
+  - 01 - Significance.flac|48
+  - 02 - City Ruins (Rays of Light).flac|61
+  - 03 - Amusement Park.flac|44
+  - 04 - A Beautiful Song.flac|72
+  - cover.jpg|2.1
+  expect: delete
+  type: music
+  why: 'music rule branch 1: sum(flac)-sum(other) = 225-2.1 > 0, typed music and deleted per CLASSIFIER_DELETE_CONTENT_TYPES. Config-intended, but flagged as game-adjacent collateral: a curator keeping game media loses every OST'
+- name: DOOM.Eternal.Original.Game.Soundtrack.2020.MP3.320kbps
+  files:
+  - 01 - Cultist Base.mp3|13
+  - 02 - The Only Thing They Fear Is You.mp3|15
+  - 03 - Meathook.mp3|11
+  - 04 - Super Gore Nest.mp3|12
+  - folder.jpg|0.9
+  expect: delete
+  type: music
+  why: 'MISS: mp3 is in extensions.audio but NOT extensions.music, and the baseName matches no keywords.music token (''soundtrack'' and ''OST'' are absent from the list), so branch 2 never evaluates and the release survives as unkno'
+- name: Ass.Backwards.2013.1080p.BluRay.x264-ROVERS
+  files:
+  - Ass.Backwards.2013.1080p.BluRay.x264-ROVERS.mkv|7900
+  - Ass.Backwards.2013.1080p.BluRay.x264-ROVERS.nfo|0.01
+  - Subs/Ass.Backwards.2013.English.srt|0.06
+  expect: keep
+  type: movie
+  why: 'xxx rule: video bytes dominate and keywords.xxx ''ass'' matches the standalone word in ''Ass.Backwards'' (real 2013 Tribeca comedy, June Diane Raphael/Casey Wilson) - deletion would be WRONG.'
+- name: POV.S37E01.1080p.WEB.h264-BTN
+  files:
+  - POV.S37E01.1080p.WEB.h264-BTN.mkv|2600
+  - POV.S37E01.1080p.WEB.h264-BTN.nfo|0.01
+  expect: keep
+  type: tv_show
+  why: 'xxx rule: keyword ''pov'' matches the whole word ''POV'' - but this is PBS''s long-running documentary strand POV (since 1988); deletion WRONG.'
+- name: Sex.Lies.and.Videotape.1989.1080p.BluRay.x264-AMIABLE
+  files:
+  - Sex.Lies.and.Videotape.1989.1080p.BluRay.x264-AMIABLE.mkv|9200
+  - Sex.Lies.and.Videotape.1989.1080p.BluRay.x264-AMIABLE.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'xxx rule: ''sex*'' matches leading word ''Sex'' - Soderbergh''s 1989 Palme d''Or winner, deletion WRONG.'
+- name: Sex.Tape.2014.1080p.BluRay.x264-SPARKS
+  files:
+  - Sex.Tape.2014.1080p.BluRay.x264-SPARKS.mkv|8300
+  - Sex.Tape.2014.1080p.BluRay.x264-SPARKS.nfo|0.01
+  - Subs/Sex.Tape.2014.English.srt|0.07
+  expect: keep
+  type: movie
+  why: 'xxx rule: ''sex*'' matches ''Sex'' - real Sony studio comedy (Diaz/Segel, 2014); deletion WRONG.'
+- name: Lucia.y.el.sexo.2001.1080p.BluRay.x264.SPANISH.AC3-CiNEFiLE
+  files:
+  - Lucia.y.el.sexo.2001.1080p.BluRay.x264.SPANISH.AC3-CiNEFiLE.mkv|10500
+  - Subs/Lucia.y.el.sexo.2001.English.srt|0.08
+  expect: keep
+  type: movie
+  why: 'xxx rule: ''sex*'' = sex\w* matches the Spanish word ''sexo'' - Julio Medem''s Sex and Lucia (2001); non-English titles inflate the sex* false-positive rate, deletion WRONG.'
+- name: Fucking.Amal.1998.1080p.BluRay.x264.SWEDiSH-DEPTH
+  files:
+  - Fucking.Amal.1998.1080p.BluRay.x264.SWEDiSH-DEPTH.mkv|8600
+  - Subs/Fucking.Amal.1998.English.srt|0.06
+  - Fucking.Amal.1998.1080p.BluRay.x264-DEPTH.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'xxx rule: ''*fuck*'' matches ''Fucking'' - Lukas Moodysson''s Fucking Amal / Show Me Love (1998), a canonical Swedish coming-of-age film; deletion WRONG.'
+- name: Dick.Johnson.Is.Dead.2020.1080p.NF.WEB-DL.DDP5.1.x264-NTG
+  files:
+  - Dick.Johnson.Is.Dead.2020.1080p.NF.WEB-DL.DDP5.1.x264-NTG.mkv|4200
+  - Dick.Johnson.Is.Dead.2020.1080p.NF.WEB-DL.DDP5.1.x264-NTG.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'xxx rule: ''dicks?'' matches the first name ''Dick'' - Kirsten Johnson''s Netflix documentary (2020, Sundance winner); deletion WRONG.'
+- name: Philip.K.Dicks.Electric.Dreams.S01.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb
+  files:
+  - Philip.K.Dicks.Electric.Dreams.S01E01.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb.mkv|2900
+  - Philip.K.Dicks.Electric.Dreams.S01E02.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb.mkv|2750
+  - Philip.K.Dicks.Electric.Dreams.S01E03.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb.mkv|2810
+  - Philip.K.Dicks.Electric.Dreams.S01E04.1080p.AMZN.WEB-DL.DDP5.1.H.264-NTb.mkv|2680
+  expect: keep
+  type: tv_show
+  why: 'xxx rule: ''dicks?'' matches the possessive-stripped author surname ''Dicks'' in both baseName and every file path - real Amazon/Channel 4 anthology series (2017); deletion WRONG.'
+- name: The.Dick.Van.Dyke.Show.S03.1080p.BluRay.x264-DEEP
+  files:
+  - The.Dick.Van.Dyke.Show.S03E01.1080p.BluRay.x264-DEEP.mkv|2100
+  - The.Dick.Van.Dyke.Show.S03E02.1080p.BluRay.x264-DEEP.mkv|2050
+  - The.Dick.Van.Dyke.Show.S03E03.1080p.BluRay.x264-DEEP.mkv|2140
+  - The.Dick.Van.Dyke.Show.S03E04.1080p.BluRay.x264-DEEP.mkv|2080
+  expect: keep
+  type: tv_show
+  why: 'xxx rule: ''dicks?'' matches ''Dick'' in the title of a landmark 1961-66 CBS sitcom; every episode path re-triggers it, deletion WRONG.'
+- name: Hardcore.1979.1080p.BluRay.REMUX.AVC.DTS-HD.MA.2.0-VETO
+  files:
+  - Hardcore.1979.1080p.BluRay.REMUX.AVC.DTS-HD.MA.2.0-VETO.mkv|9800
+  - Hardcore.1979.1080p.BluRay.REMUX-VETO.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'xxx rule: ''hardcore'' matches exactly - but this is Paul Schrader''s 1979 drama with George C. Scott, a catalogued studio film; deletion WRONG (topic-about-porn is not porn).'
+- name: Hardcore.Pawn.S05E12.720p.HDTV.x264-W4F
+  files:
+  - Hardcore.Pawn.S05E12.720p.HDTV.x264-W4F.mkv|720
+  - Hardcore.Pawn.S05E12.720p.HDTV.x264-W4F.nfo|0.01
+  expect: keep
+  type: tv_show
+  why: 'xxx rule: ''hardcore'' matches - truTV reality series Hardcore Pawn (2010-2015, 9 seasons); deletion WRONG.'
+- name: The.Seduction.of.Joe.Tynan.1979.1080p.AMZN.WEB-DL.DDP2.0.H.264-SbR
+  files:
+  - The.Seduction.of.Joe.Tynan.1979.1080p.AMZN.WEB-DL.DDP2.0.H.264-SbR.mkv|5400
+  - The.Seduction.of.Joe.Tynan.1979.1080p.AMZN.WEB-DL-SbR.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'xxx rule: ''seduc*'' matches ''Seduction'' - real 1979 Universal political drama (Alan Alda, Meryl Streep); deletion WRONG.'
+- name: Seduced.and.Abandoned.1964.1080p.BluRay.x264.ITALIAN.AAC-CiNEFiLE
+  files:
+  - Seduced.and.Abandoned.1964.1080p.BluRay.x264.ITALIAN-CiNEFiLE.mkv|11000
+  - Subs/Seduced.and.Abandoned.1964.English.srt|0.09
+  expect: keep
+  type: movie
+  why: 'xxx rule: ''seduc*'' matches ''Seduced'' - Pietro Germi''s Sedotta e abbandonata (1964, Cannes Best Actor); note the release GROUP name is also a lure but only keywords are scored, deletion WRONG.'
+- name: WWE.WrestleMania.XXX.2014.PPV.1080p.WEB.h264-HEEL
+  files:
+  - WWE.WrestleMania.XXX.2014.PPV.1080p.WEB.h264-HEEL.mkv|12400
+  - WWE.WrestleMania.XXX.2014.PPV.1080p.WEB.h264-HEEL.nfo|0.01
+  expect: keep
+  type: tv_show
+  why: 'xxx rule: ''*xxx*'' substring matches the ROMAN NUMERAL XXX - hits every WrestleMania XXX, Super Bowl XXX, Games of the XXX Olympiad release; deletion WRONG.'
+- name: Steins.Gate.S01.1080p.BluRay.FLAC2.0.x264-Vivid
+  files:
+  - '[Vivid] Steins;Gate - 01 [BD 1080p].mkv|1420'
+  - '[Vivid] Steins;Gate - 02 [BD 1080p].mkv|1380'
+  - Subs/[Vivid] Steins;Gate - 01 [Eng].ass|0.09
+  - Subs/[Vivid] Steins;Gate - 02 [Eng].ass|0.08
+  - Fonts/readme.txt|0.01
+  expect: keep
+  type: tv_show
+  why: 'xxx rule via FILE PATH: if basePath retains the extension, the Advanced SubStation ''.ass'' subtitle files tokenize to the standalone word ''ass'' - this would delete a large fraction of all fansubbed anime; deletion WRONG ('
+- name: Le.Fabuleux.Destin.d.Amelie.Poulain.2001.1080p.BluRay.x264.FRENCH-CiNEFiLE
+  files:
+  - Le.Fabuleux.Destin.d.Amelie.Poulain.2001.1080p.BluRay.x264-CiNEFiLE.mkv|9600
+  - Subs/Amelie.2001.English.ass|0.11
+  - Subs/Amelie.2001.French.srt|0.09
+  expect: keep
+  type: movie
+  why: 'xxx rule via FILE PATH only: baseName is clean, but the styled ''.ass'' subtitle trips keyword ''ass'' - Amelie (2001); deletion WRONG and completely invisible from the torrent name.'
+- name: Friends.S01.1080p.BluRay.x264-SHORTBREHD
+  files:
+  - Friends.S01E11.The.One.With.Mrs.Bing.1080p.BluRay.x264-SHORTBREHD.mkv|2180
+  - Friends.S01E12.The.One.With.the.Dozen.Lasagnas.1080p.BluRay.x264-SHORTBREHD.mkv|2240
+  - Friends.S01E13.The.One.With.the.Boobies.1080p.BluRay.x264-SHORTBREHD.mkv|2210
+  - Friends.S01E14.The.One.With.the.Candy.Hearts.1080p.BluRay.x264-SHORTBREHD.mkv|2190
+  expect: keep
+  type: tv_show
+  why: 'xxx rule via FILE PATH: ''boob*'' matches ''Boobies'' in the real S01E13 episode title - one episode name deletes an entire Friends season pack; deletion WRONG.'
+- name: South.Park.S01.1080p.BluRay.x264-GRP
+  files:
+  - South.Park.S01E01.Cartman.Gets.an.Anal.Probe.1080p.BluRay.x264-GRP.mkv|1610
+  - South.Park.S01E02.Weight.Gain.4000.1080p.BluRay.x264-GRP.mkv|1580
+  - South.Park.S01E03.Volcano.1080p.BluRay.x264-GRP.mkv|1550
+  - South.Park.S01E04.Big.Gay.Als.Big.Gay.Boat.Ride.1080p.BluRay.x264-GRP.mkv|1595
+  expect: keep
+  type: tv_show
+  why: 'xxx rule via FILE PATH: ''anal'' matches the real S01E01 title ''Cartman Gets an Anal Probe'' - deletes the whole season pack; deletion WRONG.'
+- name: The.Simpsons.S20.1080p.WEB-DL.AAC2.0.H.264-CtrlHD
+  files:
+  - The.Simpsons.S20E09.Lisa.the.Drama.Queen.1080p.WEB-DL.H.264-CtrlHD.mkv|1180
+  - The.Simpsons.S20E10.Sex.Pies.and.Idiot.Scrapes.1080p.WEB-DL.H.264-CtrlHD.mkv|1210
+  - The.Simpsons.S20E11.How.the.Test.Was.Won.1080p.WEB-DL.H.264-CtrlHD.mkv|1160
+  - The.Simpsons.S20E12.No.Loan.Again.Naturally.1080p.WEB-DL.H.264-CtrlHD.mkv|1195
+  expect: keep
+  type: tv_show
+  why: 'xxx rule via FILE PATH: ''sex*'' matches ''Sex'' in the real S20E10 title ''Sex, Pies and Idiot Scrapes''; deletion WRONG.'
+- name: Laurel.and.Hardy.The.Definitive.Restorations.1080p.BluRay.x264-GRP
+  files:
+  - 1932 - The Music Box.mkv|1450
+  - 1933 - Busy Bodies.mkv|1380
+  - 1935 - Tit for Tat.mkv|1490
+  - 1937 - Way Out West.mkv|4200
+  expect: keep
+  type: movie
+  why: 'xxx rule via FILE PATH: ''tits?'' matches the standalone word ''Tit'' in the real 1935 Laurel & Hardy short ''Tit for Tat''; one filename deletes a restoration box set, deletion WRONG.'
+- name: Sherlock.S03.1080p.BluRay.x264-SHORTBREHD
+  files:
+  - Sherlock.S03E01.The.Empty.Hearse.1080p.BluRay.x264-SHORTBREHD.mkv|6100
+  - Sherlock.S03E02.The.Sign.of.Three.1080p.BluRay.x264-SHORTBREHD.mkv|6250
+  - Sherlock.S03E03.His.Last.Vow.1080p.BluRay.x264-SHORTBREHD.mkv|6050
+  - Extras/Sherlock.S03.Benedict.Cumberbatch.and.Martin.Freeman.Q.and.A.1080p.mkv|820
+  expect: keep
+  type: tv_show
+  why: 'xxx rule via FILE PATH: ''cum*'' = cum\w* matches the surname ''Cumberbatch'' in an extras featurette - the torrent name is clean, so this is undetectable without path inspection; deletion WRONG.'
+- name: Cumbia.Ninja.S01E01.1080p.WEB-DL.AAC2.0.H.264.SPANISH-GRP
+  files:
+  - Cumbia.Ninja.S01E01.1080p.WEB-DL.AAC2.0.H.264.SPANISH-GRP.mkv|1850
+  - Subs/Cumbia.Ninja.S01E01.English.srt|0.05
+  expect: keep
+  type: tv_show
+  why: 'xxx rule: ''cum*'' matches ''Cumbia'' - real FOX Telecolombia series (2013-2015, 3 seasons); cum\w* fires on Cumbia, Cumberland, Cumming, Cumbria etc., deletion WRONG.'
+- name: Sexo.Pudor.y.Lagrimas.1999.1080p.AMZN.WEB-DL.DDP2.0.H.264.SPANISH-GRP
+  files:
+  - Sexo.Pudor.y.Lagrimas.1999.1080p.AMZN.WEB-DL.DDP2.0.H.264.SPANISH-GRP.mkv|5200
+  - Subs/Sexo.Pudor.y.Lagrimas.1999.English.srt|0.07
+  expect: keep
+  type: movie
+  why: 'xxx rule: ''sex*'' matches ''Sexo'' - Antonio Serrano''s 1999 Mexican box-office record holder; deletion WRONG.'
+- name: After.Porn.Ends.2012.1080p.WEB-DL.AAC2.0.H.264-GRP
+  files:
+  - After.Porn.Ends.2012.1080p.WEB-DL.AAC2.0.H.264-GRP.mkv|3800
+  - After.Porn.Ends.2012.1080p.WEB-DL-GRP.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'xxx rule: ''*porn*'' matches ''Porn'' - a Bryce Wagoner documentary distributed on Netflix; documentaries ABOUT the industry are not the industry, deletion WRONG.'
+- name: Assassins.Creed.2016.1080p.BluRay.x264.DTS-HD.MA.7.1-FGT
+  files:
+  - Assassins.Creed.2016.1080p.BluRay.x264.DTS-HD.MA.7.1-FGT.mkv|11200
+  - Assassins.Creed.2016.1080p.BluRay-FGT.nfo|0.01
+  expect: keep
+  type: movie
+  why: 'CONTROL / near-miss: ''ass'' is a WHOLE-WORD keyword so it correctly does NOT match inside ''Assassins'' - keep is correct today, and any substring-based ''fix'' to the xxx rule must not break this.'
+- name: Dickinson.S01.1080p.ATVP.WEB-DL.DDP5.1.H.264-NTb
+  files:
+  - Dickinson.S01E01.1080p.ATVP.WEB-DL.DDP5.1.H.264-NTb.mkv|2410
+  - Dickinson.S01E02.1080p.ATVP.WEB-DL.DDP5.1.H.264-NTb.mkv|2380
+  - Dickinson.S01E03.1080p.ATVP.WEB-DL.DDP5.1.H.264-NTb.mkv|2440
+  expect: keep
+  type: tv_show
+  why: 'CONTROL / near-miss: ''dicks?'' requires a trailing boundary so it correctly does NOT match ''Dickinson'' (Apple TV+ series) - guards against a regex loosening.'
+- name: Brazzers.MommyGotBoobs.24.02.19.Stuck.In.The.Middle.XXX.1080p.MP4-KTR
+  files:
+  - Brazzers.MommyGotBoobs.24.02.19.Stuck.In.The.Middle.XXX.1080p.MP4-KTR.mp4|2450
+  - Brazzers.MommyGotBoobs.24.02.19.XXX.1080p.MP4-KTR.nfo|0.01
+  expect: delete
+  type: xxx
+  why: 'xxx rule: video bytes dominate and THREE keywords fire (''boob*'' on Boobs, ''*xxx*'' on the XXX tag, plus studio marker) - correct delete, this is the easy tier.'
+- name: Blacked.24.03.15.Anal.Escapade.XXX.2160p.MP4-P2P
+  files:
+  - Blacked.24.03.15.Anal.Escapade.XXX.2160p.MP4-P2P.mp4|9200
+  expect: delete
+  type: xxx
+  why: 'xxx rule: ''anal'' + ''*xxx*'' both fire on a 4K studio scene release - correct delete.'
+- name: Evil.Angel.Anal.Prospects.3.XXX.DVDRip.x264-CiCXXX
+  files:
+  - Evil.Angel.Anal.Prospects.3.XXX.DVDRip.x264-CiCXXX.mp4|1380
+  - Evil.Angel.Anal.Prospects.3.XXX.DVDRip-CiCXXX.nfo|0.01
+  expect: delete
+  type: xxx
+  why: 'xxx rule: ''anal'' plus ''*xxx*'' in both title tag and group name - correct delete.'
+- name: OnlyFans.SiteRip.2024.Complete.Collection.1080p.MP4
+  files:
+  - OnlyFans.SiteRip.2024/001.1080p.mp4|640
+  - OnlyFans.SiteRip.2024/002.1080p.mp4|710
+  - OnlyFans.SiteRip.2024/003.1080p.mp4|585
+  - OnlyFans.SiteRip.2024/004.1080p.mp4|920
+  expect: delete
+  type: xxx
+  why: 'xxx rule: ''onlyfans'' matches as a whole word in the baseName and in every file path - correct delete.'
+- name: Kink.com.SexAndSubmission.24.01.19.XXX.1080p.HEVC-GRP
+  files:
+  - Kink.com.SexAndSubmission.24.01.19.XXX.1080p.HEVC-GRP.mp4|3100
+  expect: delete
+  type: xxx
+  why: 'xxx rule: ''kink*'' fires on ''Kink'' and ''*xxx*'' on the tag; note ''SexAndSubmission'' is one token so sex* does NOT fire - correct delete on the other two.'
+- name: GloryholeSecrets.24.01.10.720p.MP4-GRP
+  files:
+  - GloryholeSecrets.24.01.10.720p.MP4-GRP.mp4|980
+  expect: delete
+  type: xxx
+  why: 'xxx rule: ''*gloryhole*'' is a substring keyword so it fires inside the concatenated studio token ''GloryholeSecrets'' - correct delete, and the only keyword present.'
+- name: WankzVR.Late.Night.Session.180.LR.5K.mp4-GRP
+  files:
+  - WankzVR.Late.Night.Session.180.LR.5K.mp4|11800
+  expect: delete
+  type: xxx
+  why: 'xxx rule: ''*wank*'' substring fires inside ''WankzVR'' - single weak signal, no XXX tag; a 2-keyword tiering fix would LOSE this one.'
+- name: Nubiles.Casting.E109.1080p.MP4-GRP
+  files:
+  - Nubiles.Casting.E109.1080p.MP4-GRP.mp4|2200
+  expect: delete
+  type: xxx
+  why: 'HARD: xxx rule fires on ''nubile*'' only (''Nubiles'') - no XXX tag, no second keyword; correct delete today and a recall casualty of any tiering fix.'
+- name: Seduced.By.A.Cougar.28.DVDRip.XviD-JiGGLY
+  files:
+  - Seduced.By.A.Cougar.28.DVDRip.XviD-JiGGLY.avi|1420
+  - Seduced.By.A.Cougar.28.DVDRip.XviD-JiGGLY.nfo|0.01
+  expect: delete
+  type: xxx
+  why: 'HARD: only ''seduc*'' fires - the exact same keyword that false-positives on The Seduction of Joe Tynan, so this pair defines the precision/recall tradeoff for seduc*.'
+- name: Bang.Real.Teens.POV.Casting.Session.14.1080p.MP4-GRP
+  files:
+  - Bang.Real.Teens.POV.Casting.Session.14.1080p.MP4-GRP.mp4|2650
+  expect: delete
+  type: xxx
+  why: 'HARD: only ''pov'' fires (''teens'' and ''Bang'' are not keywords) - same single keyword that deletes PBS''s POV series; correct delete but indistinguishable by keyword count.'
+- name: Private.Gold.194.Orgy.In.Ibiza.DVDRip.XviD-VBT
+  files:
+  - Private.Gold.194.Orgy.In.Ibiza.CD1.DVDRip.XviD-VBT.avi|730
+  - Private.Gold.194.Orgy.In.Ibiza.CD2.DVDRip.XviD-VBT.avi|715
+  - Private.Gold.194.DVDRip.XviD-VBT.nfo|0.01
+  expect: delete
+  type: xxx
+  why: 'HARD: only ''orgy'' fires - no XXX tag, studio name ''Private'' is not a keyword; correct delete on a single weak marker.'
+- name: Met-Art.Erotica.Complete.SiteRip.2019.Imageset
+  files:
+  - Met-Art.Erotica.2019/set01/001.jpg|4.2
+  - Met-Art.Erotica.2019/set01/002.jpg|4.5
+  - Met-Art.Erotica.2019/set02/001.jpg|3.9
+  - Met-Art.Erotica.2019/set02/002.jpg|4.1
+  - Met-Art.Erotica.2019/index.txt|0.01
+  expect: delete
+  type: xxx
+  why: 'HARD: image bytes minus other > 0 satisfies the size half, and only ''erotic*'' fires (''Erotica'') - correct delete; also the one shape where the rule works on stills rather than video.'
+- name: Ass.Traffic.Vol.9.2011.DVDRip.XviD-VBT
+  files:
+  - Ass.Traffic.Vol.9.2011.DVDRip.XviD-VBT.avi|1390
+  - Ass.Traffic.Vol.9.2011.DVDRip.XviD-VBT.nfo|0.01
+  expect: delete
+  type: xxx
+  why: 'HARD: only ''ass'' fires as a standalone word - the identical single-keyword signature as Kick-Ass / Bad Ass / Ass Backwards, so ''ass'' alone cannot be demoted without losing this.'
+- name: Sluts.Of.The.Sunset.Strip.2013.WEBRip.x264-GRP
+  files:
+  - Sluts.Of.The.Sunset.Strip.2013.WEBRip.x264-GRP.mp4|1850
+  expect: delete
+  type: xxx
+  why: 'HARD: only ''slut*'' fires (''Sluts'') - no XXX tag, no studio marker; correct delete on one strong-semantics but single keyword.'
+- name: Digital.Playground.Pussy.Talk.4.1080p.WEB-DL.MP4-GRP
+  files:
+  - Digital.Playground.Pussy.Talk.4.1080p.WEB-DL.MP4-GRP.mp4|4100
+  expect: delete
+  type: xxx
+  why: 'HARD: only ''pussy'' fires - same lone keyword that deletes Pussy Riot: A Punk Prayer, so precision here depends on context not keyword count; correct delete.'
+- name: Reality.Kings.Big.Naturals.Bouncing.Boobs.24.05.02.1080p.MP4-GRP
+  files:
+  - Reality.Kings.Big.Naturals.Bouncing.Boobs.24.05.02.1080p.MP4-GRP.mp4|2380
+  expect: delete
+  type: xxx
+  why: 'HARD: only ''boob*'' fires (''Boobs'') - identical single-keyword signature to the Friends ''The One With the Boobies'' filename; correct delete.'
+- name: Pink.Floyd-The.Dark.Side.Of.The.Moon-1973-2011.Remaster-24bit-96kHz-FLAC
+  files:
+  - 01.Speak.to.Me.flac|38
+  - 02.Breathe.flac|118
+  - 03.On.the.Run.flac|140
+  - 04.Time.flac|235
+  - 05.The.Great.Gig.in.the.Sky.flac|165
+  - folder.jpg|2
+  expect: delete
+  type: music
+  why: 'music arm 1: sum(flac) far exceeds other bytes -> music. Correct, this is an album.'
+- name: VA-Now.Thats.What.I.Call.Music.100-2CD-2018-FLAC
+  files:
+  - CD1/01-Drake-Gods.Plan.flac|24
+  - CD1/02-Camila.Cabello-Havana.flac|22
+  - CD2/01-Rita.Ora-Anywhere.flac|25
+  - CD2/02-Sigala-Lullaby.flac|23
+  - Now100.nfo|1
+  expect: delete
+  type: music
+  why: music arm 1 (flac dominance) fires; keywords 'V.A.' and 'music' also match baseName. Correct.
+- name: Miles.Davis-Kind.Of.Blue-1959-Vinyl.Rip-24bit-192kHz-FLAC
+  files:
+  - A1.So.What.flac|560
+  - A2.Freddie.Freeloader.flac|640
+  - A3.Blue.in.Green.flac|350
+  - B1.All.Blues.flac|780
+  - B2.Flamenco.Sketches.flac|610
+  expect: delete
+  type: music
+  why: 'music arm 1: flac-only torrent. Correct, jazz album (keyword ''jazz'' not even needed).'
+- name: Various.Artists-Ministry.Of.Sound.The.Annual.2020-2CD-MP3-320kbps
+  files:
+  - CD1/001-Regard-Ride.It.mp3|9
+  - CD1/002-Joel.Corry-Sorry.mp3|8
+  - CD2/001-Meduza-Piece.of.Your.Heart.mp3|9
+  - CD2/002-Tones.and.I-Dance.Monkey.mp3|8
+  - 00-tracklist.txt|1
+  expect: delete
+  type: music
+  why: 'music arm 2: baseName matches keyword ''various artists'' AND mp3 audio bytes dominate. Correct.'
+- name: Nirvana-Discography-1989-2013-MP3-V0
+  files:
+  - 1989-Bleach/01.Blew.mp3|8
+  - 1991-Nevermind/01.Smells.Like.Teen.Spirit.mp3|11
+  - 1993-In.Utero/01.Serve.the.Servants.mp3|7
+  - 1994-MTV.Unplugged/01.About.a.Girl.mp3|6
+  - discography.nfo|1
+  expect: delete
+  type: music
+  why: 'music arm 2: keyword ''discography'' + mp3 dominance. Correct.'
+- name: Bill.Evans.Trio-Waltz.For.Debby-1961-SACD-DSD64-DSF
+  files:
+  - 01.My.Foolish.Heart.dsf|610
+  - 02.Waltz.for.Debby.dsf|880
+  - 03.Detour.Ahead.dsf|920
+  - 04.My.Romance.dsf|760
+  - cover.png|4
+  expect: delete
+  type: music
+  why: 'music arm 1: dsf is a music extension and dominates. Correct.'
+- name: Kino-Gruppa.Krovi-1988-APE.CUE.LOG
+  files:
+  - Kino-Gruppa.Krovi.ape|402
+  - Kino-Gruppa.Krovi.cue|1
+  - Kino-Gruppa.Krovi.log|1
+  - scans/front.jpg|6
+  expect: delete
+  type: music
+  why: 'music arm 1: .ape single-file image dominates. Correct.'
+- name: Deep.House.Ibiza.Sessions.2023-WEB-MP3-320kbps
+  files:
+  - 01.Sunset.Groove.mp3|14
+  - 02.Balearic.Nights.mp3|16
+  - 03.Playa.den.Bossa.mp3|15
+  - 04.Afterhours.mp3|18
+  expect: delete
+  type: music
+  why: 'music arm 2: keyword ''house'' + mp3 dominance. Correct.'
+- name: Taylor.Swift-1989.Taylors.Version-2023-WEB-FLAC-24bit-48kHz
+  files:
+  - 01.Welcome.to.New.York.flac|72
+  - 02.Blank.Space.flac|95
+  - 03.Style.flac|88
+  - 04.Out.of.the.Woods.flac|110
+  - cover.jpg|3
+  expect: delete
+  type: music
+  why: 'music arm 1: flac dominance. Correct.'
+- name: Daft.Punk-Discovery-2001-Vinyl.Rip-FLAC-16bit
+  files:
+  - A1.One.More.Time.flac|42
+  - A2.Aerodynamic.flac|28
+  - B1.Digital.Love.flac|35
+  - B2.Harder.Better.Faster.Stronger.flac|26
+  - B3.Crescendolls.flac|22
+  expect: delete
+  type: music
+  why: music arm 1 (flac) fires. Note 'Discovery' does NOT match keyword 'disco' (whole-word), but arm 1 never looks at the name. Correct anyway.
+- name: David.Byrne-How.Music.Works-Audio.Edition-MP3-96kbps
+  files:
+  - Part01.mp3|48
+  - Part02.mp3|52
+  - Part03.mp3|47
+  - Part04.mp3|50
+  - Part05.mp3|44
+  expect: delete
+  type: audiobook
+  why: No audiobook keyword in baseName and no .m4b, so audiobook rule misses; music arm 2 then fires on keyword 'music' + mp3 dominance. Deletion is config-correct (audiobook is also on the delete list) but the recorded type i
+- name: School.of.Rock.2003.1080p.BluRay.x264.DTS-FGT
+  files:
+  - School.of.Rock.2003.1080p.BluRay.x264.DTS-FGT.mkv|9200
+  - Sample/sample.mkv|58
+  - school.of.rock.nfo|1
+  - Subs/English.srt|1
+  expect: keep
+  type: movie
+  why: keywords.music 'rock' matches baseName, but audio-ext bytes are 0 (DTS is muxed inside the .mkv) so arm 2 fails and arm 1 has no flac. Correctly kept.
+- name: The.Rock.1996.REMASTERED.2160p.UHD.BluRay.x265.10bit.HDR.TrueHD.7.1-TERMiNAL
+  files:
+  - The.Rock.1996.2160p.UHD.BluRay.x265-TERMiNAL.mkv|48000
+  - The.Rock.1996.nfo|1
+  - Subs/English.srt|1
+  expect: keep
+  type: movie
+  why: keyword 'rock' fires but video bytes swamp audio bytes (0 loose audio files) -> music arm 2 fails. Correctly kept.
+- name: 30.Rock.S03E05.720p.HDTV.x264-CTU
+  files:
+  - 30.rock.s03e05.720p.hdtv.x264-ctu.mkv|1100
+  - 30.rock.s03e05.nfo|1
+  expect: keep
+  type: tv_show
+  why: keyword 'rock' matches, audio-byte arm fails (single mkv). Correctly kept.
+- name: House.M.D.S04.COMPLETE.1080p.BluRay.x265-RARBG
+  files:
+  - House.MD.S04E01.1080p.BluRay.x265.mkv|1850
+  - House.MD.S04E02.1080p.BluRay.x265.mkv|1780
+  - House.MD.S04E03.1080p.BluRay.x265.mkv|1920
+  - House.MD.S04E04.1080p.BluRay.x265.mkv|1810
+  - RARBG.txt|1
+  expect: keep
+  type: tv_show
+  why: keyword 'house' matches baseName; audio bytes 0 so music arm 2 fails. Correctly kept, but the only thing standing between this title and deletion is the size arm.
+- name: House.of.the.Dragon.S02E01.2160p.WEB-DL.DDP5.1.Atmos.DV.HDR.H.265-NTb
+  files:
+  - House.of.the.Dragon.S02E01.2160p.WEB-DL.H.265-NTb.mkv|12400
+  - house.of.the.dragon.s02e01.nfo|1
+  expect: keep
+  type: tv_show
+  why: keyword 'house' fires; no loose audio files so arm 2 fails. Correctly kept.
+- name: Full.Metal.Jacket.1987.1080p.BluRay.x264.AC3-SmY
+  files:
+  - Full.Metal.Jacket.1987.1080p.BluRay.x264.AC3-SmY.mkv|10500
+  - sample.mkv|62
+  - fmj.nfo|1
+  expect: keep
+  type: movie
+  why: keyword 'metal' matches ('Metal' is its own token here, unlike 'Metallica'). Video dominance defeats arm 2. Correctly kept.
+- name: Metal.Lords.2022.1080p.NF.WEB-DL.DDP5.1.x264-NAISU
+  files:
+  - Metal.Lords.2022.1080p.NF.WEB-DL.x264-NAISU.mkv|4800
+  - Metal.Lords.2022.nfo|1
+  - Subs/eng.srt|1
+  expect: keep
+  type: movie
+  why: keyword 'metal' fires on a real 2022 Netflix film; arm 2 blocked by video bytes. Correctly kept.
+- name: Trance.2013.1080p.BluRay.x264-SPARKS
+  files:
+  - Trance.2013.1080p.BluRay.x264-SPARKS.mkv|8900
+  - sparks.nfo|1
+  - sample/trance-sample.mkv|55
+  expect: keep
+  type: movie
+  why: keyword 'trance' matches the Danny Boyle film title exactly; video dominance blocks arm 2. Correctly kept.
+- name: Disco.Pigs.2001.DVDRip.XviD-VoMiT
+  files:
+  - disco.pigs.2001.dvdrip.xvid-vomit.avi|730
+  - disco-pigs.nfo|1
+  - sample.avi|12
+  expect: keep
+  type: movie
+  why: keyword 'disco' matches; avi bytes are 'other' so arm 2 fails. Correctly kept.
+- name: The.Sound.of.Music.1965.50th.Anniversary.1080p.BluRay.x264.DTS-HD.MA.7.1-FGT
+  files:
+  - The.Sound.of.Music.1965.1080p.BluRay.x264-FGT.mkv|12800
+  - the.sound.of.music.nfo|1
+  - Subs/English.srt|1
+  - sample.mkv|64
+  expect: keep
+  type: movie
+  why: keyword 'music' itself matches the baseName. Only the audio-dominance requirement saves it (0 loose audio files). Correctly kept, and the sharpest demonstration that the size arm is the entire defense.
+- name: Jazz.on.a.Summers.Day.1959.1080p.BluRay.REMUX.AVC.FLAC.2.0-EPSiLON
+  files:
+  - Jazz.on.a.Summers.Day.1959.1080p.BluRay.REMUX.AVC.FLAC.2.0-EPSiLON.mkv|26000
+  - epsilon.nfo|1
+  expect: keep
+  type: movie
+  why: 'Double trap: keyword ''jazz'' matches AND the name literally says FLAC, but there are no .flac files (audio is muxed) so arm 1 sees 0 music bytes and arm 2 sees 0 audio bytes. Correctly kept - extension-based sizing, not t'
+- name: Single.All.the.Way.2021.1080p.NF.WEB-DL.DDP5.1.Atmos.H.264-SMURF
+  files:
+  - Single.All.the.Way.2021.1080p.NF.WEB-DL.H.264-SMURF.mkv|5100
+  - single.all.the.way.nfo|1
+  expect: keep
+  type: movie
+  why: keyword 'single' matches; arm 2 blocked by video bytes. Correctly kept.
+- name: Indie.Game.The.Movie.2012.1080p.WEB-DL.AAC2.0.H.264-PLAYNOW
+  files:
+  - Indie.Game.The.Movie.2012.1080p.WEB-DL.H.264-PLAYNOW.mkv|4300
+  - indie.game.the.movie.nfo|1
+  - Subs/eng.srt|1
+  expect: keep
+  type: movie
+  why: keyword 'indie' matches; music arm 2 blocked by video bytes. (No 'game' rule exists, so the word 'Game' is inert unless an external hint arrives.) Correctly kept.
+- name: American.Pop.1981.1080p.BluRay.x264-SADPANDA
+  files:
+  - American.Pop.1981.1080p.BluRay.x264-SADPANDA.mkv|7600
+  - american.pop.nfo|1
+  - sample.mkv|48
+  expect: keep
+  type: movie
+  why: keyword 'pop' matches as a standalone token; arm 2 blocked by video bytes. Correctly kept.
+- name: Ken.Burns.Jazz.2001.Complete.Series.720p.WEB-DL.x264-GHOSTS
+  files:
+  - Ken.Burns.Jazz.E01.720p.WEB-DL.x264.mkv|2200
+  - Ken.Burns.Jazz.E02.720p.WEB-DL.x264.mkv|2150
+  - Ken.Burns.Jazz.E03.720p.WEB-DL.x264.mkv|2280
+  - Ken.Burns.Jazz.E04.720p.WEB-DL.x264.mkv|2190
+  - ghosts.nfo|1
+  expect: keep
+  type: tv_show
+  why: keyword 'jazz' matches a documentary series about jazz; video dominance blocks arm 2. Correctly kept - but the audio-only version of this same content would be deleted.
+- name: Woodlands.Dark.and.Days.Bewitched.A.History.of.Folk.Horror.2021.1080p.BluRay.x264-GAZER
+  files:
+  - Woodlands.Dark.and.Days.Bewitched.2021.1080p.BluRay.x264-GAZER.mkv|12000
+  - gazer.nfo|1
+  - Subs/English.srt|1
+  expect: keep
+  type: movie
+  why: keyword 'folk' matches; arm 2 blocked by video bytes. Correctly kept.
+- name: Doctor.Who.2005.S01.Ep.01.Rose.720p.HDTV.x264-FoV
+  files:
+  - doctor.who.2005.s01.ep.01.720p.hdtv.x264-fov.mkv|1400
+  - fov.nfo|1
+  expect: keep
+  type: tv_show
+  why: keyword 'ep' matches the episode marker 'Ep.01' (bounded by dots) - the weakest token in the list fires on ordinary TV naming. Only video dominance prevents deletion. Correctly kept.
+- name: Hits.2014.720p.WEB-DL.AAC2.0.H264-Ainz
+  files:
+  - Hits.2014.720p.WEB-DL.H264-Ainz.mkv|2400
+  - hits.2014.nfo|1
+  expect: keep
+  type: movie
+  why: keyword 'hits' matches the David Cross film's one-word title; arm 2 blocked by video bytes. Correctly kept.
+- name: Rocketman.2019.1080p.BluRay.x264.DTS-HD.MA.5.1-FGT
+  files:
+  - Rocketman.2019.1080p.BluRay.x264-FGT.mkv|11200
+  - rocketman.nfo|1
+  - sample.mkv|60
+  expect: keep
+  type: movie
+  why: '''Rocketman'' is a single token so keyword ''rock'' does NOT match (whole-word semantics). Kept for the right reason - but note the protection is spelling luck, not content awareness.'
+- name: Popstar.Never.Stop.Never.Stopping.2016.1080p.BluRay.x264-DRONES
+  files:
+  - Popstar.Never.Stop.Never.Stopping.2016.1080p.BluRay.x264-DRONES.mkv|7100
+  - drones.nfo|1
+  expect: keep
+  type: movie
+  why: '''Popstar'' is one token so keyword ''pop'' does not match; had the release been named ''Pop.Star'' it would have matched. Correctly kept, by tokenization accident.'
+- name: Rocket.Spanish.Level.1.Complete.Audio.Course.MP3.128kbps
+  files:
+  - Lesson.01.mp3|38
+  - Lesson.02.mp3|41
+  - Lesson.03.mp3|36
+  - Lesson.04.mp3|39
+  - Lesson.05.mp3|42
+  - course.pdf|4
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): Audio-dominant, so the size arm gives NO protection here; survival depends entirely on ''Rocket'' not matching keyword ''rock''. Rename it ''Rocket.Spanish'' -> ''Rock.et'' and it dies. Correctly kept but structurally fragile.'
+- name: The.Great.Courses-How.to.Listen.to.and.Understand.Great.Music-Robert.Greenberg-MP3-64kbps
+  files:
+  - Lecture.01.The.Language.of.Music.mp3|21
+  - Lecture.02.Timbre.mp3|20
+  - Lecture.03.Pitch.and.Mode.mp3|22
+  - Lecture.04.Rhythm.mp3|19
+  - Guidebook.pdf|8
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): FALSE POSITIVE. music arm 2: keyword ''music'' is in the actual course title and mp3 bytes dominate the small PDF -> typed music -> hard deleted. This is a 48-lecture university course, not an album.'
+- name: The.Great.Courses-Elements.of.Jazz.From.Cakewalks.to.Fusion-Bill.Messenger-MP3
+  files:
+  - 01.Ragtime.and.Cakewalks.mp3|18
+  - 02.Early.New.Orleans.mp3|19
+  - 03.The.Swing.Era.mp3|20
+  - 04.Bebop.mp3|18
+  - 05.Fusion.mp3|17
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): FALSE POSITIVE. music arm 2 fires on keyword ''jazz'' with mp3 dominance. Lecture course, deleted as music.'
+- name: TTC.Great.Masters.Beethoven.His.Life.and.Music.Robert.Greenberg.M4A
+  files:
+  - 01.Beethoven.the.Man.m4a|26
+  - 02.The.Early.Years.m4a|24
+  - 03.The.Heroic.Period.m4a|27
+  - 04.Deafness.m4a|25
+  - coursebook.pdf|6
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): FALSE POSITIVE. m4a is an audio ext and keyword ''music'' is in the title -> arm 2 fires -> deleted. (No .m4b, so the audiobook rule does not intercept it first.)'
+- name: Open.Yale.Courses.MUSI.112.Listening.to.Music.Craig.Wright.Audio.MP3
+  files:
+  - MUSI112.Lecture.01.mp3|33
+  - MUSI112.Lecture.02.mp3|31
+  - MUSI112.Lecture.03.mp3|35
+  - MUSI112.Lecture.04.mp3|32
+  - syllabus.pdf|2
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): FALSE POSITIVE. Keyword ''music'' + mp3 dominance -> music -> deleted. A free university lecture series, gone.'
+- name: The.Great.Courses-The.Symphony-Robert.Greenberg-MP3-64kbps
+  files:
+  - Lecture.01.The.Baroque.Concerto.mp3|20
+  - Lecture.02.Haydn.mp3|21
+  - Lecture.03.Mozart.mp3|19
+  - Lecture.04.Beethoven.mp3|22
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): Identical shape to the deleted Great Courses cases, but ''Symphony'' happens not to be a keyword so nothing fires and it survives as unknown. Correctly kept - included to show the outcome for a lecture course is decided by'
+- name: Switched.on.Pop.Podcast.2014-2023.Complete.Archive.MP3.128kbps
+  files:
+  - 2014/001.Whats.a.Bridge.mp3|38
+  - 2016/112.Hotline.Bling.mp3|42
+  - 2019/188.Old.Town.Road.mp3|45
+  - 2021/230.Drivers.License.mp3|40
+  - 2023/301.Barbie.mp3|47
+  expect: keep
+  type: unknown
+  why: FALSE POSITIVE. Keyword 'pop' + mp3 dominance -> music. It is a talk podcast about music, not music.
+- name: NPR.Pop.Culture.Happy.Hour.2023.Complete.Season.MP3-64kbps
+  files:
+  - PCHH.2023.01.05.mp3|17
+  - PCHH.2023.01.12.mp3|16
+  - PCHH.2023.01.19.mp3|18
+  - PCHH.2023.01.26.mp3|17
+  - PCHH.2023.02.02.mp3|16
+  expect: keep
+  type: unknown
+  why: FALSE POSITIVE. Keyword 'pop' matches 'Pop' in the show name; mp3 dominance -> music -> deleted. Spoken-word podcast.
+- name: Old.Time.Radio.The.Shadow.Complete.Ep.001-100.MP3.64kbps
+  files:
+  - The.Shadow.Ep.001.mp3|14
+  - The.Shadow.Ep.002.mp3|13
+  - The.Shadow.Ep.003.mp3|15
+  - The.Shadow.Ep.004.mp3|14
+  - episode.log.txt|1
+  expect: keep
+  type: unknown
+  why: FALSE POSITIVE. Keyword 'ep' matches the episode marker, mp3 bytes dominate -> music. Public-domain radio drama archive deleted as an album.
+- name: BBC.Radio.4.Bleak.House.Full.Cast.Dramatisation.MP3-128kbps
+  files:
+  - Bleak.House.Part.01.mp3|54
+  - Bleak.House.Part.02.mp3|52
+  - Bleak.House.Part.03.mp3|55
+  - Bleak.House.Part.04.mp3|51
+  expect: keep
+  type: unknown
+  why: FALSE POSITIVE. Keyword 'house' (from the Dickens title) + mp3 dominance -> music. A radio drama, with no music content at all.
+- name: Cowboy.Bebop.1998.Complete.Series.Japanese.Audio.Only.FLAC.2.0.Track.Pack
+  files:
+  - Session.01.Japanese.flac|142
+  - Session.02.Japanese.flac|138
+  - Session.03.Japanese.flac|145
+  - Session.04.Japanese.flac|140
+  - README.txt|1
+  expect: keep
+  type: tv_show
+  why: 'FALSE POSITIVE via arm 1, which is name-blind: sum(flac) - sum(other) > 0 -> music, no keyword needed. This is a dub-swap audio pack for a TV series.'
+- name: The.Sopranos.S01.Italian.Dub.Audio.Track.FLAC.2.0.Sync.Pack
+  files:
+  - S01E01.ita.flac|320
+  - S01E02.ita.flac|305
+  - S01E03.ita.flac|318
+  - S01E04.ita.flac|312
+  - sync.notes.txt|1
+  expect: keep
+  type: tv_show
+  why: 'FALSE POSITIVE via arm 1: flac-only torrent -> music, regardless of the obviously non-music name. Alternate-language audio for a TV series.'
+- name: Blade.Runner.1982.Final.Cut.Ridley.Scott.Audio.Commentary.FLAC.2.0
+  files:
+  - Blade.Runner.Final.Cut.Commentary.flac|620
+  - commentary.readme.txt|1
+  expect: keep
+  type: movie
+  why: 'FALSE POSITIVE via arm 1: a single .flac file dominates -> music. It is a director commentary track for a film.'
+- name: BBC.Sound.Effects.Library.Original.Series.CD01-60.FLAC
+  files:
+  - CD01/01.Steam.Locomotive.flac|32
+  - CD07/04.Thunderstorm.flac|41
+  - CD22/11.Crowd.Applause.flac|28
+  - CD44/02.Aircraft.Interior.flac|37
+  - CD60/09.Footsteps.Gravel.flac|24
+  expect: keep
+  type: unknown
+  why: 'FALSE POSITIVE via arm 1: flac dominance -> music. A sound-effects library contains no music; nothing in the name suggests it does.'
+- name: Fullmetal.Alchemist.Brotherhood.Drama.CD.Vol.1-3.FLAC.plus.Scans
+  files:
+  - Vol1/01.Track.flac|44
+  - Vol1/02.Track.flac|38
+  - Vol2/01.Track.flac|41
+  - Vol3/01.Track.flac|39
+  - Scans/booklet01.jpg|3
+  - Scans/booklet02.jpg|3
+  expect: keep
+  type: unknown
+  why: 'FALSE POSITIVE via arm 1: flac bytes beat the jpg scans -> music. Drama CDs are voice-acted audio fiction. Note ''Fullmetal'' is one token so keyword ''metal'' would not have matched anyway - arm 1 never consults the name.'
+- name: Woodstock.1970.Directors.Cut.480p.DVDRip.XviD-KG.plus.Back.to.the.Garden.FLAC
+  files:
+  - Woodstock.1970.Directors.Cut.DVDRip.XviD-KG.avi|1400
+  - Audio/Disc01.flac|820
+  - Audio/Disc02.flac|790
+  - Audio/Disc03.flac|845
+  - Audio/Disc04.flac|810
+  - readme.nfo|1
+  expect: keep
+  type: movie
+  why: 'FALSE POSITIVE via arm 1: bundled lossless audio (3265MB) exceeds the film plus everything else (1401MB), so sum(flac) - sum(other) > 0 -> music -> the film is deleted with it. Any film+FLAC bundle where the video is a l'
+- name: MIT.OCW.18.06.Linear.Algebra.Strang.Lecture.Notes.and.Problem.Sets.PDF
+  files:
+  - 18.06.Linear.Algebra/MIT18_06_Lecture_Notes_Complete.pdf|46
+  - 18.06.Linear.Algebra/Problem_Sets_and_Solutions.pdf|22
+  - 18.06.Linear.Algebra/Exams_with_Solutions.pdf|15
+  - 18.06.Linear.Algebra/Syllabus_and_Reading_List.pdf|2
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): ebook rule: pdf 85MB - 0 other > 0 fires -> ebook -> HARD DELETE; wrong, this is real MIT OpenCourseWare 18.06 course material, not a book.'
+- name: Stanford.CS229.Machine.Learning.Andrew.Ng.Lecture.Notes.and.Problem.Sets.2018.PDF
+  files:
+  - cs229/cs229-notes-01-13-merged.pdf|38
+  - cs229/problem-sets-1-4-with-solutions.pdf|26
+  - cs229/section-notes-linear-algebra-probability-review.pdf|11
+  - cs229/cs229-cheatsheets-supervised-unsupervised-deeplearning.pdf|9
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): ebook rule: pdf 84MB - 0 other > 0 fires -> ebook -> deleted; wrong, Stanford CS229 handouts are course material for the new ''course'' type.'
+- name: College.Board.Official.SAT.Practice.Tests.1-10.Complete.PDF
+  files:
+  - Official_SAT_Practice/Tests_01-05_with_answer_explanations.pdf|34
+  - Official_SAT_Practice/Tests_06-10_with_answer_explanations.pdf|31
+  - Official_SAT_Practice/Scoring_Guide_and_Answer_Sheets.pdf|4
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): ebook rule: pdf 69MB dominates -> ebook -> deleted; wrong, College Board official practice tests are test-prep courseware, not a published book.'
+- name: Assimil.New.French.With.Ease.Course.Book.Scans.PDF.and.Audio.Lessons.MP3
+  files:
+  - Assimil_New_French_With_Ease/Course_Book_Scan_600dpi.pdf|610
+  - Assimil_New_French_With_Ease/Workbook_Exercises_Scan.pdf|95
+  - Assimil_New_French_With_Ease/Lessons_01-113.mp3|240
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): audiobook rule misses (audio 240 - other 705 = -465MB, below the 50MB gate) even though baseName matches keywords.audiobook ''book''; ebook then fires (705-240=465) -> deleted, wrong for a real Assimil language course.'
+- name: US.Army.Field.Manuals.and.Technical.Manuals.Complete.Collection.PDF
+  files:
+  - US_Army_FM/FM_3-21.8_Infantry_Rifle_Platoon_and_Squad.pdf|18
+  - US_Army_FM/FM_7-22_Holistic_Health_and_Fitness.pdf|26
+  - US_Army_FM/FM_21-76_Survival.pdf|12
+  - US_Army_FM/TM_9-1005-319-10_M4_Carbine.pdf|14
+  - US_Army_FM/ATP_and_ATTP_series_bundle.pdf|940
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 1010MB - 0 other > 0 -> ebook -> deleted; wrong, these are public-domain US Army doctrinal/technical manuals, a government document dump.'
+- name: JFK.Assassination.Records.Collection.2017-2018.NARA.Declassified.Release.PDF
+  files:
+  - JFK_Records_2017/NARA_104-10003_to_104-10099_CIA.pdf|420
+  - JFK_Records_2017/NARA_124-10000_series_FBI_files.pdf|880
+  - JFK_Records_2017/NARA_180-10000_series_HSCA.pdf|510
+  - JFK_Records_2017/release_index.pdf|6
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 1816MB dominates -> ebook -> HARD DELETE; wrong, the NARA JFK Records Collection is a government archive release, not a book.'
+- name: Giuffre.v.Maxwell.Unsealed.Court.Documents.SDNY.January.2024.PDF
+  files:
+  - Giuffre_v_Maxwell_2024/Doc_1320_Exhibits_Part1.pdf|180
+  - Giuffre_v_Maxwell_2024/Doc_1320_Exhibits_Part2.pdf|165
+  - Giuffre_v_Maxwell_2024/Deposition_Transcripts.pdf|240
+  - Giuffre_v_Maxwell_2024/docket_index.pdf|3
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 588MB dominates -> ebook -> deleted; wrong, this is a court docket dump. Note the xxx rule never gets a chance since ebook matches first.'
+- name: UCSF.Opioid.Industry.Documents.Purdue.Pharma.Litigation.Archive.PDF
+  files:
+  - Opioid_Industry_Documents/Purdue_internal_memos_batch01.pdf|620
+  - Opioid_Industry_Documents/Purdue_internal_memos_batch02.pdf|585
+  - Opioid_Industry_Documents/deposition_exhibits.pdf|410
+  - Opioid_Industry_Documents/document_index.csv|9
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 1615MB - csv 9MB > 0 -> ebook -> deleted; wrong, the UCSF Industry Documents Library opioid litigation set is a legal document archive.'
+- name: arXiv.org.hep-th.Full.PDF.Dump.1991-2023.Bulk.Archive
+  files:
+  - arxiv_hep-th/batch_0001_1991-2000.pdf|1800
+  - arxiv_hep-th/batch_0002_2001-2012.pdf|2400
+  - arxiv_hep-th/batch_0003_2013-2023.pdf|3100
+  - arxiv_hep-th/metadata_oai.xml|140
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 7300MB - xml 140MB > 0 -> ebook -> deleted; wrong, an arXiv bulk preprint dump is an academic paper archive, not an ebook pack.'
+- name: PubMed.Central.Open.Access.Subset.2024.Commercial.Use.PDF.Batch.001
+  files:
+  - pmc_oa_2024_b001/articles_000001-025000.pdf|2400
+  - pmc_oa_2024_b001/articles_025001-050000.pdf|2350
+  - pmc_oa_2024_b001/oa_file_list.csv|18
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 4750MB - csv 18MB > 0 -> ebook -> deleted; wrong, the PMC Open Access Subset is a journal-article corpus.'
+- name: NASA.NTRS.Apollo.Program.Technical.Reports.and.Handbooks.PDF
+  files:
+  - NTRS_Apollo/Apollo_Program_Summary_Report_JSC-09423.pdf|140
+  - NTRS_Apollo/Apollo_Operations_Handbook_CSM_Vol1.pdf|210
+  - NTRS_Apollo/LM10_through_LM14_Handbook.pdf|185
+  - NTRS_Apollo/Apollo_Flight_Journal_Transcripts.pdf|95
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 630MB dominates -> ebook -> deleted; wrong, NASA Technical Reports Server documents are engineering documentation.'
+- name: Intel.64.and.IA-32.Architectures.Software.Developer.Manual.Volumes.1-4.PDF
+  files:
+  - Intel_SDM/325462-sdm-combined-volumes.pdf|64
+  - Intel_SDM/vol1_basic_architecture.pdf|12
+  - Intel_SDM/vol2_instruction_set_reference.pdf|22
+  - Intel_SDM/vol3_system_programming_guide.pdf|20
+  - Intel_SDM/vol4_model_specific_registers.pdf|6
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 124MB - 0 other > 0 -> ebook -> deleted; wrong, the Intel SDM is vendor hardware documentation, the canonical technical-doc false positive.'
+- name: MSDN.Library.for.Visual.Studio.2008.SP1.Offline.Documentation.CHM
+  files:
+  - MSDN_VS2008_SP1/MSDN_Library.chm|1450
+  - MSDN_VS2008_SP1/dotnet_framework_class_library.chm|780
+  - MSDN_VS2008_SP1/win32_api_reference.chm|640
+  - MSDN_VS2008_SP1/hhcollection.col|2
+  expect: keep
+  type: unknown
+  why: 'ebook rule via the generic ''chm'' extension: 2870MB - 2MB > 0 -> ebook -> deleted; wrong, .chm here is offline software help, not a book — chm is the sleeper extension in extensions.ebook.'
+- name: Honda.Civic.2006-2011.Factory.Service.Manual.and.Wiring.Diagrams.PDF
+  files:
+  - Honda_Civic_FSM/Service_Manual_Volume_1.pdf|310
+  - Honda_Civic_FSM/Service_Manual_Volume_2.pdf|285
+  - Honda_Civic_FSM/Electrical_Troubleshooting_Manual.pdf|140
+  - Honda_Civic_FSM/Wiring_Diagrams.pdf|95
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 830MB dominates -> ebook -> deleted; wrong, an OEM factory service manual is repair documentation, not a trade book.'
+- name: IEEE.802.11-2020.WLAN.Standard.and.Amendments.PDF
+  files:
+  - IEEE_802.11/IEEE_802.11-2020.pdf|38
+  - IEEE_802.11/IEEE_802.11ax-2021.pdf|24
+  - IEEE_802.11/IEEE_802.11ac-2013.pdf|16
+  - IEEE_802.11/IEEE_802.11n-2009.pdf|12
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 90MB - 0 other > 0 -> ebook -> deleted; wrong, published standards documents are specifications, not ebooks.'
+- name: Library.of.Congress.Chronicling.America.Newspaper.Scans.1900-1910.PDF
+  files:
+  - Chronicling_America/NY_Evening_World_1900-1904.pdf|1900
+  - Chronicling_America/NY_Evening_World_1905-1910.pdf|2100
+  - Chronicling_America/ocr_plain_text.txt|340
+  - Chronicling_America/mets_manifest.xml|20
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 4000MB - (txt+xml 360MB) > 0 -> ebook -> deleted; wrong, LOC newspaper page scans are a public archive. Note .txt is not an ebook extension, so an all-text dump of the same corpus would survive — packagin'
+- name: Hal.Leonard.The.Real.Book.Volumes.1-3.6th.Edition.C.Instruments.PDF
+  files:
+  - Real_Book/The_Real_Book_Vol_1_6th_Ed_C.pdf|46
+  - Real_Book/The_Real_Book_Vol_2_6th_Ed_C.pdf|42
+  - Real_Book/The_Real_Book_Vol_3_6th_Ed_C.pdf|40
+  expect: delete
+  type: ebook
+  why: 'ebook rule: pdf 128MB dominates -> ebook -> deleted. audiobook keyword ''book'' matches baseName but the 50MB audio gate fails, and keywords.music (''jazz'' etc.) never appears; sheet music is scores, not a readable book.'
+- name: IMSLP.Beethoven.Complete.Piano.Sonatas.Breitkopf.und.Haertel.1862.Scores.PDF
+  files:
+  - IMSLP_Beethoven_Sonatas/Sonatas_01-16_Breitkopf_1862_scan.pdf|380
+  - IMSLP_Beethoven_Sonatas/Sonatas_17-32_Breitkopf_1862_scan.pdf|420
+  - IMSLP_Beethoven_Sonatas/editorial_notes.pdf|30
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 830MB dominates -> ebook -> deleted; wrong, IMSLP public-domain engraved scores are performance material. ''classical'' is a keywords.music token but the music rule never runs — ebook matches first.'
+- name: Nintendo.Game.Boy.Advance.Instruction.Manual.Scans.Complete.Collection.PDF
+  files:
+  - GBA_Manual_Scans/manuals_A-M.pdf|1150
+  - GBA_Manual_Scans/manuals_N-Z.pdf|1080
+  - GBA_Manual_Scans/box_art_thumbnails.jpg|60
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 2230MB - jpg 60MB > 0 -> ebook -> deleted; wrong, these are scanned game manuals (game preservation documentation), and ''game'' has no classifier rule to catch them.'
+- name: Sega.Mega.Drive.Genesis.Instruction.Manual.Scans.Complete.CBZ
+  files:
+  - Genesis_Manual_Scans/Sonic_the_Hedgehog_manual.cbz|28
+  - Genesis_Manual_Scans/Streets_of_Rage_2_manual.cbz|24
+  - Genesis_Manual_Scans/Phantasy_Star_IV_manual.cbz|46
+  - Genesis_Manual_Scans/remaining_400_manuals.cbz|3400
+  expect: keep
+  type: unknown
+  why: 'comic rule: cbz 3498MB - 0 other > 0 -> comic -> HARD DELETE, and comic is checked before ebook; wrong, CBZ is just a zip of page scans here, nothing about it implies comics.'
+- name: Vintage.DEC.PDP-11.Hardware.Handbooks.and.RSX-11M.Manuals.Scans.CBR
+  files:
+  - DEC_PDP11_Scans/PDP-11_Processor_Handbook_1979.cbr|85
+  - DEC_PDP11_Scans/PDP-11_Peripherals_Handbook_1976.cbr|110
+  - DEC_PDP11_Scans/RSX-11M_System_Management_Guide.cbr|240
+  - DEC_PDP11_Scans/scan_notes.txt|1
+  expect: keep
+  type: unknown
+  why: 'comic rule: cbr 435MB - txt 1MB > 0 -> comic -> deleted; wrong, these are vintage minicomputer hardware manuals packaged in a page-scan container.'
+- name: FYC.Screenplays.2023.Awards.Season.Shooting.Scripts.PDF
+  files:
+  - FYC_Screenplays_2023/Oppenheimer_Universal_FYC.pdf|8
+  - FYC_Screenplays_2023/Killers_of_the_Flower_Moon_AppleTV_FYC.pdf|9
+  - FYC_Screenplays_2023/Poor_Things_Searchlight_FYC.pdf|7
+  - FYC_Screenplays_2023/Past_Lives_A24_FYC.pdf|6
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 30MB - 0 other > 0 -> ebook -> deleted; wrong, studio For-Your-Consideration screenplays are film production documents, and at 30MB the whole torrent dies on a rule with no size floor.'
+- name: Helmut.Newton.SUMO.Taschen.Photobook.600dpi.Scans.TIFF
+  files:
+  - Helmut_Newton_SUMO/plates_001-100_600dpi.tif|4200
+  - Helmut_Newton_SUMO/plates_101-200_600dpi.tif|4100
+  - Helmut_Newton_SUMO/colophon_and_plate_index.pdf|35
+  expect: keep
+  type: unknown
+  why: 'CORRECT KEEP, but by accident: ebook sums 35 - 8300 < 0 so it misses; xxx needs a keywords.xxx hit and ''nude''/''photobook'' are not tokens (''erotic*''/''nubile*'' are), so it stays unknown. The same photobook flattened to one'
+- name: Seven.Samurai.1954.Criterion.Collection.1080p.BluRay.x264-CtrlHD
+  files:
+  - Seven.Samurai.1954.Criterion.1080p.BluRay.x264-CtrlHD.mkv|13800
+  - Criterion_essay_booklet.pdf|48
+  - sample.mkv|55
+  - Seven.Samurai.1954.eng.srt|1
+  expect: keep
+  type: movie
+  why: 'CORRECT KEEP: ebook sums 48 - 13856 < 0, comic no, so it falls through to parse_video_content -> movie. Boundary guard — any fix to the ebook rule must not start deleting discs that ship a booklet PDF.'
+- name: Federal.Reserve.FOMC.Meeting.Transcripts.and.Minutes.1993-2018.PDF
+  files:
+  - FOMC_Transcripts/transcripts_1993-2000.pdf|540
+  - FOMC_Transcripts/transcripts_2001-2010.pdf|610
+  - FOMC_Transcripts/transcripts_2011-2018.pdf|480
+  - FOMC_Transcripts/beige_books_and_minutes.pdf|220
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 1850MB dominates -> ebook -> deleted; wrong, Federal Reserve meeting transcripts are a government records release.'
+- name: Warhammer.40000.10th.Edition.Core.Rules.and.Faction.Index.PDF.Official.Free.Release
+  files:
+  - WH40K_10th/Core_Rules_v1.0.pdf|42
+  - WH40K_10th/Index_Space_Marines.pdf|38
+  - WH40K_10th/Index_Tyranids.pdf|31
+  - WH40K_10th/Index_Astra_Militarum.pdf|33
+  - WH40K_10th/Quick_Start_Guide.pdf|9
+  expect: keep
+  type: unknown
+  why: 'ebook rule: pdf 153MB - 0 other > 0 -> ebook -> deleted; wrong, these are official free tabletop game rules — game rulebooks are the exact shape the missing ''game'' rule would catch.'
+- name: Sears.Christmas.Wish.Book.Catalog.Scans.1970-1985.CBZ
+  files:
+  - Sears_Wish_Book/Sears_Wish_Book_1975.cbz|420
+  - Sears_Wish_Book/Sears_Wish_Book_1979.cbz|380
+  - Sears_Wish_Book/Sears_Wish_Book_1983.cbz|410
+  expect: keep
+  type: unknown
+  why: 'comic rule: cbz 1210MB - 0 other > 0 -> comic -> deleted; wrong, retail catalog scans are historical ephemera. audiobook''s ''book'' keyword also matches baseName but its 50MB audio gate saves it from that path.'
+- name: Hal.Leonard.Guitar.Method.Complete.Edition.Books.1-3.PDF.plus.Audio.Tracks
+  files:
+  - Hal_Leonard_Guitar_Method/Books_1_2_3_Complete.pdf|58
+  - Hal_Leonard_Guitar_Method/Audio_Tracks_Book1.mp3|120
+  - Hal_Leonard_Guitar_Method/Audio_Tracks_Book2.mp3|118
+  - Hal_Leonard_Guitar_Method/Audio_Tracks_Book3.mp3|115
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): ORDERING TRAP: audiobook runs first and wins — audio 353 - other 58 = 295MB > 50MB AND baseName matches keywords.audiobook ''books?'' — so it is deleted as an audiobook before the ebook rule is ever evaluated; wrong, it is'
+- name: Stephen.King.Complete.Collection.1974-2023.Retail.EPUB.MOBI
+  files:
+  - Stephen_King/The_Shining.epub|2
+  - Stephen_King/It.epub|4
+  - Stephen_King/The_Stand_Uncut.epub|5
+  - Stephen_King/11-22-63.mobi|3
+  - Stephen_King/remaining_71_titles_bundle.epub|180
+  expect: delete
+  type: ebook
+  why: 'ebook rule: epub+mobi 194MB - 0 other > 0 -> ebook -> deleted; correct, this is a genuine retail ebook pack.'
+- name: Brandon.Sanderson.Cosmere.Complete.Collection.EPUB.AZW3
+  files:
+  - Sanderson_Cosmere/The_Way_of_Kings.epub|6
+  - Sanderson_Cosmere/Words_of_Radiance.azw3|7
+  - Sanderson_Cosmere/Mistborn_Trilogy.epub|9
+  - Sanderson_Cosmere/Stormlight_4_and_5.epub|13
+  - Sanderson_Cosmere/remaining_cosmere_titles.epub|48
+  expect: delete
+  type: ebook
+  why: 'ebook rule: 83MB of epub/azw3 with no other files -> ebook -> deleted; correct, genuine novel collection.'
+- name: Terry.Pratchett.Discworld.Complete.41.Novels.Retail.EPUB
+  files:
+  - Discworld/01_The_Colour_of_Magic.epub|2
+  - Discworld/05_Sourcery.epub|2
+  - Discworld/17_Interesting_Times.epub|3
+  - Discworld/33_Going_Postal.epub|3
+  - Discworld/remaining_37_novels.epub|92
+  expect: delete
+  type: ebook
+  why: baseName matches keywords.audiobook 'novels?' but the audiobook 50MB audio gate fails (no audio), so ebook fires on 102MB of epub -> deleted; correct outcome and a good check that the audiobook keyword alone cannot misty
+- name: OReilly.Media.Programming.Ebook.Collection.2020-2023.PDF.EPUB
+  files:
+  - OReilly/Learning_Go_2nd_Edition.epub|9
+  - OReilly/Designing_Data-Intensive_Applications.pdf|24
+  - OReilly/Fluent_Python_2nd_Edition.pdf|31
+  - OReilly/Kubernetes_Up_and_Running_3rd.epub|11
+  - OReilly/remaining_180_titles.pdf|2400
+  expect: delete
+  type: ebook
+  why: 'ebook rule: 2475MB pdf/epub -> ebook -> deleted; correct, commercially published technical books (contrast with the Intel SDM / MSDN cases, which are vendor docs, not books).'
+- name: Harry.Potter.Complete.7.Book.Collection.J.K.Rowling.Retail.EPUB
+  files:
+  - Harry_Potter/01_Philosophers_Stone.epub|3
+  - Harry_Potter/04_Goblet_of_Fire.epub|5
+  - Harry_Potter/05_Order_of_the_Phoenix.epub|6
+  - Harry_Potter/07_Deathly_Hallows.epub|5
+  - Harry_Potter/books_2_3_6.epub|11
+  expect: delete
+  type: ebook
+  why: 'ebook rule: epub 30MB - 0 other > 0 -> ebook -> deleted; correct, genuine retail ebook set.'
+- name: The.Walking.Dead.001-193.Complete.Series.Digital.CBR
+  files:
+  - TWD/The_Walking_Dead_001-050.cbr|3100
+  - TWD/The_Walking_Dead_051-100.cbr|3250
+  - TWD/The_Walking_Dead_101-150.cbr|3400
+  - TWD/The_Walking_Dead_151-193.cbr|2900
+  expect: delete
+  type: comic
+  why: 'comic rule: cbr 12650MB - 0 other > 0 -> comic -> deleted; correct, a genuine complete comic run.'
+- name: Saga.001-054.Complete.Image.Comics.Digital.CBZ
+  files:
+  - Saga/Saga_001-018.cbz|980
+  - Saga/Saga_019-036.cbz|1020
+  - Saga/Saga_037-054.cbz|1050
+  expect: delete
+  type: comic
+  why: 'comic rule: cbz 3050MB dominates -> comic -> deleted; correct, genuine Image Comics run.'
+- name: Berserk.v01-v41.Complete.Manga.Digital.CBZ
+  files:
+  - Berserk/Berserk_v01-v14.cbz|2600
+  - Berserk/Berserk_v15-v28.cbz|2750
+  - Berserk/Berserk_v29-v41.cbz|2500
+  expect: delete
+  type: comic
+  why: 'comic rule: cbz 7850MB dominates -> comic -> deleted; correct, genuine manga volumes.'
+- name: Watchmen.001-012.Complete.DC.Digital.CBR
+  files:
+  - Watchmen/Watchmen_001-004.cbr|260
+  - Watchmen/Watchmen_005-008.cbr|255
+  - Watchmen/Watchmen_009-012.cbr|270
+  expect: delete
+  type: comic
+  why: 'comic rule: cbr 785MB - 0 other > 0 -> comic -> deleted; correct, genuine 12-issue limited series.'
+- name: The.Sandman.001-075.Complete.Vertigo.Digital.CBR
+  files:
+  - Sandman/Sandman_001-025.cbr|1600
+  - Sandman/Sandman_026-050.cbr|1580
+  - Sandman/Sandman_051-075.cbr|1640
+  - Sandman/reading_order.txt|1
+  expect: delete
+  type: comic
+  why: 'comic rule: cbr 4820MB - txt 1MB > 0 -> comic -> deleted; correct, genuine complete comic run.'
+- name: 2000.AD.Prog.2000-2100.Complete.Digital.CBZ
+  files:
+  - 2000AD/Prog_2000-2033.cbz|1400
+  - 2000AD/Prog_2034-2067.cbz|1380
+  - 2000AD/Prog_2068-2100.cbz|1420
+  expect: delete
+  type: comic
+  why: 'comic rule: cbz 4200MB dominates -> comic -> deleted; correct — 2000 AD is a comics anthology periodical, so ''comic'' is the right type even though it is technically a magazine.'
+- name: National.Geographic.Complete.Archive.1888-2015.Every.Issue.PDF
+  files:
+  - NatGeo_Archive/NG_1888-1929.pdf|8200
+  - NatGeo_Archive/NG_1930-1969.pdf|11500
+  - NatGeo_Archive/NG_1970-1999.pdf|13800
+  - NatGeo_Archive/NG_2000-2015.pdf|7400
+  - NatGeo_Archive/issue_index.csv|24
+  expect: delete
+  type: ebook
+  why: 'ebook rule: pdf 40900MB - csv 24MB > 0 -> ebook -> deleted. JUDGMENT CALL, recorded as correct: a consumer magazine back-catalogue is periodical reading matter and belongs with ebook, unlike newspaper-of-record or journa'
+- name: Udemy.The.Complete.2024.Web.Development.Bootcamp.Angela.Yu.1080p
+  files:
+  - 01 - Front-End Web Development/001 - What You Will Get In This Course.mp4|58
+  - 01 - Front-End Web Development/001 - What You Will Get In This Course.en.srt|0.03
+  - 27 - Node.js/214 - Building a RESTful API.mp4|187
+  - 27 - Node.js/214 - Building a RESTful API.en.srt|0.06
+  - exercise-files/Complete-Web-Dev-Resources.zip|412
+  - '[TutsNode.com] - readme.txt|0.01'
+  expect: delete
+  type: course
+  why: No course rule exists; mp4 video dominates so no size-weighted rule fires and it survives to the LLM - markers are 'Udemy'+'Bootcamp'+'The Complete ... Course', zero-padded 'NN - ' lesson folders, per-lesson .en.srt side
+- name: Coursera.Machine.Learning.Andrew.Ng.Stanford.Complete.Course.720p.WEBRip
+  files:
+  - Week 1/01_introduction/01_welcome-to-machine-learning.mp4|42
+  - Week 1/01_introduction/01_welcome-to-machine-learning.en.srt|0.04
+  - Week 6/12_advice-for-applying-ml/03_learning-curves.mp4|61
+  - Week 6/Lecture-Slides-Week6.pdf|9
+  - quizzes/week1-quiz.pdf|1
+  expect: delete
+  type: course
+  why: ebook rule does NOT fire (pdf 10MB minus video ~103MB is negative) and nothing else matches, so it lands in unknown - 'Coursera' + 'Week N' folders + slug_underscored lesson names + srt sidecars are the real markers.
+- name: Pluralsight.C.Sharp.10.Fundamentals.Mark.Michaelis.2024.TUTORiAL
+  files:
+  - 01. Course Overview/01. Course Overview.mp4|11
+  - 04. Data Types/03. Working with Strings.mp4|38
+  - 04. Data Types/03. Working with Strings.srt|0.03
+  - csharp-10-fundamentals.zip|24
+  - playlist.m3u|0.01
+  expect: delete
+  type: course
+  why: Video-dominant so no current rule fires; correct target - 'Pluralsight' + the scene 'TUTORiAL' tag + 'NN. Module/NN. Clip.mp4' + a slug-named exercise zip are high-precision markers with no film-title collisions.
+- name: LinkedIn.Learning.Python.Essential.Training.Bill.Weinman.1080p.TUTORiAL
+  files:
+  - 01 - Introduction/001 - Welcome.mp4|24
+  - 01 - Introduction/001 - Welcome.srt|0.02
+  - 05 - Functions/034 - Recursion.mp4|46
+  - Ex_Files_Python_EssT.zip|2
+  - Info.txt|0.01
+  expect: delete
+  type: course
+  why: Correctly a course, but the two obvious tokens are both poisoned - 'training' collides with Training Day (2001/S01) and 'python' with Monty Python's Flying Circus; the 'Ex_Files_*' zip and 'LinkedIn Learning' are the saf
+- name: Skillshare.Watercolor.Painting.for.Beginners.Complete.Class.1080p.WEB-DL
+  files:
+  - 01-Introduction.mp4|38
+  - 01-Introduction.srt|0.02
+  - 07-Class Project.mp4|95
+  - Class-Project-Resources.zip|64
+  expect: delete
+  type: course
+  why: Should be course, but 'class' collides with The Class (2008) and 'beginners' with Beginners (2010) - the platform token 'Skillshare' plus the 'Class Project' file are what actually carry precision here.
+- name: Packt.Mastering.Kubernetes.The.Complete.Hands-On.Guide.2024.Video.Course
+  files:
+  - Section 1 - Getting Started/01_Course_Introduction.mp4|33
+  - Section 1 - Getting Started/01_Course_Introduction.srt|0.03
+  - Section 9 - Helm/58_Writing_a_Chart.mp4|71
+  - Code_Files/kubernetes-course-code.zip|8
+  expect: delete
+  type: course
+  why: 'The exact Packt Mastering publisher/product form is reviewed; bare packt remains unsafe because it is an ordinary German verb.'
+- name: Frontend.Masters.Complete.Intro.to.React.v8.Brian.Holt.1080p.WEB-DL
+  files:
+  - 01 - Introduction/01 - Introduction.mp4|22
+  - 06 - Hooks/04 - useEffect.mp4|48
+  - 06 - Hooks/04 - useEffect.srt|0.03
+  - course-notes.pdf|4
+  - project-files.zip|18
+  expect: delete
+  type: course
+  why: Course; the bare word 'masters' is the danger token but the two-word platform name 'Frontend Masters' is collision-free, which is the general lesson for this whole population.
+- name: The.Great.Courses.Understanding.the.Universe.From.Quarks.to.the.Cosmos.TTC.720p
+  files:
+  - Lecture 01 - Introduction to Particle Physics.mp4|410
+  - Lecture 01 - Introduction to Particle Physics.srt|0.05
+  - Lecture 12 - The Standard Model.mp4|402
+  - Lecture 24 - The Future of Physics.mp4|398
+  - Course Guidebook.pdf|22
+  expect: delete
+  type: course
+  why: Video dominates so the 22MB guidebook never trips ebook and nothing fires - 400MB-per-lecture files are structurally identical to a docuseries, so only 'The Great Courses'/'TTC'/'Lecture NN' can separate it.
+- name: MasterClass.Gordon.Ramsay.Teaches.Cooking.I.1080p.WEB-DL.AAC2.0.H.264-KOGi
+  files:
+  - 01 - Meet Your Instructor.mp4|420
+  - 01 - Meet Your Instructor.srt|0.04
+  - 12 - Cooking the Perfect Steak.mp4|610
+  - Gordon-Ramsay-Workbook.pdf|31
+  expect: delete
+  type: course
+  why: 'Deliberate safe miss: bare MasterClass collides with Masterclass (2010), while the keyword DSL wildcard in a generic ''MasterClass Name Teaches'' form permits empty spans and cannot safely gain single-hit delete authority.'
+- name: Professor.Messer.CompTIA.Security.Plus.SY0-701.Complete.Course.1080p.WEB-DL
+  files:
+  - 1.0 General Security Concepts/1.1 - Security Controls.mp4|68
+  - 1.0 General Security Concepts/1.1 - Security Controls.srt|0.03
+  - 5.0 Security Program Management/5.6 - Awareness Training.mp4|54
+  - SY0-701-Course-Notes.pdf|16
+  - practice-exam-answers.pdf|2
+  expect: delete
+  type: course
+  why: Course; the certification exam code 'SY0-701' (like 200-301, SAA-C03, AZ-###, CKA) is a near-zero-false-positive token, far safer than 'training' which appears only in a file path here.
+- name: Stephane.Maarek.AWS.Certified.Solutions.Architect.Associate.SAA-C03.2024.Udemy.1080p
+  files:
+  - 03 - IAM/012 - IAM Policies Hands On.mp4|92
+  - 03 - IAM/012 - IAM Policies Hands On.en.srt|0.04
+  - 24 - Exam Prep/198 - Practice Exam Walkthrough.mp4|240
+  - slides/AWS-Certified-SAA-C03-Slides.pdf|58
+  - hands-on-labs.zip|6
+  expect: delete
+  type: course
+  why: Course; a 58MB slide PDF is still far under the video total so ebook does not fire - 'AWS Certified' + 'SAA-C03' + 'Udemy' carry it, and 'Exam Prep'/'Practice Exam' are good secondary markers.
+- name: Rosetta.Stone.Totale.5.0.37.Spanish.Latin.America.Level.1-5.Multilingual
+  files:
+  - RosettaStoneTOTALE_setup.exe|742
+  - Language Packs/Spanish-LatinAmerica-L1.iso|1980
+  - Language Packs/Spanish-LatinAmerica-L3.iso|1860
+  - Crack/patch.exe|4
+  - readme.nfo|0.01
+  expect: delete
+  type: course
+  why: 'The reviewed Rosetta Stone Totale product form types this before the software rule; bare Rosetta Stone also names a real film.'
+- name: Pimsleur.Spanish.Latin.American.Levels.1-3.Complete.Course.MP3.128kbps
+  files:
+  - Level 1/Pimsleur Spanish I - Lesson 01.mp3|24
+  - Level 1/Pimsleur Spanish I - Lesson 30.mp3|23
+  - Level 2/Pimsleur Spanish II - Lesson 07.mp3|25
+  - Level 3/Pimsleur Spanish III - Lesson 12.mp3|25
+  - Reading Booklet.pdf|3
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): Pimsleur is a language-course publisher'
+- name: ICT.Inner.Circle.Trader.2022.Mentorship.Full.Forex.Course.1080p.WEB-DL
+  files:
+  - 01 - Elements of a Trade Setup.mp4|310
+  - 01 - Elements of a Trade Setup.srt|0.05
+  - 22 - Market Maker Buy Model.mp4|420
+  - ICT-Mentorship-Notes.pdf|12
+  expect: delete
+  type: course
+  why: Course; 'trading'/'trader' is the tempting token but collides with Trading Places (1983), so 'forex', 'mentorship' and 'price action' are the safer members of this cluster.
+- name: Beachbody.P90X.Extreme.Home.Fitness.Complete.12.DVD.Program.DVDRip.XviD
+  files:
+  - 01 - Chest and Back.avi|712
+  - 05 - Legs and Back.avi|698
+  - 12 - Yoga X.avi|1180
+  - P90X-Fitness-Guide.pdf|18
+  - P90X-Nutrition-Plan.pdf|14
+  expect: delete
+  type: course
+  why: Course, but structurally identical to a 12-episode DVDRip TV season (numbered .avi, ~700MB each, no srt) so only product names (P90X/Beachbody/Insanity) and 'Workout Program' work - note 'Yoga' appears in a file path, th
+- name: Yoga.With.Adriene.30.Days.of.Yoga.Complete.Series.1080p.WEB-DL.AAC2.0.H264
+  files:
+  - Day 01 - Ease Into It.mp4|280
+  - Day 15 - Yoga for Flexibility.mp4|295
+  - Day 30 - Yoga Reflection.mp4|310
+  - yoga-with-adriene-calendar.pdf|1
+  expect: delete
+  type: course
+  why: YouTube-rip fitness course that should be excluded; a bare 'yoga' keyword catches it but also deletes Yoga Hosers (2016), so the multi-word 'Yoga With Adriene' / '30 Days of' forms are what should be used.
+- name: Groove3.Ableton.Live.12.Explained.TUTORiAL-SYNTHiC4TE
+  files:
+  - 01. Introduction and Overview.mp4|46
+  - 18. Mixing and Mastering.mp4|88
+  - Groove3-Ableton-Live-12-Project-Files.zip|240
+  - SYNTHiC4TE.nfo|0.01
+  - file_id.diz|0.01
+  expect: delete
+  type: course
+  why: Course; the literal scene 'TUTORiAL' tag plus audio-tutorial groups (SYNTHiC4TE, DECiBEL, FANTASTiC) are near-perfect markers, and 'Mastering' appearing only in a file path is another argument against a bare 'master*' wi
+- name: Berklee.Online.Jazz.Improvisation.Complete.Course.MP3.320kbps
+  files:
+  - 01 - The Blues Scale.mp3|28
+  - 09 - Chord Tone Soloing.mp3|30
+  - 18 - Rhythm Changes.mp3|31
+  - playalong/Bb-Blues-Backing.mp3|12
+  - Jazz-Improvisation-Workbook.pdf|7
+  expect: delete
+  type: course
+  why: music rule ALREADY fires - baseName matches keywords.music 'jazz' AND audio(mp3) minus other > 0 - so it is typed music and hard deleted; correct exclusion by accident, and it means every audio-only lesson set with a gen
+- name: Proko.Figure.Drawing.Fundamentals.Complete.Course.1080p
+  files:
+  - 01 - Introduction/01 - Gesture Drawing Basics.mp4|180
+  - 01 - Introduction/01 - Gesture Drawing Basics.srt|0.04
+  - 12 - Anatomy/07 - Muscles of the Arm.mp4|240
+  - Reference-Photos-and-Assignments.zip|920
+  - Premium-Critiques/critique-01.mp4|140
+  expect: delete
+  type: course
+  why: Course - 'Fundamentals'/'Complete Course' plus assignment and critique folders; caution flag, nude figure-drawing reference material means art courses can also trip keywords.xxx via file paths, so do not add anatomy/body
+- name: CrashCourse.World.History.Complete.Series.Episodes.1-42.720p.WEB-DL.x264
+  files:
+  - 01 - The Agricultural Revolution.mp4|180
+  - 01 - The Agricultural Revolution.en.srt|0.05
+  - 21 - Samurai Daimyo Matthew Perry and Nationalism.mp4|172
+  - 42 - Globalization II.mp4|175
+  expect: delete
+  type: course
+  why: 'Separator-free CrashCourse and World History are two distinct weak base-name signals; neither has delete authority alone.'
+- name: Packt.Python.Programming.Complete.Bundle.2024.eBooks.and.Code.PDF.EPUB
+  files:
+  - Learning Python 5th Edition.pdf|38
+  - Fluent Python 2nd Edition.epub|14
+  - Python Cookbook 3rd Edition.pdf|22
+  - Code_Files/all-chapters-code.zip|6
+  expect: delete
+  type: course
+  why: ebook rule ALREADY fires (pdf+epub bytes minus other > 0) so it is typed ebook and hard deleted under the live config - correct outcome today; a course rule placed before ebook would only relabel it, not change behaviour
+- name: Training.Day.2001.1080p.BluRay.x264.DTS-FGT
+  files:
+  - Training.Day.2001.1080p.BluRay.x264.DTS-FGT.mkv|10800
+  - Training.Day.2001.1080p.BluRay.x264.DTS-FGT.nfo|0.01
+  - Subs/2_English.srt|0.09
+  - Sample/training.day.sample.mkv|48
+  expect: keep
+  type: movie
+  why: '''training'' matches as a whole word; no existing rule fires today (correct), but a course keyword list containing ''training'' - which LinkedIn Learning''s ''Essential Training'' begs for - would hard delete an Oscar-winning f'
+- name: Training.Day.S01E05.1080p.WEB-DL.DD5.1.H264-RARBG
+  files:
+  - Training.Day.S01E05.1080p.WEB-DL.DD5.1.H264-RARBG.mkv|2380
+  - Training.Day.S01E05.1080p.WEB-DL.DD5.1.H264-RARBG.nfo|0.01
+  - Subs/English.srt|0.07
+  expect: keep
+  type: tv_show
+  why: Same 'training' collision on the 2017 CBS series, and its numbered-episode-plus-srt layout is exactly the shape a structural course heuristic keys on, so structure-only detection would delete it too.
+- name: School.of.Rock.2003.1080p.BluRay.x264-CiNEFiLE
+  files:
+  - School.of.Rock.2003.1080p.BluRay.x264-CiNEFiLE.mkv|9400
+  - School.of.Rock.2003.1080p.BluRay.x264-CiNEFiLE.nfo|0.01
+  - Subs/English.srt|0.08
+  - Sample/sample.mkv|42
+  expect: keep
+  type: movie
+  why: '''school'' collides with the course population, and note keywords.music ''rock'' already matches the baseName - the music rule spares it only because there are no audio-ext bytes (mkv is video), so audio-ext delta is negativ'
+- name: Old.School.2003.UNRATED.1080p.BluRay.x264-HD4U
+  files:
+  - Old.School.2003.UNRATED.1080p.BluRay.x264-HD4U.mkv|8900
+  - old.school.2003.nfo|0.01
+  - Subs/English.srt|0.08
+  expect: keep
+  type: movie
+  why: '''school'' whole-word match; nothing fires today (correct), but ''school'' is a plausible course token via ''Old School''-style course branding and language-school rips, and it must not be used bare.'
+- name: Police.Academy.1984.NTSC.DVD9.ISO-DiSPOSABLE
+  files:
+  - Police.Academy.1984.DVD9.iso|7380
+  - police.academy.1984.dvd9.nfo|0.01
+  - police.academy.1984.dvd9.sfv|0.01
+  expect: keep
+  type: movie
+  why: '''academy'' is a course token AND the software rule ALREADY fires here because .iso is in the software ext list and dominates - this full-disc movie rip is typed software and hard deleted today, a live false positive indep'
+- name: The.Umbrella.Academy.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-NTb
+  files:
+  - The.Umbrella.Academy.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|3100
+  - The.Umbrella.Academy.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-NTb.nfo|0.01
+  - Subs/English.srt|0.06
+  expect: keep
+  type: tv_show
+  why: '''academy'' whole-word match on a mainstream Netflix series; nothing fires today (correct), so ''academy'' must never be a standalone course keyword despite Khan Academy / Trading Academy style course names.'
+- name: The.Master.2012.1080p.BluRay.x264-SPARKS
+  files:
+  - The.Master.2012.1080p.BluRay.x264-SPARKS.mkv|11200
+  - the.master.2012.1080p.bluray.x264-sparks.nfo|0.01
+  - Subs/English.srt|0.09
+  - Sample/sample.mkv|51
+  expect: keep
+  type: movie
+  why: Bare 'master' matches; the pull toward 'master*' from Frontend Masters / Mastering X / MasterClass would delete this PTA film - the wildcard is the single most expensive mistake available in this keyword set.
+- name: Master.and.Commander.The.Far.Side.of.the.World.2003.1080p.BluRay.x264-AMIABLE
+  files:
+  - Master.and.Commander.The.Far.Side.of.the.World.2003.1080p.BluRay.x264-AMIABLE.mkv|12400
+  - master.and.commander.2003.nfo|0.01
+  - Subs/English.srt|0.09
+  expect: keep
+  type: movie
+  why: '''master'' whole-word match on a second major catalogued film - confirms the token is unusable alone and must appear as ''masterclass'' or ''mastering <tool>'' style multi-word forms.'
+- name: MasterChef.Australia.S15E01.1080p.HDTV.H264-FQM
+  files:
+  - MasterChef.Australia.S15E01.1080p.HDTV.H264-FQM.mkv|2650
+  - masterchef.australia.s15e01.nfo|0.01
+  - Subs/English.srt|0.06
+  expect: keep
+  type: tv_show
+  why: '''MasterChef'' is a single token so whole-word ''master'' does NOT match and it is safe today, but a ''master*'' wildcard (which is what ''mastering''/''masterclass'' coverage tempts you into) matches \w* and would delete a long-r'
+- name: Whiplash.2014.1080p.BluRay.x264-SPARKS
+  files:
+  - Whiplash.2014.1080p.BluRay.x264-SPARKS.mkv|9800
+  - whiplash.2014.1080p.bluray.x264-sparks.nfo|0.01
+  - Subs/English.srt|0.08
+  - Sample/sample.mkv|44
+  expect: keep
+  type: movie
+  why: No course token in the title and nothing fires (correct); included as the control for content-based course detection - a music-conservatory teaching drama is exactly what an over-eager semantic 'instructional' classifier
+- name: Lessons.in.Chemistry.S01E03.1080p.ATVP.WEB-DL.DDP5.1.H.264-NTb
+  files:
+  - Lessons.in.Chemistry.S01E03.1080p.ATVP.WEB-DL.DDP5.1.H.264-NTb.mkv|3400
+  - Lessons.in.Chemistry.S01E03.nfo|0.01
+  - Subs/English.srt|0.07
+  - Subs/English.SDH.srt|0.09
+  expect: keep
+  type: tv_show
+  why: '''lessons'' matches and the show is literally framed as a televised cooking-instruction programme, so both keyword and semantic course detection misfire here - highest-risk single case in the corpus.'
+- name: The.Kominsky.Method.S01E01.1080p.NF.WEB-DL.DD5.1.x264-NTG
+  files:
+  - The.Kominsky.Method.S01E01.1080p.NF.WEB-DL.DD5.1.x264-NTG.mkv|2200
+  - the.kominsky.method.s01e01.nfo|0.01
+  - Subs/English.srt|0.05
+  expect: keep
+  type: tv_show
+  why: '''method'' matches - a direct collision with Michel Thomas Method, Silva Method and ''<Name> Method'' course branding; nothing fires today, which is correct, and ''method'' must stay out of the keyword set.'
+- name: The.Class.2008.LiMiTED.1080p.BluRay.x264-CiNEFiLE
+  files:
+  - The.Class.2008.LiMiTED.1080p.BluRay.x264-CiNEFiLE.mkv|9100
+  - the.class.2008.limited.nfo|0.01
+  - Subs/English.srt|0.09
+  - Subs/French.srt|0.09
+  expect: keep
+  type: movie
+  why: Bare 'class' matches on the Palme d'Or winner Entre les murs; direct collision with Skillshare's 'Complete Class', so 'class' is only usable as 'masterclass' or 'class project'.
+- name: Boot.Camp.2008.720p.BluRay.x264-aAF
+  files:
+  - Boot.Camp.2008.720p.BluRay.x264-aAF.mkv|4400
+  - boot.camp.2008.720p.bluray.x264-aaf.nfo|0.01
+  - Subs/English.srt|0.07
+  expect: keep
+  type: movie
+  why: Dot separators make this 'Boot' + 'Camp', so a single-token 'bootcamp' keyword MISSES the film while a two-word 'boot camp' keyword (space = any non-word char) HITS it - a concrete case where the single-token spelling is
+- name: The.Workshop.2017.1080p.BluRay.x264-USURY
+  files:
+  - The.Workshop.2017.1080p.BluRay.x264-USURY.mkv|8600
+  - the.workshop.2017.nfo|0.01
+  - Subs/English.srt|0.09
+  expect: keep
+  type: movie
+  why: '''workshop'' matches on Laurent Cantet''s L''Atelier; nothing fires today (correct), and since ''workshop'' is common in writing/photography course names it is a live false-positive risk if added bare.'
+- name: The.Hitchhikers.Guide.to.the.Galaxy.2005.1080p.BluRay.x264-CiNEFiLE
+  files:
+  - The.Hitchhikers.Guide.to.the.Galaxy.2005.1080p.BluRay.x264-CiNEFiLE.mkv|10200
+  - the.hitchhikers.guide.2005.nfo|0.01
+  - Subs/English.srt|0.08
+  - Sample/sample.mkv|47
+  expect: keep
+  type: movie
+  why: '''guide'' matches; collides with ''The Complete Hands-On Guide'' and ''Absolute Beginner''s Guide'' course titles, so ''guide'' must be paired (e.g. ''beginners guide'' is still unsafe - Beginners (2010) - prefer platform tokens).'
+- name: How.to.Train.Your.Dragon.2010.1080p.BluRay.x264-REFiNED
+  files:
+  - How.to.Train.Your.Dragon.2010.1080p.BluRay.x264-REFiNED.mkv|8800
+  - how.to.train.your.dragon.2010.nfo|0.01
+  - Subs/English.srt|0.07
+  expect: keep
+  type: movie
+  why: '''how to'' as a phrase keyword deletes this; note ''train'' is a distinct token from ''training'' so a training-only keyword is safe here, but any ''how.?to'' pattern is not.'
+- name: The.Tutor.2023.1080p.WEB-DL.DDP5.1.H264-EVO
+  files:
+  - The.Tutor.2023.1080p.WEB-DL.DDP5.1.H264-EVO.mkv|4900
+  - the.tutor.2023.1080p.web-dl.nfo|0.01
+  - Subs/English.srt|0.07
+  expect: keep
+  type: movie
+  why: '''tutor'' matches; since whole-word ''tutorial'' does NOT match ''tutor'', prefer the exact token ''tutorial'' over a ''tutor*'' wildcard - the wildcard buys nothing and costs this film.'
+- name: Learning.to.Drive.2014.1080p.BluRay.x264-GECKOS
+  files:
+  - Learning.to.Drive.2014.1080p.BluRay.x264-GECKOS.mkv|7900
+  - learning.to.drive.2014.nfo|0.01
+  - Subs/English.srt|0.08
+  expect: keep
+  type: movie
+  why: '''learning'' matches - a head-on collision with LinkedIn Learning and ''learning path'' course naming; nothing fires today, and bare ''learning'' would delete a catalogued Patricia Clarkson / Ben Kingsley film.'
+- name: Ice.Age.Collision.Course.2016.1080p.BluRay.x264-SPARKS
+  files:
+  - Ice.Age.Collision.Course.2016.1080p.BluRay.x264-SPARKS.mkv|9600
+  - ice.age.collision.course.2016.nfo|0.01
+  - Subs/English.srt|0.07
+  - Sample/sample.mkv|45
+  expect: keep
+  type: movie
+  why: Bare 'course' matches and deletes a mainstream animated feature - this is the most tempting keyword in the whole design and it must be gated to multi-word forms ('complete course', 'video course', 'full course', 'crash c
+- name: Beginners.2010.1080p.BluRay.x264-AMIABLE
+  files:
+  - Beginners.2010.1080p.BluRay.x264-AMIABLE.mkv|8100
+  - beginners.2010.1080p.bluray.x264-amiable.nfo|0.01
+  - Subs/English.srt|0.08
+  expect: keep
+  type: movie
+  why: '''beginners'' matches on an Academy Award-winning film; direct collision with ''for Beginners'' / ''Absolute Beginners Guide'' course titles, so the token needs the ''for beginners'' phrase form at minimum.'
+- name: A.Beginners.Guide.to.Endings.2010.1080p.WEB-DL.DD5.1.H264
+  files:
+  - A.Beginners.Guide.to.Endings.2010.1080p.WEB-DL.DD5.1.H264.mkv|5200
+  - Subs/English.srt|0.06
+  expect: keep
+  type: movie
+  why: Feature film whose title combines bare 'beginners' and 'guide'; the pair must not manufacture course authority.
+- name: A.Beginners.Guide.to.Snuff.2016.1080p.WEB-DL.DD5.1.H264
+  files:
+  - A.Beginners.Guide.to.Snuff.2016.1080p.WEB-DL.DD5.1.H264.mkv|5100
+  - Subs/English.srt|0.06
+  expect: keep
+  type: movie
+  why: Feature film whose title combines bare 'beginners' and 'guide'; only an explicit 'for beginners' signal is instructional.
+- name: Police.Academy.3.Back.in.Training.1986.1080p.BluRay.x264
+  files:
+  - Police.Academy.3.Back.in.Training.1986.1080p.BluRay.x264.mkv|8100
+  expect: keep
+  type: movie
+  why: 'Feature film combining academy and training; arbitrary generic pairs have no delete authority.'
+- name: Stella.Womens.Academy.High.School.Division.Class.C3.S01.1080p.WEB-DL
+  files:
+  - S01E01.mkv|900
+  expect: keep
+  type: tv_show
+  why: 'TV title combining academy and class; arbitrary generic pairs have no delete authority.'
+- name: How.to.Crack.the.Class.Ceiling.2022.1080p.WEB-DL
+  files:
+  - How.to.Crack.the.Class.Ceiling.2022.1080p.WEB-DL.mkv|4200
+  expect: keep
+  type: movie
+  why: 'Film title combining how-to and class language; only reviewed instructional compounds may delete.'
+- name: The.First.Graduating.Class.Oprah.Winfrey.Leadership.Academy.for.Girls.2020.1080p.WEB-DL
+  files:
+  - The.First.Graduating.Class.Oprah.Winfrey.Leadership.Academy.for.Girls.2020.mkv|4400
+  expect: keep
+  type: movie
+  why: 'Documentary title combining class and academy; generic co-occurrence is not course proof.'
+- name: Tween.Academy.Class.of.2012.1080p.WEB-DL
+  files:
+  - Tween.Academy.Class.of.2012.mkv|4100
+  expect: keep
+  type: movie
+  why: 'Movie title combining academy and class; generic co-occurrence is not course proof.'
+- name: A.Goy.Guide.to.World.History.2014.1080p.WEB-DL
+  files:
+  - A.Goy.Guide.to.World.History.2014.mkv|3900
+  expect: keep
+  type: movie
+  why: 'Movie title combining guide and world history; only the exact CrashCourse compound is privileged.'
+- name: How.to.Get.Killed.in.One.Easy.Lesson.2008.1080p.WEB-DL
+  files:
+  - How.to.Get.Killed.in.One.Easy.Lesson.2008.mkv|4000
+  expect: keep
+  type: movie
+  why: 'Movie title combining how-to and lesson; arbitrary generic pairs have no delete authority.'
+- name: The.OReilly.Factor.S01E01.1080p.WEB-DL
+  files:
+  - The.OReilly.Factor.S01E01.1080p.WEB-DL.mkv|2100
+  expect: keep
+  type: tv_show
+  why: 'OReilly is a real surname and show title; a bare publisher surname is not course proof.'
+- name: The.Possession.of.David.OReilly.2010.1080p.WEB-DL
+  files:
+  - The.Possession.of.David.OReilly.2010.1080p.WEB-DL.mkv|4300
+  expect: keep
+  type: movie
+  why: 'Feature film containing the OReilly surname; only an explicit publisher identity could be instructional.'
+- name: Egghead.and.Twinkie.2023.1080p.WEB-DL
+  files:
+  - Egghead.and.Twinkie.2023.1080p.WEB-DL.mkv|4200
+  expect: keep
+  type: movie
+  why: 'Feature-film title collision with the bare Egghead platform name.'
+- name: Daffy.Duck.and.Egghead.1938.1080p.WEB-DL
+  files:
+  - Daffy.Duck.and.Egghead.1938.1080p.WEB-DL.mkv|500
+  expect: keep
+  type: movie
+  why: 'Catalogued animated short containing ordinary Egghead; the bare brand cannot delete.'
+- name: Lynda.Carter.Body.and.Soul.1984.1080p.WEB-DL
+  files:
+  - Lynda.Carter.Body.and.Soul.1984.1080p.WEB-DL.mkv|3900
+  expect: keep
+  type: movie
+  why: 'A person''s first name is not Lynda.com platform identity.'
+- name: The.Rosetta.Stone.1958.1080p.WEB-DL
+  files:
+  - The.Rosetta.Stone.1958.1080p.WEB-DL.mkv|3900
+  expect: keep
+  type: movie
+  why: 'Feature-film title collision; only the reviewed Rosetta Stone Totale product form is instructional.'
+- name: Az.500-as.mozgalom.1969.1080p.WEB-DL
+  files:
+  - Az.500-as.mozgalom.1969.1080p.WEB-DL.mkv|3900
+  expect: keep
+  type: movie
+  why: 'Hungarian feature title that resembles an Azure exam code after separators are normalized.'
+- name: Tomorrow.Timmy.packt.aus.S01E01.1080p.WEB-DL
+  files:
+  - Tomorrow.Timmy.packt.aus.S01E01.1080p.WEB-DL.mkv|1800
+  expect: keep
+  type: tv_show
+  why: 'German title uses packt as an ordinary verb; the publisher token cannot stand alone.'
+- name: Ordinary.Movie.2024.1080p.WEB-DL.With.Course.Brand.Extras
+  files:
+  - Ordinary.Movie.2024.1080p.WEB-DL.mkv|4400
+  - Extras/Learn.Python.mp4|80
+  - Extras/OReilly.Interview.mp4|80
+  - Extras/Rosetta.Stone.Documentary.mp4|80
+  - Extras/Egghead.mp4|80
+  - Extras/Lynda.Carter.Interview.mp4|80
+  expect: keep
+  type: movie
+  why: 'Course identities in unrelated file paths must not grant whole-torrent delete authority.'
+- name: Ego.i.Lito.Domestika.S01E01.1995.1080p.WEB-DL
+  files:
+  - Ego.i.Lito.Domestika.S01E01.1995.1080p.WEB-DL.mkv|1700
+  expect: keep
+  type: tv_show
+  why: 'Catalogued drama-series title collision; bare Domestika is not irreversible course proof.'
+- name: Coursera.Never.Too.Young.2021.1080p.WEB-DL
+  files:
+  - Coursera.Never.Too.Young.2021.1080p.WEB-DL.mkv|900
+  expect: keep
+  type: movie
+  why: 'Catalogued short whose title starts Coursera; only the reviewed Coursera Machine Learning product form is privileged.'
+- name: The.Educative.Documentary.2024.1080p.WEB-DL
+  files:
+  - The.Educative.Documentary.2024.1080p.WEB-DL.mkv|3900
+  expect: keep
+  type: movie
+  why: 'Educative is an ordinary adjective, not sufficient platform identity for destructive classification.'
+- name: Abstract.The.Art.of.Design.S01E01.1080p.NF.WEB-DL.DD5.1.x264-NTb
+  files:
+  - Abstract.The.Art.of.Design.S01E01.1080p.NF.WEB-DL.DD5.1.x264-NTb.mkv|2900
+  - abstract.the.art.of.design.s01e01.nfo|0.01
+  - Subs/English.srt|0.06
+  expect: keep
+  type: tv_show
+  why: 'No course keyword fires today (correct) but this design documentary series is exactly what a semantic ''instructional content'' classifier would grab - the guard against that is requiring a platform/structural marker, not '
+- name: How.Its.Made.S32E01.720p.WEBRip.x264-CAFFEiNE
+  files:
+  - How.Its.Made.S32E01.720p.WEBRip.x264-CAFFEiNE.mkv|920
+  - how.its.made.s32e01.nfo|0.01
+  - Subs/English.srt|0.04
+  expect: keep
+  type: tv_show
+  why: Catalogued Discovery series whose whole premise is explaining how things are made; nothing fires today (correct), and any 'how it/how to + educational subject' heuristic would wrongly delete 30+ seasons of legitimate TV.
+- name: Sex.Education.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-NTb
+  files:
+  - Sex.Education.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-NTb.mkv|2750
+  - sex.education.s01e01.nfo|0.01
+  - Subs/English.srt|0.06
+  - Subs/English.SDH.srt|0.08
+  expect: keep
+  type: tv_show
+  why: '''education'' is an obvious course token AND keywords.xxx ''sex*'' ALREADY matches the baseName with video bytes dominating, so the xxx rule fires and this is hard deleted today under CLASSIFIER_DELETE_XXX=true - a live fals'
+- name: Yoga.Hosers.2016.1080p.BluRay.x264-DRONES
+  files:
+  - Yoga.Hosers.2016.1080p.BluRay.x264-DRONES.mkv|7600
+  - yoga.hosers.2016.1080p.bluray.x264-drones.nfo|0.01
+  - Subs/English.srt|0.07
+  expect: keep
+  type: movie
+  why: '''yoga'' matches on a real Kevin Smith feature; collides with Yoga With Adriene and P90X''s ''Yoga X'' file path, so fitness tokens must be product-name or ''workout program'' shaped rather than discipline names.'
+- name: Trading.Places.1983.1080p.BluRay.x264-SiNNERS
+  files:
+  - Trading.Places.1983.1080p.BluRay.x264-SiNNERS.mkv|9200
+  - trading.places.1983.nfo|0.01
+  - Subs/English.srt|0.08
+  - Sample/sample.mkv|46
+  expect: keep
+  type: movie
+  why: '''trading'' matches - direct collision with the very large forex/trading course population; use ''forex'', ''price action'', ''mentorship'' or ''trading course'' instead of bare ''trading''.'
+- name: Monty.Pythons.Flying.Circus.S01E01.1080p.BluRay.x264-SHORTBREHD
+  files:
+  - Monty.Pythons.Flying.Circus.S01E01.1080p.BluRay.x264-SHORTBREHD.mkv|2100
+  - monty.pythons.flying.circus.s01e01.nfo|0.01
+  - Subs/English.srt|0.05
+  expect: keep
+  type: tv_show
+  why: '''python'' matches - any tech-stack keyword list (python/java/react/aws/excel) aimed at programming courses would delete this series; tech stack names must never be course keywords on their own.'
+- name: Excel.Saga.S01E01.1080p.BluRay.x264-ANiHLS
+  files:
+  - Excel.Saga.S01E01.1080p.BluRay.x264-ANiHLS.mkv|1450
+  - excel.saga.s01e01.nfo|0.01
+  - Subs/English.ass|0.06
+  expect: keep
+  type: tv_show
+  why: '''excel'' matches on a real catalogued anime series while Excel training is one of the largest instructional categories - second proof that software/tool names are unusable as standalone course keywords.'
+- name: Java.Heat.2013.1080p.BluRay.x264-YIFY
+  files:
+  - Java.Heat.2013.1080p.BluRay.x264-YIFY.mp4|1750
+  - Java.Heat.2013.1080p.BluRay.x264-YIFY.nfo|0.01
+  - Java.Heat.2013.English.srt|0.07
+  expect: keep
+  type: movie
+  why: '''java'' matches on a real 2013 action film (Mickey Rourke, Kellan Lutz); third tech-name collision, and note the single-mp4-plus-srt layout is also the shape a naive ''video + subtitle sidecar'' course heuristic would flag.'
+- name: Bob_Dylan-Biograph-3CD-1985-MP3-320kbps-CBR-EMG
+  files:
+  - CD1/01-Lay_Lady_Lay.mp3|8
+  - CD1/07-Percys_Song.mp3|17
+  - CD2/04-Visions_Of_Johanna.mp3|18
+  - CD3/03-Caribbean_Wind.mp3|13
+  - CD3/11-Every_Grain_Of_Sand.mp3|14
+  - folder.jpg|1
+  expect: keep
+  type: unknown
+  why: 'audiobook fires WRONGLY: audio 70MB - other 1MB = 69MB > 50MB and keywords.audiobook ''*biograph*'' matches the box-set title ''Biograph''; mp3-only with no music keyword means the music rule would not fire, so correct outpu'
+- name: Iron_Maiden-The_Book_Of_Souls-2CD-2015-MP3-320kbps-PMS
+  files:
+  - CD1/01-If_Eternity_Should_Fail.mp3|19
+  - CD1/04-The_Red_And_The_Black.mp3|31
+  - CD2/01-The_Book_Of_Souls.mp3|24
+  - CD2/02-Empire_Of_The_Clouds.mp3|42
+  - 00-cover.jpg|2
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY on keywords.audiobook 'books?' matching the whole word 'Book' (audio 116MB - 2MB = 114MB > 50MB); no music keyword and no flac/ape/dsf, so absent this FP the album would stay unknown and be kept.
+- name: Ashlee_Simpson-Autobiography-2004-MP3-320kbps-BFHMP3
+  files:
+  - 01-Autobiography.mp3|12
+  - 02-Pieces_Of_Me.mp3|11
+  - 03-Shadow.mp3|10
+  - 05-Better_Off.mp3|9
+  - 07-La_La.mp3|11
+  - folder.jpg|1
+  expect: keep
+  type: unknown
+  why: 'audiobook fires WRONGLY: ''*biograph*'' has a leading wildcard so it matches ''Autobiography'' (audio 53MB - 1MB = 52MB > 50MB); this is a real 2004 pop album, not a book.'
+- name: Steve_Miller_Band-Book_Of_Dreams-1977-2019_Remaster-MP3-320
+  files:
+  - 01-Threshold.mp3|3
+  - 02-Jet_Airliner.mp3|10
+  - 03-Winter_Time.mp3|8
+  - 06-Jungle_Love.mp3|8
+  - 08-The_Stake.mp3|9
+  - 10-The_Window.mp3|17
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY on 'books?' matching 'Book' (audio 55MB - 0 = 55MB > 50MB); real 1977 rock album, no music keyword in the name so the music rule would not have caught it either.
+- name: Clutch-Book_Of_Bad_Decisions-2018-WEB-MP3-320kbps-ENTiTLED
+  files:
+  - 01-Gimme_The_Keys.mp3|11
+  - 03-How_To_Shake_Hands.mp3|9
+  - 05-Book_Of_Bad_Decisions.mp3|12
+  - 08-In_Walks_Barbarella.mp3|10
+  - 11-Lorelei.mp3|10
+  - cover.jpg|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY on 'books?' -> 'Book' (audio 52MB - 1MB = 51MB > 50MB); real 2018 Clutch album, deleted purely because of a one-word collision.
+- name: The_Books-The_Lemon_Of_Pink-2003-MP3-V0-oNePiEcE
+  files:
+  - 01-Take_Time.mp3|9
+  - 03-Tokyo.mp3|8
+  - 05-The_Story_Of_Hip_Hop.mp3|7
+  - 08-PS.mp3|13
+  - 11-Bonanza.mp3|16
+  - cover.jpg|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY because the ARTIST name is 'The Books' and 'books?' matches it as a whole word (audio 53MB - 1MB = 52MB > 50MB); real 2003 Tomlab release by the duo The Books.
+- name: Deep_Purple-The_Book_Of_Taliesyn-1968-2000_Remaster-MP3-320
+  files:
+  - 01-Listen_Learn_Read_On.mp3|9
+  - 02-Wring_That_Neck.mp3|12
+  - 04-Shield.mp3|14
+  - 06-River_Deep_Mountain_High.mp3|24
+  - 07-Hey_Bop_A_Re_Bop.mp3|10
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY on 'books?' -> 'Book' (audio 69MB - 0 > 50MB); real 1968 Deep Purple LP, would otherwise stay unknown since 'rock' etc. never appear in the release name.
+- name: Vic_Mensa-The_Autobiography-2017-WEB-MP3-320kbps-XTC
+  files:
+  - 01-Say_I_Didnt.mp3|9
+  - 03-Rollin_Like_A_Stoner.mp3|11
+  - 06-Homewrecker.mp3|10
+  - 09-Rage.mp3|12
+  - 13-We_Could_Be_Free.mp3|10
+  expect: keep
+  type: unknown
+  why: 'audiobook fires WRONGLY: ''*biograph*'' matches ''Autobiography'' (audio 52MB - 0 > 50MB); real 2017 Roc Nation debut album.'
+- name: The_Book_Of_Mormon-Original_Broadway_Cast_Recording-2011-MP3-320
+  files:
+  - 01-Hello.mp3|6
+  - 03-Hasa_Diga_Eebowai.mp3|10
+  - 06-Turn_It_Off.mp3|9
+  - 11-I_Believe.mp3|8
+  - 14-Tomorrow_Is_A_Latter_Day.mp3|11
+  - 17-Finale.mp3|9
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY on 'books?' -> 'Book' (audio 53MB - 0 > 50MB); real 2011 Grammy-winning cast recording, and 'Recording'/'Cast' are not music keywords so nothing else would have typed it.
+- name: John_Williams-The_Book_Thief-Original_Motion_Picture_Soundtrack-2013-MP3-320
+  files:
+  - 01-One_Small_Fact.mp3|5
+  - 04-The_Journey_To_Himmel_Street.mp3|9
+  - 09-Learning_To_Read.mp3|11
+  - 14-Rescuing_The_Book.mp3|10
+  - 20-The_Book_Thief.mp3|18
+  - cover.jpg|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY on 'books?' -> 'Book' in the film title (audio 53MB - 1MB = 52MB > 50MB); real Oscar-nominated 2013 John Williams score, not a reading of the novel.
+- name: The_Jungle_Book_2016_Original_Motion_Picture_Soundtrack-John_Debney-MP3-320
+  files:
+  - 01-Main_Title_Jungle_Run.mp3|6
+  - 05-The_Bare_Necessities.mp3|9
+  - 08-Mowglis_Escape.mp3|12
+  - 12-Shere_Khan_Attacks.mp3|14
+  - 16-I_Wan_na_Be_Like_You.mp3|10
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY on 'books?' -> 'Book' (audio 51MB - 0 > 50MB); real 2016 Disney score album by John Debney.
+- name: Prokofiev-Peter_And_The_Wolf-Narrated_By_David_Bowie-Philadelphia_Orchestra-Ormandy-1978-MP3-320
+  files:
+  - 01-Peter_And_The_Wolf_Op_67-Narrated_By_David_Bowie.mp3|60
+  - 02-Britten-The_Young_Persons_Guide_To_The_Orchestra.mp3|42
+  - folder.jpg|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY on keywords.audiobook 'narrated' (audio 102MB - 1MB = 101MB > 50MB); this is the real 1978 RCA orchestral record with Bowie narrating, i.e. music, not an audiobook.
+- name: Simon_And_Garfunkel-Bookends-1968-MP3-V0-CMS
+  files:
+  - 01-Bookends_Theme.mp3|2
+  - 03-Americas.mp3|8
+  - 06-Fakin_It.mp3|7
+  - 09-Mrs_Robinson.mp3|9
+  - 11-At_The_Zoo.mp3|6
+  - folder.jpg|1
+  expect: keep
+  type: unknown
+  why: 'audiobook correctly does NOT fire: ''books?'' compiles to (^|\W+)(books?)(\W+|$) so ''Bookends'' is one word and never matches; correct behaviour, included to lock in the word-boundary semantics.'
+- name: Booker_T_And_The_MGs-Green_Onions-1962-MP3-320
+  files:
+  - 01-Green_Onions.mp3|7
+  - 02-Rinky_Dink.mp3|6
+  - 05-Behave_Yourself.mp3|7
+  - 09-Comin_Home_Baby.mp3|6
+  - 12-Twist_And_Shout.mp3|6
+  expect: keep
+  type: unknown
+  why: 'audiobook correctly does NOT fire: ''Booker'' is a single word so ''books?'' cannot match; correct, and it is the control that proves prefix collisions are safe.'
+- name: Booka_Shade-Movements-2006-MP3-320-SDR
+  files:
+  - 01-Night_Falls.mp3|11
+  - 03-In_White_Rooms.mp3|10
+  - 05-Body_Language.mp3|12
+  - 08-Mandarine_Girl.mp3|11
+  - 10-Charlotte.mp3|9
+  expect: keep
+  type: unknown
+  why: 'audiobook correctly does NOT fire: ''Booka'' is not the whole word ''book''; correct behaviour on a real 2006 Get Physical release.'
+- name: Wishbone_Ash-Novella-1977-MP3-320
+  files:
+  - 01-Lady_Jay.mp3|11
+  - 02-Dont_Come_Back.mp3|9
+  - 04-Runaway.mp3|13
+  - 06-How_Many_Times.mp3|12
+  expect: keep
+  type: unknown
+  why: 'audiobook correctly does NOT fire: ''novels?'' requires a word boundary after ''novel'', and ''Novella'' continues with word characters; correct, real 1977 album.'
+- name: Chris_Cornell-Songbook-2011-MP3-320kbps
+  files:
+  - 01-As_Hope_And_Promise_Fade.mp3|9
+  - 04-Fell_On_Black_Days.mp3|12
+  - 07-Doesnt_Remind_Me.mp3|10
+  - 12-Black_Hole_Sun.mp3|13
+  - 17-Imagine.mp3|11
+  expect: keep
+  type: unknown
+  why: 'audiobook correctly does NOT fire: ''Songbook'' is one token so ''books?'' has no leading boundary; correct, real 2011 live acoustic album.'
+- name: Marillion-Misplaced_Childhood-1985-Deluxe_Edition-MP3-320
+  files:
+  - 01-Pseudo_Silk_Kimono.mp3|5
+  - 02-Kayleigh.mp3|9
+  - 03-Lavender.mp3|6
+  - 06-Blind_Curve.mp3|22
+  - Artwork/Book/01_front.jpg|3
+  - Artwork/Book/02_gatefold.jpg|3
+  expect: keep
+  type: unknown
+  why: 'audiobook correctly does NOT fire: the audiobook keyword test reads baseName only, so the ''Book'' path segment in the artwork folder is ignored (unlike the xxx rule, which joins basePaths); correct, and it pins that scope'
+- name: Stromae-Racine_Carree-2013-MP3-320kbps-FRENCH
+  files:
+  - 01-Ta_Fete.mp3|8
+  - 03-Formidable.mp3|8
+  - 05-Papaoutai.mp3|9
+  - 09-Tous_Les_Memes.mp3|8
+  - 13-AVF.mp3|9
+  - folder.jpg|1
+  expect: keep
+  type: unknown
+  why: 'audiobook correctly does NOT fire: no audiobook keyword and no .m4b; correct, and it is the foreign-language control showing French titles do not trip ''books?''/''novels?''.'
+- name: Biography.KISStory.S01E01.1080p.WEB.h264-BAE
+  files:
+  - Biography.KISStory.S01E01.1080p.WEB.h264-BAE.mkv|3200
+  - Biography.KISStory.S01E02.1080p.WEB.h264-BAE.mkv|3100
+  - biography.kisstory.s01e01.nfo|1
+  - biography.kisstory.s01e01.srt|1
+  expect: keep
+  type: tv_show
+  why: 'audiobook correctly does NOT fire: ''*biograph*'' matches ''Biography'' but audio bytes are 0 and other bytes are 6302MB, so the >50MB audio-surplus gate fails; correct, real 2021 A&E two-part documentary.'
+- name: Dan_Carlins_Hardcore_History_Ep_59-61_M4B_Chaptered
+  files:
+  - Hardcore_History_59-The_Destroyer_Of_Worlds.m4b|340
+  - Hardcore_History_60-Painfotainment.m4b|290
+  - Hardcore_History_61-Supernova_In_The_East_I.m4b|300
+  - cover.jpg|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY on the '.m4b present' clause alone (audio 930MB - 1MB > 50MB) with no keyword involved; this is a real podcast, and note 'Hardcore' is an xxx keyword that never gets reached because audiobook is e
+- name: Welcome_To_Night_Vale_Episodes_001-050_M4B_Chaptered_Podcast
+  files:
+  - WTNV_Episodes_001-025.m4b|420
+  - WTNV_Episodes_026-050.m4b|410
+  - cover.jpg|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY via the .m4b clause (audio 830MB - 1MB > 50MB); real serialised fiction podcast, not a published audiobook, and the name contains no audiobook keyword at all.
+- name: The_Book_Review_NYT_Podcast_2019_Complete_MP3_128kbps
+  files:
+  - 2019-01-04_The_Book_Review.mp3|55
+  - 2019-01-11_The_Book_Review.mp3|52
+  - 2019-01-18_The_Book_Review.mp3|49
+  - artwork.jpg|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY on 'books?' -> 'Book' (audio 156MB - 1MB = 155MB > 50MB); a real New York Times interview podcast ABOUT books is not an audiobook.
+- name: 99_Percent_Invisible_Episodes_290-320_MP3_128kbps
+  files:
+  - 99pi-Episode_295.mp3|28
+  - 99pi-Episode_300.mp3|30
+  - 99pi-Episode_310.mp3|26
+  - 99pi-Episode_318.mp3|27
+  - artwork.jpg|1
+  expect: keep
+  type: unknown
+  why: 'audiobook correctly does NOT fire: audio surplus is 110MB but neither an audiobook keyword nor an .m4b is present; correct, and it shows plain mp3 podcast archives survive.'
+- name: The_Lord_Of_The_Rings_BBC_Radio_4_1981_Dramatisation_Complete_MP3_192kbps
+  files:
+  - CD01/01-The_Long_Awaited_Party.mp3|30
+  - CD02/03-The_Council_Of_Elrond.mp3|28
+  - CD05/02-The_Breaking_Of_The_Fellowship.mp3|27
+  - CD13/04-The_Grey_Havens.mp3|29
+  expect: keep
+  type: unknown
+  why: 'audiobook correctly does NOT fire: ''Dramatisation'' is not in keywords.audiobook and there is no .m4b, so the real 1981 BBC full-cast radio serial survives; correct.'
+- name: Neverwhere_BBC_Radio_4_Full_Cast_Drama_2013_James_McAvoy_Benedict_Cumberbatch.m4b
+  files:
+  - Neverwhere_BBC_Radio_4_Full_Cast_Drama_2013.m4b|330
+  - cover.jpg|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY via the .m4b clause (audio 330MB - 1MB > 50MB) even though no audiobook keyword is present; real 2013 BBC radio dramatisation, and 'Cumberbatch' would also have hit the xxx keyword 'cum*' had audi
+- name: The_Great_Courses-Books_That_Have_Made_History_Books_That_Can_Change_Your_Life-J_Rufus_Fears-MP3-64kbps
+  files:
+  - Lecture_01-The_Hebrew_Bible.mp3|33
+  - Lecture_12-Shakespeares_Hamlet.mp3|31
+  - Lecture_24-Solzhenitsyn.mp3|32
+  - Course_Guidebook.pdf|12
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): audiobook fires WRONGLY on ''books?'' -> ''Books'' (audio 96MB - pdf 12MB = 84MB > 50MB); this is a real Teaching Company lecture course, and ''course'' is not in CLASSIFIER_DELETE_CONTENT_TYPES so it should have been kept.'
+- name: The_Great_Courses-The_History_Of_Ancient_Rome-Garrett_G_Fagan-48_Lectures_M4B
+  files:
+  - The_History_Of_Ancient_Rome_Part_1.m4b|380
+  - The_History_Of_Ancient_Rome_Part_2.m4b|370
+  - Course_Guidebook.pdf|9
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): audiobook fires WRONGLY via the .m4b clause (audio 750MB - 9MB > 50MB) with no keyword match; real 48-lecture Great Courses series, a course not an audiobook.'
+- name: The_Great_Courses-The_English_Novel-Timothy_Spurgin-24_Lectures-MP3-64kbps
+  files:
+  - Lecture_01-What_Is_A_Novel.mp3|16
+  - Lecture_07-Jane_Austen.mp3|15
+  - Lecture_10-Dickens_Great_Expectations.mp3|16
+  - Lecture_18-Virginia_Woolf.mp3|15
+  - Lecture_24-The_Novel_Today.mp3|16
+  - Course_Guidebook.pdf|8
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): audiobook fires WRONGLY on ''novels?'' -> ''Novel'' (audio 78MB - 8MB = 70MB > 50MB); real Great Courses lecture series about novels, not a novel reading.'
+- name: Pimsleur_Spanish_Latin_American_Level_1_Lessons_01-30_MP3
+  files:
+  - Spanish_I_Lesson_01.mp3|28
+  - Spanish_I_Lesson_10.mp3|27
+  - Spanish_I_Lesson_20.mp3|28
+  - Spanish_I_Lesson_30.mp3|27
+  expect: delete
+  type: course
+  why: 'instructional content (owner decision D2): Pimsleur is a language-course publisher'
+- name: Above_And_Beyond-Group_Therapy_Radio_500-2022-Chaptered_M4B
+  files:
+  - Above_And_Beyond-Group_Therapy_500-Part1.m4b|420
+  - Above_And_Beyond-Group_Therapy_500-Part2.m4b|400
+  - cover.jpg|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY via the .m4b clause (audio 820MB - 1MB > 50MB); a chaptered rip of the real ABGT500 broadcast is a DJ mix, and 'trance' never appears so the music rule would not have caught it either.
+- name: Grateful_Dead-1977-05-08-Barton_Hall-Cornell_University-SBD-Chaptered_M4B
+  files:
+  - gd1977-05-08_Set1.m4b|380
+  - gd1977-05-08_Set2.m4b|430
+  - info.txt|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY via the .m4b clause (audio 810MB - 1MB > 50MB); the Cornell '77 soundboard is a real live concert recording, and chaptered m4b is a common way to ship long sets.
+- name: Mitch_Hedberg-Strategic_Grill_Locations-2002-Chaptered.m4b
+  files:
+  - Mitch_Hedberg-Strategic_Grill_Locations.m4b|85
+  - cover.jpg|1
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY via the .m4b clause (audio 85MB - 1MB = 84MB > 50MB); real 2002 Comedy Central Records stand-up album, no audiobook keyword anywhere in the name.
+- name: Ennio_Morricone-Il_Buono_Il_Brutto_Il_Cattivo-OST-1966-Chaptered.m4b
+  files:
+  - Il_Buono_Il_Brutto_Il_Cattivo-OST-Chaptered.m4b|110
+  - copertina.jpg|2
+  expect: keep
+  type: unknown
+  why: audiobook fires WRONGLY via the .m4b clause (audio 110MB - 2MB = 108MB > 50MB); a foreign-language soundtrack shipped as one chaptered file, showing the m4b clause is entirely language- and title-independent.
+- name: BBC_Sound_Effects_Library_Original_Series_Vol_01-40_WAV
+  files:
+  - Vol01/001-Steam_Locomotive.wav|48
+  - Vol01/002-Thunderstorm.wav|62
+  - Vol12/034-Crowd_Applause.wav|55
+  - Vol40/112-Church_Bells.wav|51
+  expect: keep
+  type: unknown
+  why: 'audiobook correctly does NOT fire: 216MB of wav surplus but no audiobook keyword and no .m4b; correct, and it confirms large audio-only libraries are not swept up by default.'
+- name: Stephen_King-The_Shining-Unabridged-Read_By_Campbell_Scott-MP3-64kbps
+  files:
+  - Disc01/01-The_Shining.mp3|28
+  - Disc05/03-The_Shining.mp3|27
+  - Disc10/02-The_Shining.mp3|26
+  - Disc15/04-The_Shining.mp3|28
+  - cover.jpg|1
+  expect: delete
+  type: audiobook
+  why: 'audiobook fires correctly: keywords.audiobook ''(un)?abridged'' matches ''Unabridged'' and audio 109MB - 1MB = 108MB > 50MB; genuine Random House Audio release.'
+- name: Andy_Weir-The_Martian-R_C_Bray-Podium_Audio.m4b
+  files:
+  - Andy_Weir-The_Martian-R_C_Bray.m4b|310
+  - cover.jpg|1
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly via the .m4b clause alone (audio 310MB - 1MB > 50MB); no keyword in the name, which is exactly the no-keyword audiobook case the m4b clause exists for.
+- name: Neil_Gaiman-American_Gods-10th_Anniversary_Full_Cast_Production.m4b
+  files:
+  - American_Gods_Full_Cast_Production.m4b|560
+  - cover.jpg|2
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly via the .m4b clause (audio 560MB - 2MB > 50MB) with no keyword match; real 2011 full-cast audiobook.
+- name: J_R_R_Tolkien-The_Hobbit-Narrated_By_Rob_Inglis-Unabridged-MP3-64kbps
+  files:
+  - 01-An_Unexpected_Party.mp3|32
+  - 05-Barrels_Out_Of_Bond.mp3|30
+  - 09-The_Clouds_Burst.mp3|29
+  - 11-The_Last_Stage.mp3|28
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on both 'narrated' and '(un)?abridged' with audio 119MB - 0 > 50MB; mp3-only genuine audiobook, no .m4b needed.
+- name: Frank_Herbert-Dune-Audiobook-Unabridged-Scott_Brick-MP3-128kbps
+  files:
+  - Dune_Part_01.mp3|55
+  - Dune_Part_02.mp3|54
+  - Dune_Part_03.mp3|53
+  - cover.jpg|1
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on 'audiobooks?' and '(un)?abridged' with audio 162MB - 1MB > 50MB; genuine Macmillan Audio release.
+- name: Walter_Isaacson-Steve_Jobs-Unabridged-Dylan_Baker-MP3-64kbps
+  files:
+  - Steve_Jobs_Part_01.mp3|60
+  - Steve_Jobs_Part_02.mp3|58
+  - Steve_Jobs_Companion.pdf|6
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on '(un)?abridged' with audio 118MB - pdf 6MB = 112MB > 50MB; the small companion pdf does not drag it below the 50MB gate, and audiobook is evaluated before ebook so the pdf never wins.
+- name: Michelle_Obama-Becoming-Audiobook-Read_By_The_Author-MP3-64kbps
+  files:
+  - Becoming_Part_01.mp3|45
+  - Becoming_Part_02.mp3|44
+  - Becoming_Part_03.mp3|43
+  - cover.jpg|1
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on 'audiobooks?' with audio 132MB - 1MB > 50MB; genuine Random House Audio release.
+- name: Yuval_Noah_Harari-Sapiens_A_Brief_History_Of_Humankind-Unabridged-Derek_Perkins-MP3
+  files:
+  - Sapiens_01.mp3|58
+  - Sapiens_02.mp3|57
+  - Sapiens_03.mp3|56
+  - folder.jpg|1
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on '(un)?abridged' with audio 171MB - 1MB > 50MB; genuine Harper Audio release narrated by Derek Perkins.
+- name: Brandon_Sanderson-The_Way_Of_Kings-Michael_Kramer_Kate_Reading-Unabridged_M4B
+  files:
+  - The_Way_Of_Kings_Part1.m4b|480
+  - The_Way_Of_Kings_Part2.m4b|470
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on both clauses ('(un)?abridged' plus .m4b) with audio 950MB - 0 > 50MB; genuine Macmillan Audio release.
+- name: George_Orwell-Nineteen_Eighty_Four-Unabridged-Simon_Prebble-MP3-64kbps
+  files:
+  - 1984_Disc1.mp3|58
+  - 1984_Disc2.mp3|57
+  - 1984_Disc3.mp3|56
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on '(un)?abridged' with audio 171MB - 0 > 50MB; genuine Blackstone Audio release.
+- name: Douglas_Adams-The_Hitchhikers_Guide_To_The_Galaxy-Unabridged-Stephen_Fry-MP3-64kbps
+  files:
+  - HHGTTG_01.mp3|48
+  - HHGTTG_02.mp3|47
+  - HHGTTG_03.mp3|46
+  - cover.jpg|1
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on '(un)?abridged' with audio 141MB - 1MB > 50MB; genuine Random House Audio reading, distinct from the BBC radio series which correctly does not fire.
+- name: Umberto_Eco-Il_Nome_Della_Rosa-Audiolibro_Integrale_Italiano.m4b
+  files:
+  - Il_Nome_Della_Rosa_Audiolibro.m4b|620
+  - copertina.jpg|1
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly via the .m4b clause only (audio 620MB - 1MB > 50MB); 'Audiolibro' is not in keywords.audiobook, so this is the case that shows m4b is the sole recall path for non-English audiobooks.
+- name: Robert_Caro-The_Power_Broker-Unabridged-Robertson_Dean-MP3-64kbps_Plus_PDF
+  files:
+  - The_Power_Broker_Part_01.mp3|280
+  - The_Power_Broker_Part_02.mp3|290
+  - The_Power_Broker_Part_03.mp3|285
+  - The_Power_Broker.pdf|42
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on '(un)?abridged' with audio 855MB - pdf 42MB = 813MB > 50MB; audiobook precedes ebook in the match order so the bundled pdf cannot re-type it.
+- name: Harry_Potter_Complete_Audiobooks_1-7_Stephen_Fry_Unabridged_M4B
+  files:
+  - Book1/HP1_Philosophers_Stone.m4b|290
+  - Book4/HP4_Goblet_Of_Fire.m4b|640
+  - Book5/HP5_Order_Of_The_Phoenix.m4b|820
+  - cover.jpg|1
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on 'audiobooks?' in the baseName plus the .m4b clause (audio 1750MB - 1MB > 50MB); genuine Bloomsbury/Stephen Fry set.
+- name: Ron_Chernow-Alexander_Hamilton-Biography-Unabridged-Scott_Brick.m4b
+  files:
+  - Alexander_Hamilton_Part_01.m4b|610
+  - Alexander_Hamilton_Part_02.m4b|600
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on '*biograph*', '(un)?abridged' and .m4b together with audio 1210MB - 0 > 50MB; genuine Penguin Audio release.
+- name: The_Holy_Bible_KJV_Complete_Narrated_By_Alexander_Scourby_MP3_64kbps
+  files:
+  - 01-Genesis.mp3|55
+  - 19-Psalms.mp3|60
+  - 40-Matthew.mp3|48
+  - 66-Revelation.mp3|22
+  expect: delete
+  type: audiobook
+  why: audiobook fires correctly on 'narrated' with audio 185MB - 0 > 50MB; the Scourby KJV reading is a genuine narrated-book release.
+- name: Kick-Ass.2010.1080p.BluRay.x264-AMIABLE
+  files:
+  - Kick-Ass.2010.1080p.BluRay.x264-AMIABLE.mkv|8500
+  expect: keep
+  type: movie
+  why: '''ass'' is a single weak keyword; Kick-Ass (2010) is a catalogued film'
+- name: Kick.Ass.2.2013.720p.BluRay.x264-SPARKS
+  files:
+  - Kick.Ass.2.2013.720p.BluRay.x264-SPARKS.mkv|4400
+  expect: keep
+  type: movie
+  why: '''ass'' only; Kick-Ass 2 (2013)'
+- name: Bad.Ass.2012.DVDRip.XviD-ALLiANCE
+  files:
+  - Bad.Ass.2012.DVDRip.XviD-ALLiANCE.avi|1400
+  expect: keep
+  type: movie
+  why: '''ass'' only; Bad Ass (2012)'
+- name: Big.Ass.Spider.2013.1080p.BluRay.x264-ROVERS
+  files:
+  - Big.Ass.Spider.2013.1080p.BluRay.x264-ROVERS.mkv|7900
+  expect: keep
+  type: movie
+  why: '''ass'' only; Big Ass Spider! (2013)'
+- name: Magna.Cum.Laude.2011.DVDRip.XviD
+  files:
+  - Magna.Cum.Laude.2011.DVDRip.XviD.avi|1350
+  expect: keep
+  type: movie
+  why: '''cum'' only'
+- name: Sherlock.S01E01.A.Study.in.Pink.1080p.BluRay.Benedict.Cumberbatch
+  files:
+  - Sherlock.S01E01.1080p.BluRay.x264.mkv|3200
+  expect: keep
+  type: tv_show
+  why: cum* matches 'Cumberbatch' — every release naming the actor was deleted
+- name: Moby.Dick.1956.1080p.BluRay.x264-CiNEFiLE
+  files:
+  - Moby.Dick.1956.1080p.BluRay.x264-CiNEFiLE.mkv|9100
+  expect: keep
+  type: movie
+  why: '''dick'' only; Moby Dick (1956)'
+- name: Dick.Tracy.1990.1080p.BluRay.x264-AMIABLE
+  files:
+  - Dick.Tracy.1990.1080p.BluRay.x264-AMIABLE.mkv|8300
+  expect: keep
+  type: movie
+  why: '''dick'' only; Dick Tracy (1990)'
+- name: Hardcore.Henry.2015.1080p.BluRay.x264-DRONES
+  files:
+  - Hardcore.Henry.2015.1080p.BluRay.x264-DRONES.mkv|7600
+  expect: keep
+  type: movie
+  why: '''hardcore'' only; Hardcore Henry (2015)'
+- name: Kinky.Boots.2005.720p.WEB-DL.AAC2.0.H.264
+  files:
+  - Kinky.Boots.2005.720p.WEB-DL.AAC2.0.H.264.mkv|3100
+  expect: keep
+  type: movie
+  why: kink* matches 'Kinky'; Kinky Boots (2005)
+- name: A.Cock.and.Bull.Story.2005.DVDRip.XviD-DiAMOND
+  files:
+  - A.Cock.and.Bull.Story.2005.DVDRip.XviD-DiAMOND.avi|1450
+  expect: keep
+  type: movie
+  why: '''cock'' only; A Cock and Bull Story (2005)'
+- name: Sexy.Beast.2000.1080p.BluRay.x264-AMIABLE
+  files:
+  - Sexy.Beast.2000.1080p.BluRay.x264-AMIABLE.mkv|8100
+  expect: keep
+  type: movie
+  why: sex* matches 'Sexy'; Sexy Beast (2000)
+- name: Sex.and.the.City.S01E01.720p.WEB-DL.AAC2.0.H.264
+  files:
+  - Sex.and.the.City.S01E01.720p.WEB-DL.mkv|1100
+  expect: keep
+  type: tv_show
+  why: sex* only; Sex and the City (HBO)
+- name: Sex.Education.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-NTG
+  files:
+  - Sex.Education.S01E01.1080p.NF.WEB-DL.x264-NTG.mkv|2400
+  expect: keep
+  type: tv_show
+  why: sex* only; Sex Education (Netflix)
+- name: Threesome.1994.DVDRip.XviD-FRAGMENT
+  files:
+  - Threesome.1994.DVDRip.XviD-FRAGMENT.avi|1300
+  expect: keep
+  type: movie
+  why: '''threesome'' only; Threesome (1994)'
+- name: Pussy.Riot.A.Punk.Prayer.2013.DOCU.720p.WEB-DL
+  files:
+  - Pussy.Riot.A.Punk.Prayer.2013.720p.WEB-DL.mkv|2600
+  expect: keep
+  type: movie
+  why: '''pussy'' only; Pussy Riot: A Punk Prayer (2013), HBO documentary'
+- name: The.Assassination.of.Jesse.James.2007.1080p.BluRay.x264
+  files:
+  - The.Assassination.of.Jesse.James.2007.1080p.BluRay.x264.mkv|12400
+  expect: keep
+  type: movie
+  why: '''ass'' inside Assassination must not match — word-boundary guard'
+- name: Cassandras.Dream.2007.720p.BluRay.x264-SiNNERS
+  files:
+  - Cassandras.Dream.2007.720p.BluRay.x264-SiNNERS.mkv|4300
+  expect: keep
+  type: movie
+  why: '''ass'' inside Cassandra must not match'
+- name: Glass.2019.1080p.BluRay.x264-SPARKS
+  files:
+  - Glass.2019.1080p.BluRay.x264-SPARKS.mkv|9200
+  expect: keep
+  type: movie
+  why: '''ass'' inside Glass must not match'
+- name: Analog.2023.1080p.WEB-DL.DDP5.1.H.264
+  files:
+  - Analog.2023.1080p.WEB-DL.H.264.mkv|4100
+  expect: keep
+  type: movie
+  why: '''anal'' inside Analog must not match'
+- name: Jackass.Forever.2022.1080p.WEB-DL.DDP5.1.Atmos.H.264
+  files:
+  - Jackass.Forever.2022.1080p.WEB-DL.H.264.mkv|6800
+  expect: keep
+  type: movie
+  why: '''ass'' inside Jackass must not match'
+- name: Titanic.1997.1080p.BluRay.x264-AMIABLE
+  files:
+  - Titanic.1997.1080p.BluRay.x264-AMIABLE.mkv|14200
+  expect: keep
+  type: movie
+  why: '''tit'' inside Titanic must not match'
+- name: Brazzers.23.05.14.Some.Scene.Title.XXX.1080p.MP4-WRB
+  files:
+  - brazzers.23.05.14.some.scene.title.mp4|1450
+  expect: delete
+  type: xxx
+  why: '''brazzers'' and ''*xxx*'' are both strong markers'
+- name: NaughtyAmerica.22.11.03.Scene.XXX.SD.MP4-KLEENEX
+  files:
+  - naughtyamerica.22.11.03.scene.mp4|620
+  expect: delete
+  type: xxx
+  why: '''naughtyamerica'' strong'
+- name: Some.Studio.Blowjob.Compilation.2021.1080p.MP4
+  files:
+  - some.studio.blowjob.compilation.2021.1080p.mp4|2100
+  expect: delete
+  type: xxx
+  why: '''blowjob'' strong'
+- name: Anal.Delights.7.2019.DVDRip.x264
+  files:
+  - anal.delights.7.2019.dvdrip.x264.mp4|1800
+  expect: delete
+  type: xxx
+  why: '''anal'' strong'
+- name: MILF.Hunter.Collection.2020.1080p.SiteRip
+  files:
+  - milf.hunter.s01.1080p.mp4|3200
+  expect: delete
+  type: xxx
+  why: '''milf'' strong'
+- name: Big.Tits.At.Work.Hardcore.Office.Scene.1080p
+  files:
+  - big.tits.at.work.hardcore.office.scene.1080p.mp4|1900
+  expect: delete
+  type: xxx
+  why: two distinct weak keywords ('tits' + 'hardcore') reach the >=2 threshold
+- name: Teen.POV.Blowjob.Cumshot.Compilation.720p
+  files:
+  - teen.pov.blowjob.cumshot.compilation.720p.mp4|1100
+  expect: delete
+  type: xxx
+  why: '''blowjob'' and ''cumshot'' both strong'
+- name: Blade.Runner.2049.2017.COMPLETE.UHD.BLURAY-COASTER
+  files:
+  - Blade.Runner.2049.2017.COMPLETE.UHD.BLURAY-COASTER.iso|62000
+  expect: keep
+  type: movie
+  why: UHD BluRay disc image; must not type software
+- name: Ubuntu.24.04.1.LTS.Desktop.amd64
+  files:
+  - ubuntu-24.04.1-desktop-amd64.iso|5900
+  expect: delete
+  type: software
+  why: '''ubuntu'' corroborates the disc image as software'
+- name: Windows.11.Pro.23H2.x64.en-US
+  files:
+  - Win11_23H2_English_x64.iso|6100
+  expect: delete
+  type: software
+  why: '''windows'' corroborates the disc image'
+- name: Adobe.Photoshop.2024.v25.0.Multilingual.Portable
+  files:
+  - Adobe.Photoshop.2024.exe|3400
+  - readme.txt|1
+  expect: delete
+  type: software
+  why: exe dominates; unchanged behaviour
+- name: Pluralsight.Docker.Deep.Dive.2023.1080p
+  files:
+  - 01.Getting.Started.mp4|150
+  - 02.Images.mp4|210
+  expect: delete
+  type: course
+  why: '''pluralsight'' strong'
+- name: Learn.Python.From.Scratch.Complete.Beginners.Course.2024
+  files:
+  - 01.Intro.mp4|120
+  - 02.Variables.mp4|180
+  expect: delete
+  type: course
+  why: 'The exact Learn Python From Scratch compound is reviewed; generic Learn Python and bare beginners have no authority.'
+- name: Watercolor.Painting.for.Beginners.Workshop.2024
+  files:
+  - 01.Materials.mp4|90
+  - 02.First.Wash.mp4|140
+  expect: delete
+  type: course
+  why: 'Documented safe miss: two generic instructional phrases are insufficient because IMDb tt22016072 Dance Lessons for Beginners proves the same construction occurs in catalogued entertainment.'
+- name: CompTIA.Security.Plus.SY0-701.Full.Certification.Training.Course
+  files:
+  - 01.Domain1.mp4|340
+  - 02.Domain2.mp4|380
+  expect: delete
+  type: course
+  why: '''comptia'' strong'
+- name: From.Scratch.S01.COMPLETE.1080p.NF.WEB-DL.DDP5.1.x264-KOGi
+  files:
+  - From.Scratch.S01E01.1080p.NF.WEB-DL.DDP5.1.x264-KOGi.mkv|2300
+  expect: keep
+  type: tv_show
+  why: '''from scratch'' is a single weak structural phrase; From Scratch (2022)'
+- name: Step.by.Step.S01.1080p.WEB-DL.AAC2.0.H264-BTN
+  files:
+  - Step.by.Step.S01E01.1080p.WEB-DL.AAC2.0.H264-BTN.mkv|1800
+  expect: keep
+  type: tv_show
+  why: '''step by step'' is a single weak structural phrase; Step by Step (1991)'
+- name: Crash.Course.1988.1080p.WEBRip.x264-RARBG
+  files:
+  - Crash.Course.1988.1080p.WEBRip.x264-RARBG.mp4|1700
+  expect: keep
+  type: movie
+  why: '''crash course'' is a single weak structural phrase; Crash Course (1988)'
+- name: CrashCourse.1988.1080p.WEBRip.x264-RARBG
+  files:
+  - CrashCourse.1988.1080p.WEBRip.x264-RARBG.mp4|1700
+  expect: keep
+  type: movie
+  why: separator-free CrashCourse is still the film title, not sufficient brand evidence
+- name: Ordinary.Movie.2024.1080p.WEB-DL.With.CrashCourse.Extra
+  files:
+  - Ordinary.Movie.2024.1080p.WEB-DL.mkv|4400
+  - Extras/CrashCourse.mp4|80
+  expect: keep
+  type: movie
+  why: a file-path-only CrashCourse extra must not give a generic phrase whole-torrent authority
+- name: Zero.to.Hero.2021.1080p.WEB-DL.DD5.1.H264
+  files:
+  - Zero.to.Hero.2021.1080p.WEB-DL.DD5.1.H264.mkv|4200
+  expect: keep
+  type: movie
+  why: '''zero to hero'' is a single weak structural phrase; Zero to Hero (2021)'
+- name: Masterclass.2010.DVDRip.XviD-VoMiT
+  files:
+  - Masterclass.2010.DVDRip.XviD-VoMiT.avi|1400
+  expect: keep
+  type: movie
+  why: '''masterclass'' is a single weak structural phrase; Masterclass (2010)'
+- name: Masterclass...Teaches.2010.DVDRip.XviD-VoMiT
+  files:
+  - Masterclass...Teaches.2010.DVDRip.XviD-VoMiT.avi|1400
+  expect: keep
+  type: movie
+  why: keyword-DSL wildcards are zero-width-capable; punctuation is not two independent words of brand context
+- name: Ordinary.Movie.2024.1080p.WEB-DL.With.Masterclass.Extra
+  files:
+  - Ordinary.Movie.2024.1080p.WEB-DL.mkv|4400
+  - Extras/Masterclass...Teaches.mp4|80
+  expect: keep
+  type: movie
+  why: a Masterclass...Teaches pattern in one file path must not condemn an unrelated torrent
+- name: The.Mentorship.2023.1080p.WEBRip.x264
+  files:
+  - The.Mentorship.2023.1080p.WEBRip.x264.mkv|3600
+  expect: keep
+  type: movie
+  why: '''mentorship'' is a single weak structural phrase; The Mentorship (2023)'
+- name: Ordinary.Movie.2024.1080p.WEB-DL
+  files:
+  - Ordinary.Movie.2024.1080p.WEB-DL.mkv|4400
+  - Extras/Tutorial.mp4|80
+  expect: keep
+  type: movie
+  why: a generic tutorial in one file path must not condemn an otherwise unrelated torrent
+- name: Training.Day.2001.1080p.BluRay.x264-AMIABLE
+  files:
+  - Training.Day.2001.1080p.BluRay.x264-AMIABLE.mkv|9400
+  expect: keep
+  type: movie
+  why: '''training'' is a single weak course keyword; Training Day (2001)'
+- name: Police.Academy.1984.1080p.BluRay.x264-SiNNERS
+  files:
+  - Police.Academy.1984.1080p.BluRay.x264-SiNNERS.mkv|7700
+  expect: keep
+  type: movie
+  why: '''academy'' only; Police Academy (1984)'
+- name: The.Umbrella.Academy.S03E01.1080p.NF.WEB-DL.DDP5.1.x264-NTb
+  files:
+  - The.Umbrella.Academy.S03E01.1080p.NF.WEB-DL.x264-NTb.mkv|3100
+  expect: keep
+  type: tv_show
+  why: '''academy'' only'
+- name: The.Hitchhikers.Guide.to.the.Galaxy.2005.1080p.BluRay.x264
+  files:
+  - The.Hitchhikers.Guide.to.the.Galaxy.2005.1080p.BluRay.x264.mkv|8800
+  expect: keep
+  type: movie
+  why: '''guide'' only'
+- name: The.Piano.Lesson.2024.1080p.NF.WEB-DL.DDP5.1.Atmos.H.264
+  files:
+  - The.Piano.Lesson.2024.1080p.NF.WEB-DL.H.264.mkv|5200
+  expect: keep
+  type: movie
+  why: '''lesson'' only; The Piano Lesson (2024)'
+- name: Friends.The.Complete.Series.S01-S10.1080p.BluRay.x265
+  files:
+  - S01/Friends.S01E01.1080p.mkv|1400
+  - S01/Friends.S01E02.1080p.mkv|1400
+  expect: keep
+  type: tv_show
+  why: box-set 'Complete' must not read as instructional — 'complete' is deliberately not a course keyword
+- name: Championship.Golf.The.Great.Courses.of.the.World.Volume.One.Pebble.Beach.1986
+  files:
+  - Championship.Golf.The.Great.Courses.of.the.World.Volume.One.Pebble.Beach.1986.iso|640
+  expect: keep
+  type: game
+  why: 'IMDb tt25994778: a catalogued sports game title containing the ordinary phrase Great Courses; a publisher-shaped phrase alone is not course proof.'
+- name: Skillshare.S01E01.2021.1080p.WEB-DL
+  files:
+  - Skillshare.S01E01.2021.1080p.WEB-DL.mkv|850
+  expect: keep
+  type: tv_show
+  why: 'IMDb tt20101290: a catalogued comedy episode exactly named Skillshare; platform names need independent product evidence.'
+- name: Udemy.S01E01.2017.1080p.WEB-DL
+  files:
+  - Udemy.S01E01.2017.1080p.WEB-DL.mkv|850
+  expect: keep
+  type: tv_show
+  why: 'IMDb tt10509700: a catalogued reality-TV episode exactly named Udemy; a bare platform token cannot delete.'
+- name: Udacity.Know.Udacity.2017.1080p.WEB-DL
+  files:
+  - Udacity.Know.Udacity.2017.1080p.WEB-DL.mp4|900
+  expect: keep
+  type: tv_show
+  why: 'IMDb tt8804648/tt13621544: catalogued video titles use Udacity as a subject, not an instructional product release.'
+- name: Wondrium.Insights.S01E01.1080p.WEB-DL
+  files:
+  - Wondrium.Insights.S01E01.1080p.WEB-DL.mkv|920
+  expect: keep
+  type: tv_show
+  why: 'IMDb tt19379818: a catalogued talk-show series; a platform mention needs independent product evidence.'
+- name: An.All.Groove3.ITL.Show.S01E01.1080p.WEB-DL
+  files:
+  - An.All.Groove3.ITL.Show.S01E01.1080p.WEB-DL.mkv|910
+  expect: keep
+  type: tv_show
+  why: 'IMDb tt12838234: a music/talk-show episode containing Groove3; the brand alone is not destructive evidence.'
+- name: The.Lynda.Com.Interview.S01E01.1080p.WEB-DL
+  files:
+  - The.Lynda.Com.Interview.S01E01.1080p.WEB-DL.mkv|930
+  expect: keep
+  type: tv_show
+  why: 'IMDb tt6428996: a catalogued interview episode about Lynda.com, not a course release.'
+- name: Matthew.Renze.Pluralsight.Author.S01E01.1080p.WEB-DL
+  files:
+  - Matthew.Renze.Pluralsight.Author.S01E01.1080p.WEB-DL.mkv|930
+  expect: keep
+  type: tv_show
+  why: 'IMDb tt12030942: a catalogued news/interview episode mentioning a Pluralsight author.'
+- name: Khan.Academy.India.S01E01.1080p.WEB-DL
+  files:
+  - Khan.Academy.India.S01E01.1080p.WEB-DL.mkv|930
+  expect: keep
+  type: tv_show
+  why: 'IMDb tt36584638: a catalogued series title; Khan Academy alone is not sufficient product evidence.'
+- name: Dance.Lessons.for.Beginners.S01E33.1080p.WEB-DL
+  files:
+  - Dance.Lessons.for.Beginners.S01E33.1080p.WEB-DL.mkv|910
+  expect: keep
+  type: tv_show
+  why: 'IMDb tt22016072: an animated comedy episode proving that two generic instructional phrases still collide.'
+- name: Ordinary.Movie.2024.1080p.WEB-DL.With.Authoritative.Course.Extras
+  files:
+  - Ordinary.Movie.2024.1080p.WEB-DL.mkv|4400
+  - Extras/Udemy.Complete.Course.mp4|80
+  - Extras/Coursera.Machine.Learning.mp4|80
+  expect: keep
+  type: movie
+  why: 'Both a current brand-plus-evidence pair and a current exact product identity occur only in Extras; neither may grant whole-torrent delete authority.'

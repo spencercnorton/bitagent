@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/slice"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/spencercnorton/bitagent/internal/slice"
 )
 
 func TestSlice(t *testing.T) {

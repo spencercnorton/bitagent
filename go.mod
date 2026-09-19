@@ -1,4 +1,4 @@
-module github.com/bitmagnet-io/bitmagnet
+module github.com/spencercnorton/bitagent
 
 go 1.23.6
 
@@ -59,6 +59,8 @@ require (
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/pprof v0.0.0-20241210010833-40e02aabc2ad // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
+	github.com/protolambda/ctxlock v0.1.0 // indirect
 )
 
 require (
@@ -139,7 +141,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_model v0.6.1 // indirect
+	github.com/prometheus/client_model v0.6.1
 	github.com/prometheus/common v0.61.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

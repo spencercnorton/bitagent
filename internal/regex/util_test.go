@@ -3,7 +3,7 @@ package regex_test
 import (
 	"testing"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/regex"
+	"github.com/spencercnorton/bitagent/internal/regex"
 	"github.com/stretchr/testify/assert"
 )
 

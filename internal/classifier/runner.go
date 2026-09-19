@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/protobuf"
 	"github.com/google/cel-go/common/types/ref"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/classifier/parsers"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/protobuf"
 )
 
 type runner struct {
@@ -15,6 +16,31 @@ type runner struct {
 	flagDefinitions
 	compiledFlags
 	workflows map[string]action
+}
+
+func (r runner) EvalMatch(ctx context.Context, t model.Torrent, ct model.NullContentType) (MatchDecision, error) {
+	// Rebuild the same independent parser evidence that the production action
+	// has already accumulated before it reaches the matcher. Without this the
+	// canary-only source-title gate sees an empty title and the evaluator
+	// declines every candidate, which measures neither the live path nor the
+	// gate's real selectivity.
+	parsed, _ := parsers.ParseVideoContentWithOptions(
+		t,
+		classification.Result{ContentAttributes: classification.ContentAttributes{
+			ContentType: ct,
+		}},
+		parsers.ParseOptions{NoiseV2: r.parseNoiseV2},
+	)
+	decision, err := (matchRunner{
+		search:        r.search,
+		tmdb:          r.tmdbClient,
+		lm:            r.llmMatch,
+		resolver:      r.animeResolver,
+		parsedTitle:   parsed.BaseTitle.String,
+		altTitleMatch: r.altTitleMatch,
+	}).decide(ctx, t, ct)
+	decision.ParsedTitle = parsed.BaseTitle.String
+	return decision, err
 }
 
 func (r runner) Run(ctx context.Context, workflow string, flags Flags, t model.Torrent) (classification.Result, error) {

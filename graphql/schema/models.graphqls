@@ -60,6 +60,16 @@ type TorrentContent {
   video3d: Video3D
   videoModifier: VideoModifier
   releaseGroup: String
+  """
+  English availability for anime releases (dub | sub | none). Null = unknown
+  or not anime. Read from the persisted english_audio column.
+  """
+  englishAudio: EnglishAudio
+  """
+  Provenance of englishAudio: "name" (deterministic release-name signals) or
+  "llm" (LLM extraction backstop). Null iff englishAudio is null.
+  """
+  englishAudioSource: String
   seeders: Int
   leechers: Int
   publishedAt: DateTime!

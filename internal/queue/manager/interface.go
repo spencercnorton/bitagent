@@ -3,9 +3,9 @@ package manager
 import (
 	"context"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/processor"
+	"github.com/spencercnorton/bitagent/internal/classifier"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/processor"
 )
 
 type PurgeJobsRequest struct {
@@ -24,6 +24,7 @@ type EnqueueReprocessTorrentsBatchRequest struct {
 	ClassifierFlags     classifier.Flags
 	ApisDisabled        bool
 	LocalSearchDisabled bool
+	SkipContentFilter   bool
 }
 
 type Manager interface {

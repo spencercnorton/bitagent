@@ -10,52 +10,117 @@ workflows:
         condition: "result.contentType == contentType.unknown"
         if_action:
           find_match:
+            # match instructional / course content FIRST (owner decision D2).
+            # Course material ships as video, audio OR pdf, so any later rule
+            # claims it and mistypes it: The Great Courses MP3 sets were typing
+            # `music`, MIT OCW lecture notes `ebook`, chaptered lecture m4b sets
+            # `audiobook`. Typing it here is also what makes it excludable at all.
+            - if_else:
+                condition:
+                  or:
+                    - "torrent.baseName.matches(keywords.course_exact)"
+                    - and:
+                        - "torrent.baseName.matches(keywords.course_brand)"
+                        - "torrent.baseName.matches(keywords.course_evidence)"
+                if_action:
+                  set_content_type: course
+                else_action: unmatched
             # match audiobooks:
+            # The `.m4b` clause used to type on the extension alone, with no
+            # keyword gate at all — every chaptered m4b became an audiobook, so
+            # podcasts, DJ mixes, live concerts and film scores were deleted.
+            # It is now a corroborating signal, not a sufficient one.
             - if_else:
                 condition:
                   and:
                     - "torrent.files.map(f, f.extension in extensions.audio ? f.size : - f.size).sum() > 50*mb"
                     - or:
-                        - "torrent.baseName.matches(keywords.audiobook)"
-                        - "torrent.files.filter(f, f.extension in extensions.audiobook).size() > 0"
+                        - "torrent.baseName.matches(keywords.audiobook_strong)"
+                        - "keywordList.audiobook_weak.filter(k, torrent.baseName.matches(k)).size() >= 2"
+                        - and:
+                            - "torrent.files.filter(f, f.extension in extensions.audiobook).size() > 0"
+                            - "keywordList.audiobook_weak.filter(k, torrent.baseName.matches(k)).size() >= 1"
                 if_action:
                   set_content_type: audiobook
                 else_action: unmatched
             # match comics:
             - if_else:
-                condition: "torrent.files.map(f, f.extension in extensions.comic ? f.size : - f.size).sum() > 0"
+                condition:
+                  and:
+                    - "torrent.files.map(f, f.extension in extensions.comic ? f.size : - f.size).sum() > 0"
+                    - "!torrent.baseName.matches(keywords.document_archive)"
                 if_action:
                   set_content_type: comic
                 else_action: unmatched
             # match ebooks:
+            # The extension list includes pdf/doc/docx/chm/rtf/odt, so without a
+            # guard every document archive is an "ebook": court records, service
+            # manuals, standards, technical reports, newspaper scans.
             - if_else:
-                condition: "torrent.files.map(f, f.extension in extensions.ebook ? f.size : - f.size).sum() > 0"
+                condition:
+                  and:
+                    - "torrent.files.map(f, f.extension in extensions.ebook ? f.size : - f.size).sum() > 0"
+                    - "!torrent.baseName.matches(keywords.document_archive)"
                 if_action:
                   set_content_type: ebook
                 else_action: unmatched
             # match music:
+            # The lossless arm is name-blind, so it claimed every audio-only
+            # non-music release — dub tracks, commentary, sound-effect libraries,
+            # drama CDs. The keyword arm is tiered because ep/lp/pop/rock/house
+            # are ordinary words (NPR "Pop Culture Happy Hour", BBC Radio 4
+            # "Bleak House", "Old Time Radio ... Ep.001-100" all typed music).
             - if_else:
                 condition:
-                  or:
-                    - "torrent.files.map(f, f.extension in extensions.music ? f.size : - f.size).sum() > 0"
-                    - and:
-                        - "torrent.baseName.matches(keywords.music)"
-                        - "torrent.files.map(f, f.extension in extensions.audio ? f.size : - f.size).sum() > 0"
+                  and:
+                    - "!torrent.baseName.matches(keywords.not_music)"
+                    - or:
+                        - "torrent.files.map(f, f.extension in extensions.music ? f.size : - f.size).sum() > 0"
+                        - and:
+                            - or:
+                                - "torrent.baseName.matches(keywords.music_strong)"
+                                - "keywordList.music_weak.filter(k, torrent.baseName.matches(k)).size() >= 2"
+                            - "torrent.files.map(f, f.extension in extensions.audio ? f.size : - f.size).sum() > 0"
                 if_action:
                   set_content_type: music
                 else_action: unmatched
             # match software:
+            # `iso` and `bin` are deliberately NOT in extensions.software: both are
+            # also disc-image extensions for video, so a DVD/BluRay .iso rip and a
+            # VCD/SVCD .bin rip typed software and — with software in
+            # delete_content_types — were deleted. set_content_type is terminal
+            # (ContentAttributes.Merge only fills an unset type), so a movie typed
+            # software here can never be re-typed by parse_video_content.
             - if_else:
-                condition: "torrent.files.map(f, f.extension in extensions.software ? f.size : - f.size).sum() > 0"
+                condition:
+                  or:
+                    - "torrent.files.map(f, f.extension in extensions.software ? f.size : - f.size).sum() > 0"
+                    - and:
+                        - "torrent.files.map(f, f.extension in extensions.disc_image ? f.size : - f.size).sum() > 0"
+                        - "torrent.baseName.matches(keywords.software)"
                 if_action:
                   set_content_type: software
                 else_action: unmatched
             # match xxx:
+            # Tiered: an `xxx_strong` keyword types on its own; `xxx_weak` keywords
+            # are ordinary words that occur in catalogued titles AND in real episode
+            # titles, and so require TWO DISTINCT weak hits.
+            #
+            # The weak count reads torrent.baseName ONLY; strong keywords still read
+            # the file paths too. Counting weak hits over the union of every file
+            # path is what makes "2 of N" trivial for a legitimate pack: a 94-file
+            # Sex and the City set gets `sex*` free on every filename and needs one
+            # more from 94 episode titles ("Cock a Doodle Do!" supplies it). South
+            # Park supplies three ("Ass Burgers", "Cock Magic", "Sexual Healing").
+            # The same union also handed out a free `ass` to every release shipping
+            # Advanced SubStation `.ass` subtitles — most fansubbed anime.
             - if_else:
                 condition:
                   and:
                     - "torrent.files.map(f, (f.extension in extensions.video || f.extension in extensions.image) ? f.size : - f.size).sum() > 0"
-                    - "([torrent.baseName] + torrent.files.map(f, f.basePath)).join(' ').matches(keywords.xxx)"
+                    - or:
+                        - "([torrent.baseName] + torrent.files.map(f, f.basePath)).join(' ').matches(keywords.xxx_strong)"
+                        - "keywordList.xxx_weak.filter(k, torrent.baseName.matches(k)).size() >= 2"
                 if_action:
                   set_content_type: xxx
                 else_action: unmatched
@@ -100,6 +165,22 @@ workflows:
                 condition: "flags.apis_enabled && flags.tmdb_enabled"
                 if_action: attach_tmdb_content_by_search
                 else_action: unmatched
+    # LLM fallback matcher: for movie/tv torrents that deterministic search
+    # could not attach to a TMDB id (the release name is too messy — alt/foreign
+    # titles, junk prefixes). Two-stage extract+rerank. Gated OFF by default via
+    # flags.llm_match_enabled; the action itself is a further no-op unless the
+    # classifier_llm_match config enables it (shadow) and enable_live (attach).
+    - if_else:
+        condition:
+          and:
+            - "!result.hasAttachedContent && result.hasBaseTitle"
+            - "flags.llm_match_enabled"
+            - "flags.apis_enabled && flags.tmdb_enabled"
+            - "result.contentType in [contentType.movie, contentType.tv_show]"
+        if_action:
+          find_match:
+            - attach_tmdb_content_by_llm_search
+            - unmatched
     # delete specific content types based on the configured flags:
     - if_else:
         condition:
@@ -161,12 +242,10 @@ extensions:
     - apk
     - app
     - bat
-    - bin
     - deb
     - dll
     - dmg
     - exe
-    - iso
     - jar
     - lua
     - msi
@@ -174,6 +253,11 @@ extensions:
     - pkg
     - rpm
     - sh
+  # `iso` lives here rather than in `software` because it is also a video
+  # extension — a disc image is only software when the name says so.
+  disc_image:
+    - bin
+    - iso
   video:
     - mp4
     - mkv
@@ -188,51 +272,226 @@ extensions:
     - ts
     - vob
 keywords:
-  audiobook:
+  # ---- audiobook ----------------------------------------------------------
+  # Strong: an explicit audiobook marker. Weak: words equally at home in an
+  # album title — Bob Dylan "Biograph", Iron Maiden "The Book Of Souls", the
+  # band "The Books", "The Jungle Book" OST — so one hit is not evidence.
+  audiobook_strong:
     - audiobooks?
-    - books?
+    - audiolibro*
     - (un)?abridged
-    - narrated
-    - novels?
+    - hoerbuch
+    # audiobook publisher imprints
+    - audible
+    - blackstone ?audio
+    - brilliance ?audio
+    - podium ?audio
+    - recorded ?books
+    - tantor ?(audio|media)
+  # `narrated ?by` is weak, not strong: it is equally a classical-recording
+  # credit (Prokofiev, "Peter and the Wolf", narrated by David Bowie).
+  audiobook_weak:
     - "*biograph*"
-  music:
+    - books?
+    - chapters?
+    - narrated ?by
+    - novels?
+    - read ?by
+  # ---- music --------------------------------------------------------------
+  music_strong:
+    - album
+    - compilation
     - discography
     - music
-    - album
     - \V.?\A.?
     - various artists
-    - compilation
-    - ep
-    - lp
-    - single
     - vinyl
+  # Ordinary words. NPR "Pop Culture Happy Hour", BBC Radio 4 "Bleak House"
+  # and "Old Time Radio ... Ep.001-100" were all typed music on one of these.
+  music_weak:
     - classical
     - disco
+    - ep
     - folk
     - hits
     - house
     - indie
     - jazz
+    - lp
     - metal
     - pop
+    - bootleg
+    - mixtape
     - reggae
+    - remix*
     - rock
+    - sessions?
+    - single
     - trance
-  xxx:
+  # Guard for the lossless arm, which is otherwise name-blind and claimed every
+  # audio-only release that is not music.
+  not_music:
+    - audio ?only
+    - audio ?tracks?
+    - commentary
+    - drama ?cd
+    - dub(bed|s)?
+    - lectures?
+    - podcasts?
+    - radio ?drama
+    - sound ?effects?
+    - sync ?pack
+    - track ?pack
+    - 480p
+    - 720p
+    - 1080p
+    - 2160p
+    - bdrip
+    - bluray
+    - brrip
+    - dvdrip
+    - hdtv
+    - webrip
+    - xvid
+  # ---- ebook / comic ------------------------------------------------------
+  # Both rules are pure extension-dominance with no keyword at all, so without
+  # this guard every pdf/cbz payload is a book: court records, service manuals,
+  # standards, arXiv dumps, newspaper scans, screenplays.
+  document_archive:
+    - arxiv
+    - catalogs?
+    - catalogues?
+    - core ?rules
+    - court
+    - datasheets?
+    - declassified
+    - dockets?
+    - documentation
+    - dumps?
+    - field ?manuals?
+    - handbooks?
+    - ieee
+    - imslp
+    - litigation
+    - manuals?
+    - nasa
+    - newspapers?
+    - pubmed
+    - records
+    - reports?
+    - rfc
+    - schematics?
+    - scores?
+    - screenplays?
+    - service ?manuals?
+    - specifications?
+    - standards?
+    - transcripts?
+    - unsealed
+    - wiring
+  # ---- xxx ----------------------------------------------------------------
+  # Decisive alone. Every entry must be a word that appears in neither a
+  # catalogued title nor an episode title — the match runs over file paths too.
+  # Deliberately NOT here, each for a named collision:
+  #   *xxx*   WWE WrestleMania XXX, Super Bowl XXX (Roman numeral)
+  #   *porn*  After Porn Ends (2012)
+  #   anal    South Park S01E01 "Cartman Gets an Anal Probe"
+  #   boob*   Friends S01E13 "The One With the Boobies"
+  #   orgy / erotic* / orgasm* / slut*   all occur in episode titles
+  xxx_strong:
+    - blowjobs?
+    - bukkake
+    - creampie*
+    - cumshots?
+    - deepthroat*
+    - gangbang*
+    - "*gloryhole*"
+    - handjobs?
+    - nubile*
+    - private ?gold
+    - siterip
+    - "*wank*"
+    # studio / site names. Written with ` ?` (any optional non-word char) because
+    # releases use both `NaughtyAmerica` and `Naughty.America`; a concatenated
+    # literal silently matches only half of them.
+    # Deliberately excluded as too collision-prone with real titles:
+    #   blacked (ordinary past-tense verb), vixen (Vixen, 2015 CW Seed series;
+    #   Russ Meyer's Vixen!, 1968), babes (Babes, 2024), wicked (Wicked, 2024),
+    #   private, deeper, tushy, evil angel (Evil Angel, 2009 horror film).
+    - bang ?bros
+    - bang ?bus
+    - brazzers
+    - cum ?louder
+    - digital ?playground
+    - fake ?hub
+    - jules ?jordan
+    - legal ?porno
+    - met ?art
+    - mofos
+    - naughty ?america
+    - nubile ?films
+    - reality ?kings
+    - sex ?art
+    - team ?skeet
+    - twistys
+    # JAV / regional studio codes: no English keyword ever appears in these
+    # release names, so they are invisible to both tiers without an explicit list.
+    - caribbeancom
+    - fc# ?ppv
+    - heyzo
+    - 1pondo
+    - paco ?paco ?mama
+    - tokyo ?hot
+  # Two DISTINCT hits required, and both must be in torrent.baseName. Each of
+  # these is in a real catalogued title:
+  #   ass       Kick-Ass, Bad Ass, Big Ass Spider, and every `.ass` subtitle file
+  #   cum*      Magna Cum Laude, every Benedict Cumberbatch release
+  #   dicks?    Moby Dick, Dick Tracy, Dick Johnson Is Dead, The Dick Van Dyke Show
+  #   cocks?    A Cock and Bull Story
+  #   hardcore  Hardcore Henry, Hardcore (1979), Hardcore Pawn
+  #   kink*     Kinky Boots
+  #   sex*      Sexy Beast, Sex and the City, Sex Education, Sex Lies and Videotape
+  #   pussy     Pussy Riot: A Punk Prayer
+  #   pov       POV (PBS documentary strand, running since 1988)
+  #   threesome Threesome (1994), Threesome (2011)
+  #   *xxx*     WrestleMania XXX, Super Bowl XXX, xXx (2002), MAXXX, xxxHOLiC
+  #   *porn*    After Porn Ends, Zack and Miri Make a Porno, Money Shot
+  #   milf*     MILF (2018)
+  #   onlyfans  OnlyFans: Selling Sexy (2021)
+  #   slut*     "slut" is Swedish/Danish/Norwegian for "end"
+  #   orgy      Orgy of the Dead (1965)
+  #   boob*     Star Trek TNG "Booby Trap"; Friends "The One With the Boobies"
+  # The second half of this list is adult-context vocabulary: individually weak
+  # (Teen Wolf, Blonde, The Naked Gun, Babes) but decisive in pairs.
+  xxx_weak:
+    - amateur
     - anal
     - ass
-    - blowjobs?
+    - bdsm
+    - blondes?
+    - bondage
     - boob*
+    - busty
+    - camgirl
     - cocks?
+    - compilation
+    - cougars?
     - cum*
     - dicks?
+    - doujin
+    - ecchi
     - erotic*
+    - fetish
     - "*fuck*"
-    - "*gloryhole*"
+    - gonzo
     - hardcore
+    - hentai
+    - jav
     - kink*
+    - latina
     - milf*
-    - nubile*
+    - naked
+    - nude*
     - onlyfans
     - orgasm*
     - orgy
@@ -242,10 +501,143 @@ keywords:
     - seduc*
     - sex*
     - slut*
-    - tits?
+    - striptease
+    - teens?
     - threesome
-    - "*wank*"
+    - tits?
+    - uncensored
+    - webcam
     - "*xxx*"
+  # ---- course (owner decision D2) -----------------------------------------
+  # A platform/publisher/certification name is not destructive evidence on its
+  # own. IMDb's title corpus contains ordinary episodes named Skillshare,
+  # Udemy, Udacity and Wondrium plus documentary/news titles mentioning Khan
+  # Academy, Lynda.com and Pluralsight. Require a second, explicit product
+  # signal from the BASE NAME; file-path extras never classify the whole set.
+  course_brand:
+    - acloudguru
+    - cbtnuggets
+    - codecademy
+    - codewithmosh
+    - datacamp
+    - digitaltutors
+    - frontend ?masters
+    - great ?courses
+    - groove3
+    - inner ?circle ?trader
+    - infinite ?skills
+    - itpro ?tv
+    - khan ?academy
+    - kodekloud
+    - laracasts
+    - linkedin ?learning
+    - linuxacademy
+    - lynda ?com
+    - mit ?ocw
+    - open ?yale
+    - pentesteracademy
+    - pluralsight
+    - proko
+    - skillshare
+    - teamtreehouse
+    - testout
+    - ttc ?video
+    - tutsplus
+    - udacity
+    - udemy
+    - wondrium
+    - zerotomastery
+    # certification tracks
+    - ccna
+    - ccnp
+    - cissp
+    - comptia
+    - pimsleur
+  course_evidence:
+    - bootcamps?
+    - certified
+    - complete ?class
+    - complete ?courses?
+    - course ?overview
+    - essential ?training
+    - full ?certification
+    - fundamentals
+    - lessons? ##
+    - levels? #
+    - mastering
+    - mentorship
+  # Generic instructional words must never manufacture delete authority by
+  # co-occurring. These are bounded, reviewed product identities with no
+  # catalogued non-course collision in the IMDb title census; unlike the old
+  # generic pair rules, neither ordering nor arbitrary word spans are accepted.
+  course_exact:
+    - beachbody p##x
+    - crashcourse world ?history
+    - coursera machine ?learning
+    - frontend ?masters complete ?intro
+    - groove3 ableton ?live ?## explained
+    - learn ?python from ?scratch
+    - mit ?ocw
+    - open ?yale ?courses
+    - packt mastering
+    - pluralsight docker ?deep ?dive
+    - rocket ?spanish level ?# complete ?audio ?course
+    - rosetta ?stone totale
+    - the ?great ?courses books ?that ?have ?made ?history
+    - the ?great ?courses elements ?of ?jazz
+    - the ?great ?courses the ?english ?novel
+    - the ?great ?courses the ?history ?of ?ancient ?rome
+    - the ?great ?courses the ?symphony
+    - the ?great ?courses understanding ?the ?universe
+    - ttc great ?masters
+    - yoga ?with ?adriene
+  # ---- software -----------------------------------------------------------
+  # Corroboration for a bare disc image (see extensions.disc_image).
+  software:
+    - activator
+    - adobe
+    - arch ?linux
+    - autocad
+    - autodesk
+    - centos
+    - crack(ed|s)?
+    - debian
+    - fedora
+    - jetbrains
+    - kali
+    - keygen
+    - linux
+    - macos
+    - manjaro
+    - matlab
+    - microsoft ?office
+    - opensuse
+    - photoshop
+    - portable
+    # game repack / scene groups and console tags: a bare .iso or .bin that is a
+    # game is still software-shaped, and these markers never occur in a film title.
+    - codex
+    - dodi
+    - empress
+    - fitgirl
+    - gamecube
+    - gog
+    - nintendo
+    - playstation
+    - ps#
+    - psp
+    - razor1911
+    - reloaded
+    - repacks?
+    - rune
+    - skidrow
+    - wii
+    - xbox
+    - solidworks
+    - ubuntu
+    - visual ?studio
+    - vmware
+    - windows
   banned:
     - pa?edo(fil*|phil*)?
     - preteen
@@ -269,11 +661,13 @@ flag_definitions:
   local_search_enabled: bool
   apis_enabled: bool
   tmdb_enabled: bool
+  llm_match_enabled: bool
   delete_content_types: content_type_list
   delete_xxx: bool
 flags:
   local_search_enabled: true
   apis_enabled: true
   tmdb_enabled: true
+  llm_match_enabled: false
   delete_content_types: []
   delete_xxx: false

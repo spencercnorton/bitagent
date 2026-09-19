@@ -25,6 +25,7 @@ const (
 	ContentTypeGame      ContentType = "game"
 	ContentTypeSoftware  ContentType = "software"
 	ContentTypeXxx       ContentType = "xxx"
+	ContentTypeCourse    ContentType = "course"
 )
 
 var ErrInvalidContentType = fmt.Errorf("not a valid ContentType, try [%s]", strings.Join(_ContentTypeNames, ", "))
@@ -39,6 +40,7 @@ var _ContentTypeNames = []string{
 	string(ContentTypeGame),
 	string(ContentTypeSoftware),
 	string(ContentTypeXxx),
+	string(ContentTypeCourse),
 }
 
 // ContentTypeNames returns a list of possible string values of ContentType.
@@ -60,6 +62,7 @@ func ContentTypeValues() []ContentType {
 		ContentTypeGame,
 		ContentTypeSoftware,
 		ContentTypeXxx,
+		ContentTypeCourse,
 	}
 }
 
@@ -85,6 +88,7 @@ var _ContentTypeValue = map[string]ContentType{
 	"game":      ContentTypeGame,
 	"software":  ContentTypeSoftware,
 	"xxx":       ContentTypeXxx,
+	"course":    ContentTypeCourse,
 }
 
 // ParseContentType attempts to convert a string to a ContentType.

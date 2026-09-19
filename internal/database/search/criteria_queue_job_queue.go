@@ -1,7 +1,7 @@
 package search
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/database/query"
+	"github.com/spencercnorton/bitagent/internal/database/query"
 	"gorm.io/gen/field"
 )
 

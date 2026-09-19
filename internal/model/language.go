@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/keywords"
 	"github.com/facette/natsort"
+	"github.com/spencercnorton/bitagent/internal/keywords"
 )
 
 type Language string

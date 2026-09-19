@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/lexer"
 	"github.com/facette/natsort"
+	"github.com/spencercnorton/bitagent/internal/lexer"
 	"gorm.io/gorm"
 )
 
@@ -28,37 +28,48 @@ func (t *Torrent) AfterFind(_ *gorm.DB) error {
 	return nil
 }
 
-// Seeders returns the highest number of seeders from all sources
-// todo: Add up bloom filters
+// SourceKeyTracker is the torrents_torrent_sources key written by the seeds
+// worker (internal/seeds/store.go) for hashes with an authoritative
+// tracker-scrape verdict: positive counts, or 0/0 for a known-dead swarm.
+// Never present for a never-scraped or tracker-unknown hash.
+const SourceKeyTracker = "tracker"
+
+// Seeders returns the freshest-authoritative seeder count: the 'tracker'
+// source row wins outright when present — a tracker scrape is a validated
+// point-in-time reading (including an authoritative 0 for a dead swarm),
+// refreshed on a daily cadence, while DHT/import counts are approximate and
+// effectively write-once. Only when no tracker verdict exists does the old
+// MAX-across-sources fallback apply. Before this, a fossilised DHT peak
+// permanently masked every fresher tracker reading, and a tracker-confirmed
+// dead swarm still advertised its historical peak.
 func (t Torrent) Seeders() NullUint {
-	seeders := NullUint{}
-
-	for _, source := range t.Sources {
-		if source.Seeders.Valid {
-			seeders.Valid = true
-			if source.Seeders.Uint > seeders.Uint {
-				seeders.Uint = source.Seeders.Uint
-			}
-		}
-	}
-
-	return seeders
+	return t.bestCount(func(s TorrentsTorrentSource) NullUint { return s.Seeders })
 }
 
-// Leechers returns the highest number of leechers from all sources
+// Leechers returns the freshest-authoritative leecher count; see Seeders.
 func (t Torrent) Leechers() NullUint {
-	leechers := NullUint{}
+	return t.bestCount(func(s TorrentsTorrentSource) NullUint { return s.Leechers })
+}
 
+func (t Torrent) bestCount(counter func(TorrentsTorrentSource) NullUint) NullUint {
 	for _, source := range t.Sources {
-		if source.Leechers.Valid {
-			leechers.Valid = true
-			if source.Leechers.Uint > leechers.Uint {
-				leechers.Uint = source.Leechers.Uint
+		if source.Source == SourceKeyTracker {
+			if c := counter(source); c.Valid {
+				return c
 			}
 		}
 	}
 
-	return leechers
+	best := NullUint{}
+	for _, source := range t.Sources {
+		if c := counter(source); c.Valid {
+			best.Valid = true
+			if c.Uint > best.Uint {
+				best.Uint = c.Uint
+			}
+		}
+	}
+	return best
 }
 
 var cutoff = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)

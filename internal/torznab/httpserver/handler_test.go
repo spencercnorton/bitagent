@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/torznab"
-	"github.com/bitmagnet-io/bitmagnet/internal/torznab/httpserver"
-	torznab_mocks "github.com/bitmagnet-io/bitmagnet/internal/torznab/mocks"
 	"github.com/gin-gonic/gin"
+	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/torznab"
+	"github.com/spencercnorton/bitagent/internal/torznab/httpserver"
+	torznab_mocks "github.com/spencercnorton/bitagent/internal/torznab/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -48,7 +48,10 @@ func newTestHarness(t *testing.T) *testHarness {
 	})
 
 	engine := gin.New()
-	err := httpserver.New(lazyClient, testCfg).Apply(engine)
+	// Pass a real Metrics so the metric-emission paths in the
+	// handler are exercised; the test doesn't assert on metric
+	// values, just that no nil-pointer fires through them.
+	err := httpserver.New(lazyClient, testCfg, httpserver.NewMetrics()).Apply(engine)
 
 	require.NoError(t, err)
 

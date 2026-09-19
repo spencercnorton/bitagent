@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/anacrolix/torrent/bencode"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
 	qt "github.com/frankban/quicktest"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

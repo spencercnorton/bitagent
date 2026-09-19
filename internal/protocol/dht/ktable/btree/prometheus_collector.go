@@ -1,12 +1,12 @@
 package btree
 
-import "github.com/prometheus/client_golang/prometheus"
+import "github.com/spencercnorton/bitagent/internal/telemetry/dualemit"
 
 type PrometheusCollector struct {
 	Btree          Btree
-	CountGauge     prometheus.Gauge
-	AddedCounter   prometheus.Counter
-	DroppedCounter prometheus.Counter
+	CountGauge     *dualemit.Gauge
+	AddedCounter   *dualemit.Counter
+	DroppedCounter *dualemit.Counter
 }
 
 func (p PrometheusCollector) N() int {

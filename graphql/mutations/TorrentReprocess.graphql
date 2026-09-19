@@ -1,5 +1,0 @@
-mutation TorrentReprocess($input: TorrentReprocessInput!) {
-  torrent {
-    reprocess(input: $input)
-  }
-}

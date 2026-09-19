@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/99designs/gqlgen/graphql"
-	"github.com/bitmagnet-io/bitmagnet/internal/metrics/queuemetrics"
-	"github.com/bitmagnet-io/bitmagnet/internal/metrics/torrentmetrics"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/metrics/queuemetrics"
+	"github.com/spencercnorton/bitagent/internal/metrics/torrentmetrics"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
 type ContentTypeAgg struct {
@@ -25,6 +25,55 @@ type ContentTypeAgg struct {
 type ContentTypeFacetInput struct {
 	Aggregate graphql.Omittable[*bool]                `json:"aggregate,omitempty"`
 	Filter    graphql.Omittable[[]*model.ContentType] `json:"filter,omitempty"`
+}
+
+type EvidenceIndexerCount struct {
+	Indexer string `json:"indexer"`
+	Grabs   int    `json:"grabs"`
+}
+
+type EvidenceIndexerStatsDay struct {
+	Date          time.Time `json:"date"`
+	TotalGrabs    int       `json:"totalGrabs"`
+	BitagentGrabs int       `json:"bitagentGrabs"`
+}
+
+type EvidenceIndexerStatsInput struct {
+	Days int `json:"days"`
+}
+
+type EvidenceIndexerStatsResult struct {
+	TotalGrabs      int                       `json:"totalGrabs"`
+	BitagentGrabs   int                       `json:"bitagentGrabs"`
+	BitagentWinRate float64                   `json:"bitagentWinRate"`
+	Indexers        []EvidenceIndexerCount    `json:"indexers"`
+	Days            []EvidenceIndexerStatsDay `json:"days"`
+}
+
+type EvidenceItem struct {
+	ID             string       `json:"id"`
+	Source         string       `json:"source"`
+	Kind           string       `json:"kind"`
+	SourceInstance string       `json:"sourceInstance"`
+	SourceObjectID string       `json:"sourceObjectId"`
+	DownloadID     string       `json:"downloadId"`
+	InfoHash       *protocol.ID `json:"infoHash,omitempty"`
+	Title          string       `json:"title"`
+	MediaType      string       `json:"mediaType"`
+	MediaID        string       `json:"mediaId"`
+	Category       string       `json:"category"`
+	ObservedAt     time.Time    `json:"observedAt"`
+	Strength       int          `json:"strength"`
+}
+
+type EvidenceListInput struct {
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+}
+
+type EvidenceListResult struct {
+	TotalCount int            `json:"totalCount"`
+	Items      []EvidenceItem `json:"items"`
 }
 
 type GenreAgg struct {

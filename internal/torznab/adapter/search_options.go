@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/database/query"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/search"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/torznab"
+	"github.com/spencercnorton/bitagent/internal/database/query"
+	"github.com/spencercnorton/bitagent/internal/database/search"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/torznab"
 )
 
 func searchRequestToQueryOptions(r torznab.SearchRequest) ([]query.Option, error) {
@@ -20,7 +20,13 @@ func searchRequestToQueryOptions(r torznab.SearchRequest) ([]query.Option, error
 	case torznab.FunctionTV:
 		options = append(options, query.Where(search.TorrentContentTypeCriteria(model.ContentTypeTvShow)))
 
-		if r.Season.Valid {
+		switch {
+		case r.AirDate.IsValid():
+			// daily-show date query — regular daily releases carry a date but
+			// no season/episode markers, so the episodes criteria must NOT
+			// also apply (it would exclude every date-only row).
+			options = append(options, query.Where(search.TorrentContentReleaseDateCriteria(r.AirDate)))
+		case r.Season.Valid:
 			episodes := make(model.Episodes)
 			if r.Episode.Valid {
 				episodes = episodes.AddEpisode(r.Season.Int, r.Episode.Int)
@@ -121,6 +127,11 @@ func searchRequestToQueryOptions(r torznab.SearchRequest) ([]query.Option, error
 					catCriteria,
 					search.VideoResolutionCriteria(model.VideoResolutionV2160p),
 				)
+			case torznab.CategoryTVAnime.ID:
+				// Narrow a bare cat=5070 browse to anime (fansub-group named
+				// TV). A cat=5070&q=<title> query already matches via the
+				// per-result 5070 category the adapter emits on anime results.
+				catCriteria = append(catCriteria, search.TorrentContentAnimeCriteria())
 			}
 		case torznab.CategoryXXX.Has(cat):
 			catCriteria = append(catCriteria, search.TorrentContentTypeCriteria(model.ContentTypeXxx))

@@ -3,10 +3,10 @@ package batch
 import (
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/processor"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/classifier"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/processor"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
 const MessageName = "process_torrent_batch"
@@ -17,6 +17,7 @@ type MessageParams struct {
 	ClassifyMode        processor.ClassifyMode  `json:"ClassifyMode,omitempty"`
 	ClassifierWorkflow  string                  `json:"ClassifierWorkflow,omitempty"`
 	ClassifierFlags     classifier.Flags        `json:"ClassifierFlags,omitempty"`
+	SkipContentFilter   bool                    `json:"SkipContentFilter,omitempty"`
 	ChunkSize           uint                    `json:"ChunkSize,omitempty"`
 	BatchSize           uint                    `json:"BatchSize,omitempty"`
 	ContentTypes        []model.NullContentType `json:"ContentTypes,omitempty"`

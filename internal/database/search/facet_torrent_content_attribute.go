@@ -4,10 +4,10 @@ import (
 	"database/sql/driver"
 	"fmt"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/database/dao"
-	"github.com/bitmagnet-io/bitmagnet/internal/database/query"
-	"github.com/bitmagnet-io/bitmagnet/internal/maps"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
+	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/database/query"
+	"github.com/spencercnorton/bitagent/internal/maps"
+	"github.com/spencercnorton/bitagent/internal/model"
 	"gorm.io/gen/field"
 )
 

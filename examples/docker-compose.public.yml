@@ -1,0 +1,174 @@
+# BitAgent — public-quickstart docker-compose
+#
+# This is the recommended starting point for self-hosters who want to
+# run BitAgent on a single host without any operator-specific infra
+# (no operator-internal Gluetun tunnel, no private registry image,
+# no Sonarr/Radarr/qBittorrent integration). The maintainer's own stack
+# is tied to a Portainer + VPN + tailnet topology and is not shipped.
+#
+# Two-service stack: bitagent (built from this repo) + postgres-16.
+# Direct host networking on port 3333 (HTTP / GraphQL / metrics /
+# torznab / evidence webhook) — add a reverse proxy + auth gate before
+# exposing publicly.
+#
+# Quickstart
+# ----------
+#
+#   1. cp examples/.env.example examples/.env.public
+#   2. edit examples/.env.public — at minimum set POSTGRES_PASSWORD
+#   3. docker compose -f examples/docker-compose.public.yml --env-file examples/.env.public up -d --build
+#   4. open http://localhost:3333/graphql
+#
+# Once GHCR / Docker Hub images are published (Phase 2 of public
+# release; tracked in the bitmagnet master plan), swap the `build:`
+# block on the bitagent service for the commented `image:` line below
+# and stop bundling the source.
+
+services:
+
+  bitagent:
+    # When a published image is available (Phase 2), uncomment this
+    # line and remove the `build:` block below. Until then the
+    # quickstart builds from the local checkout.
+    # image: ghcr.io/bitagent/bitagent:latest
+
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: bitagent
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - worker
+      - run
+      - --all
+    environment:
+      # --- Database ---
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_NAME: bitmagnet
+      POSTGRES_USER: bitmagnet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.public}
+
+      # --- Crawler tunables ---
+      # ScalingFactor multiplies internal worker counts. 1 is the
+      # safe default for a small host; 4-10 on a beefier box.
+      #
+      # NOTE ON ENV KEY NAMING: keys carry NO `BITMAGNET_` prefix. Each key
+      # is the config section name plus the Go struct field names, snake_cased
+      # and uppercased (internal/config/config.go). A prefixed key matches no
+      # config path — that is not an error, it is silently ignored and the
+      # field keeps its default.
+      DHT_CRAWLER_SCALING_FACTOR: "${DHT_SCALING_FACTOR:-1}"
+
+      # --- TMDB (optional content-classifier input) ---
+      # Free key from https://www.themoviedb.org/settings/api. Empty
+      # disables the TMDB stage; bitagent works without it.
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+
+      # --- Torznab API key (REQUIRED if you expose /torznab publicly) ---
+      # If left empty, /torznab is unauthenticated — fine on a tailnet
+      # or behind a reverse-proxy with its own auth, but not on the
+      # open internet.
+      TORZNAB_API_KEY: ${TORZNAB_API_KEY:-}
+
+      # --- CSAM blocklist (pre-fetch defense) ---
+      # Enabled by default with no feeds = NoOp until you opt in.
+      # Self-export to a local JSONL log is on by default; outbound
+      # POST is off until you point it at a community endpoint.
+      # See docs/csam-defense.md for full details.
+      CSAM_BLOCKLIST_ENABLED: "${CSAM_BLOCKLIST_ENABLED:-true}"
+      CSAM_BLOCKLIST_FEED_URLS: "${CSAM_BLOCKLIST_FEED_URLS:-}"
+      CSAM_BLOCKLIST_EXPORT_ENABLED: "${CSAM_BLOCKLIST_EXPORT_ENABLED:-true}"
+      CSAM_BLOCKLIST_EXPORT_UPSTREAM_URL: "${CSAM_BLOCKLIST_EXPORT_UPSTREAM_URL:-}"
+
+      # --- Content filter (English-only / NSFW / format curation) ---
+      # OFF by default; flip Enabled+Enforce in two stages once you've
+      # validated the shadow-mode drop counts.
+      CONTENT_FILTER_ENABLED: "${CONTENT_FILTER_ENABLED:-false}"
+      CONTENT_FILTER_ENFORCE: "${CONTENT_FILTER_ENFORCE:-false}"
+
+      # --- Retention (deletion of stale torrents) ---
+      # OFF by default. Flip RETENTION_ENABLED first; let
+      # bitagent_retention_would_purge_total stabilise; then flip
+      # RETENTION_ENABLE_PURGE to actually delete.
+      RETENTION_ENABLED: "${RETENTION_ENABLED:-false}"
+      RETENTION_ENABLE_PURGE: "${RETENTION_ENABLE_PURGE:-false}"
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      # Single host port serves GraphQL, /metrics, /torznab,
+      # /evidence/arr/*, /import. Put a reverse proxy in front before
+      # exposing to the open internet.
+      - "${BITAGENT_HTTP_PORT:-3333}:3333"
+      # BitTorrent peer port. Outbound-dominant; if you can't open
+      # this in your firewall, the crawler still works (the DHT and
+      # peer-find paths are outbound), throughput is just lower.
+      - "${BITAGENT_PEER_PORT:-3334}:3334/tcp"
+      - "${BITAGENT_PEER_PORT:-3334}:3334/udp"
+    volumes:
+      - bitagent-config:/root/.config/bitmagnet
+      - bitagent-data:/root/.local/share/bitmagnet
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3333/metrics || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: bitagent-postgres
+    restart: unless-stopped
+    shm_size: 512m
+    environment:
+      POSTGRES_DB: bitmagnet
+      POSTGRES_USER: bitmagnet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.public}
+      PGUSER: bitmagnet
+    volumes:
+      - bitagent-postgres:/var/lib/postgresql/data
+    # Modest tuning suitable for a 4-8 GB host. Larger deployments
+    # should bump shared_buffers and effective_cache_size to ~25% /
+    # ~75% of available RAM respectively.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - max_connections=100
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_analyze_scale_factor=0.02
+      - -c
+      - autovacuum_naptime=30s
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bitmagnet -d bitmagnet"]
+      interval: 10s
+      start_period: 20s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  bitagent-config:
+  bitagent-data:
+  bitagent-postgres:

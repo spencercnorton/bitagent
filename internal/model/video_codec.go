@@ -4,9 +4,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/keywords"
-	"github.com/bitmagnet-io/bitmagnet/internal/regex"
 	"github.com/hedhyw/rex/pkg/rex"
+	"github.com/spencercnorton/bitagent/internal/keywords"
+	"github.com/spencercnorton/bitagent/internal/regex"
 )
 
 // VideoCodec represents the codec of a video

@@ -3,7 +3,7 @@ package migrations
 import (
 	"context"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/lazy"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 	"gorm.io/gorm"

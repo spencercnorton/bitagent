@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
-	classifier_mocks "github.com/bitmagnet-io/bitmagnet/internal/classifier/mocks"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/tmdb"
-	tmdb_mocks "github.com/bitmagnet-io/bitmagnet/internal/tmdb/mocks"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	classifier_mocks "github.com/spencercnorton/bitagent/internal/classifier/mocks"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/tmdb"
+	tmdb_mocks "github.com/spencercnorton/bitagent/internal/tmdb/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -144,7 +144,8 @@ func TestClassifier(t *testing.T) {
 					"MovieDetails",
 					matchContext,
 					tmdb.MovieDetailsRequest{
-						ID: 123,
+						ID:               123,
+						AppendToResponse: []string{"alternative_titles", "translations"},
 					},
 				).
 					Return(tmdb.MovieDetailsResponse{
@@ -182,8 +183,28 @@ func TestClassifier(t *testing.T) {
 			},
 		},
 		{
+			// `xxx` alone no longer types xxx: it is a weak keyword because the
+			// token is also a Roman numeral (WWE WrestleMania XXX, Super Bowl XXX)
+			// and a film title (xXx, 2002). Two distinct weak hits are required.
+			// See TestExclusionClassifierPrecision for the measured trade.
 			torrent: model.Torrent{
 				Name:        "The XXX Movie 1080p.mkv",
+				FilesStatus: model.FilesStatusSingle,
+				Extension:   model.NewNullString("mkv"),
+				Size:        1000000000,
+			},
+			// It stays untyped and falls through to the LLM/quarantine path
+			// instead of being deleted outright.
+			expected: classification.Result{
+				ContentAttributes: classification.ContentAttributes{
+					VideoResolution: model.NewNullVideoResolution(model.VideoResolutionV1080p),
+				},
+			},
+		},
+		{
+			// Two distinct weak keywords (`xxx` + `anal`) still type xxx.
+			torrent: model.Torrent{
+				Name:        "Some Anal Scene XXX 1080p.mkv",
 				FilesStatus: model.FilesStatusSingle,
 				Extension:   model.NewNullString("mkv"),
 				Size:        1000000000,
@@ -191,6 +212,22 @@ func TestClassifier(t *testing.T) {
 			expected: classification.Result{
 				ContentAttributes: classification.ContentAttributes{
 					ContentType:     model.NewNullContentType(model.ContentTypeXxx),
+					VideoResolution: model.NewNullVideoResolution(model.VideoResolutionV1080p),
+				},
+			},
+		},
+		{
+			// A single strong keyword types xxx on its own.
+			torrent: model.Torrent{
+				Name:        "Brazzers 24 01 02 Some Scene 1080p.mkv",
+				FilesStatus: model.FilesStatusSingle,
+				Extension:   model.NewNullString("mkv"),
+				Size:        1000000000,
+			},
+			expected: classification.Result{
+				ContentAttributes: classification.ContentAttributes{
+					ContentType:     model.NewNullContentType(model.ContentTypeXxx),
+					Date:            model.Date{Year: 2024, Month: 1, Day: 2},
 					VideoResolution: model.NewNullVideoResolution(model.VideoResolutionV1080p),
 				},
 			},

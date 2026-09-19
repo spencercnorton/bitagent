@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/ktable"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
 )
 
 func (c *crawler) getNodesForFindNode(ctx context.Context) {
@@ -33,11 +33,7 @@ func (c *crawler) runFindNode(ctx context.Context) {
 				Reason: fmt.Errorf("find_node failed: %w", err),
 			})
 		} else {
-			c.kTable.BatchCommand(ktable.PutNode{
-				ID:      p.ID(),
-				Addr:    p.Addr(),
-				Options: []ktable.NodeOption{ktable.NodeResponded()},
-			})
+			c.admitNodeFromReply(p.ID(), p.Addr(), res.ReadOnly)
 			// block this channel until all nodes can be added to the discoveredNodes channel
 			for _, n := range res.Nodes {
 				select {

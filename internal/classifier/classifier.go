@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/classifier/classification"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
-	"github.com/bitmagnet-io/bitmagnet/internal/protobuf"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types/ref"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/protobuf"
 )
 
 type Compiler interface {
@@ -19,6 +19,11 @@ type Compiler interface {
 
 type Runner interface {
 	Run(ctx context.Context, workflow string, flags Flags, t model.Torrent) (classification.Result, error)
+	// EvalMatch runs ONLY the LLM matcher's decide path for a torrent already
+	// typed as movie/tv_show, returning the verdict without attaching. It uses
+	// the runner's real, fully-wired dependencies, so the matcher-eval command
+	// measures exactly what production would do.
+	EvalMatch(ctx context.Context, t model.Torrent, ct model.NullContentType) (MatchDecision, error)
 }
 
 type compiler struct {

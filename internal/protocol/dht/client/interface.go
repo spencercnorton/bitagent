@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/netip"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
 	"github.com/bits-and-blooms/bloom/v3"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
 type Client interface {
@@ -16,19 +16,28 @@ type Client interface {
 	SampleInfoHashes(ctx context.Context, addr netip.AddrPort, target protocol.ID) (SampleInfoHashesResult, error)
 }
 
+// Every *Result here carries the peer's BEP-43 `ro` flag as
+// `ReadOnly`. Callers that admit the replier to the routing table
+// MUST consult this — a read-only peer must not be added. Previously
+// the flag was silently dropped on the way up through serverAdapter,
+// which meant the crawler admitted every responder regardless.
+
 type PingResult struct {
-	ID protocol.ID
+	ID       protocol.ID
+	ReadOnly bool
 }
 
 type FindNodeResult struct {
-	ID    protocol.ID
-	Nodes []NodeInfo
+	ID       protocol.ID
+	Nodes    []NodeInfo
+	ReadOnly bool
 }
 
 type GetPeersResult struct {
-	ID     protocol.ID
-	Values []netip.AddrPort
-	Nodes  []NodeInfo
+	ID       protocol.ID
+	Values   []netip.AddrPort
+	Nodes    []NodeInfo
+	ReadOnly bool
 }
 
 type GetPeersScrapeResult struct {
@@ -37,6 +46,7 @@ type GetPeersScrapeResult struct {
 	Nodes     []NodeInfo
 	BfPeers   bloom.BloomFilter
 	BfSeeders bloom.BloomFilter
+	ReadOnly  bool
 }
 
 type SampleInfoHashesResult struct {
@@ -45,6 +55,7 @@ type SampleInfoHashesResult struct {
 	Nodes    []NodeInfo
 	Num      int
 	Interval int
+	ReadOnly bool
 }
 
 type NodeInfo struct {

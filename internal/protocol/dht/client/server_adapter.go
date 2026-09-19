@@ -5,9 +5,9 @@ import (
 	"errors"
 	"net/netip"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht"
-	"github.com/bitmagnet-io/bitmagnet/internal/protocol/dht/server"
+	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht"
+	"github.com/spencercnorton/bitagent/internal/protocol/dht/server"
 )
 
 type serverAdapter struct {
@@ -21,7 +21,7 @@ func (a serverAdapter) Ping(ctx context.Context, addr netip.AddrPort) (PingResul
 		return PingResult{}, err
 	}
 
-	return PingResult{ID: res.Msg.R.ID}, nil
+	return PingResult{ID: res.Msg.R.ID, ReadOnly: res.Msg.ReadOnly}, nil
 }
 
 func (a serverAdapter) FindNode(
@@ -35,8 +35,9 @@ func (a serverAdapter) FindNode(
 	}
 
 	return FindNodeResult{
-		ID:    res.Msg.R.ID,
-		Nodes: extractNodes(res.Msg),
+		ID:       res.Msg.R.ID,
+		Nodes:    extractNodes(res.Msg),
+		ReadOnly: res.Msg.ReadOnly,
 	}, nil
 }
 
@@ -51,9 +52,10 @@ func (a serverAdapter) GetPeers(
 	}
 
 	return GetPeersResult{
-		ID:     res.Msg.R.ID,
-		Values: extractValues(res.Msg),
-		Nodes:  extractNodes(res.Msg),
+		ID:       res.Msg.R.ID,
+		Values:   extractValues(res.Msg),
+		Nodes:    extractNodes(res.Msg),
+		ReadOnly: res.Msg.ReadOnly,
 	}, nil
 }
 
@@ -77,6 +79,7 @@ func (a serverAdapter) GetPeersScrape(
 		Nodes:     extractNodes(res.Msg),
 		BfPeers:   *res.Msg.R.BFpe.ToBloomFilter(),
 		BfSeeders: *res.Msg.R.BFsd.ToBloomFilter(),
+		ReadOnly:  res.Msg.ReadOnly,
 	}, nil
 }
 
@@ -115,6 +118,7 @@ func (a serverAdapter) SampleInfoHashes(
 		Nodes:    extractNodes(res.Msg),
 		Num:      totalNum,
 		Interval: interval,
+		ReadOnly: res.Msg.ReadOnly,
 	}, nil
 }
 

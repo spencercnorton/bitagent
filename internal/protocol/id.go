@@ -27,7 +27,13 @@ import (
 // - First two digits for the major version number
 // - Last two digits for the minor version number
 // - Patch version number is not encoded.
-const idClientPart = "-BM0001-"
+// Azureus-style client ID for BitAgent (née bitmagnet: -BM0001-).
+// Peers that correlate client IDs to software names will see this
+// and know they're talking to a BitAgent instance. Version `0001`
+// stays the same at the rebrand boundary — it's an in-wire marker,
+// not a semantic version; bump it only when we change the peer ID
+// scheme itself.
+const idClientPart = "-BA0001-"
 
 func RandomNodeID() (id ID) {
 	_, _ = crand.Read(id[:])
@@ -36,7 +42,7 @@ func RandomNodeID() (id ID) {
 
 // RandomNodeIDWithClientSuffix generates a node ID for the DHT client.
 // We use a random byte string with the client ID encoded at the end,
-// to allow identifying other bitmagnet instances in the wild.
+// to allow identifying other BitAgent instances in the wild.
 // A suffix is used instead of a prefix, which would be incompatible with DHT,
 // where ID prefixes are used for computing the distance metric).
 func RandomNodeIDWithClientSuffix() (id ID) {

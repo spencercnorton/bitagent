@@ -1,7 +1,9 @@
 package model
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/database/fts"
+	"strings"
+
+	"github.com/spencercnorton/bitagent/internal/database/fts"
 )
 
 type ContentRef struct {
@@ -101,6 +103,13 @@ func (c *Content) UpdateTsv() {
 	for _, a := range c.Attributes {
 		if a.Key == "id" {
 			tsv.AddText(a.Value, fts.TsvectorWeightD)
+		}
+
+		// Alternative / translated titles rank below the canonical titles
+		// (weight A) so an obscure AKA can never outrank the real title,
+		// but above genre noise — they are still titles.
+		if strings.HasPrefix(a.Key, AltTitleAttributePrefix) {
+			tsv.AddText(a.Value, fts.TsvectorWeightB)
 		}
 	}
 

@@ -1,0 +1,59 @@
+type EvidenceQuery {
+  list(input: EvidenceListInput!): EvidenceListResult!
+  indexerStats(input: EvidenceIndexerStatsInput!): EvidenceIndexerStatsResult!
+}
+
+input EvidenceIndexerStatsInput {
+  # Lookback window in days, clamped server-side to 1..365.
+  days: Int!
+}
+
+# Aggregate grab counts by indexer over the window. Counts only —
+# no release names or per-torrent detail leave this resolver.
+type EvidenceIndexerStatsResult {
+  totalGrabs: Int!
+  bitagentGrabs: Int!
+  # bitagentGrabs / totalGrabs as a 0..1 fraction; 0 when the window
+  # holds no grabs.
+  bitagentWinRate: Float!
+  indexers: [EvidenceIndexerCount!]!
+  # Daily buckets, oldest first. Weekly views are a client-side rollup.
+  days: [EvidenceIndexerStatsDay!]!
+}
+
+type EvidenceIndexerCount {
+  indexer: String!
+  grabs: Int!
+}
+
+type EvidenceIndexerStatsDay {
+  date: DateTime!
+  totalGrabs: Int!
+  bitagentGrabs: Int!
+}
+
+input EvidenceListInput {
+  limit: Int!
+  offset: Int!
+}
+
+type EvidenceListResult {
+  totalCount: Int!
+  items: [EvidenceItem!]!
+}
+
+type EvidenceItem {
+  id: ID!
+  source: String!
+  kind: String!
+  sourceInstance: String!
+  sourceObjectId: String!
+  downloadId: String!
+  infoHash: Hash20
+  title: String!
+  mediaType: String!
+  mediaId: String!
+  category: String!
+  observedAt: DateTime!
+  strength: Int!
+}

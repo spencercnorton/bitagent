@@ -1,8 +1,8 @@
 package cache
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
 	caches "github.com/mgdigital/gorm-cache/v2"
+	"github.com/spencercnorton/bitagent/internal/lazy"
 	"go.uber.org/fx"
 	"gorm.io/gorm"
 )

@@ -1,9 +1,9 @@
 package prometheus
 
 import (
-	"github.com/bitmagnet-io/bitmagnet/internal/lazy"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/spencercnorton/bitagent/internal/lazy"
 	"go.uber.org/fx"
 )
 

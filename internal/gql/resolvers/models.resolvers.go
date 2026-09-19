@@ -7,9 +7,9 @@ package resolvers
 import (
 	"context"
 
-	"github.com/bitmagnet-io/bitmagnet/internal/gql"
-	"github.com/bitmagnet-io/bitmagnet/internal/gql/gqlmodel"
-	"github.com/bitmagnet-io/bitmagnet/internal/model"
+	"github.com/spencercnorton/bitagent/internal/gql"
+	"github.com/spencercnorton/bitagent/internal/gql/gqlmodel"
+	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 // OriginalLanguage is the resolver for the originalLanguage field.
