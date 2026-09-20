@@ -7,7 +7,7 @@
 
 **A self-hosted BitTorrent DHT crawler and indexer built for the \*arr stack.** Sonarr, Radarr, Lidarr, Readarr and Prowlarr talk to it over Torznab; it watches what they actually grab and import, and feeds that ground truth back into classification, ranking and retention. Opt-in LLM stages, an operator console and a public library front-end sit on top of a hardened Go core.
 
-BitAgent started in April 2026 as a fork of [`bitmagnet-io/bitmagnet`](https://github.com/bitmagnet-io/bitmagnet), which has been effectively dormant since July 2025 (one dependency bump since). The DHT crawler, metainfo fetcher, CEL classifier and the Postgres/GraphQL foundation are upstream's work and are credited below. Almost everything else on this page is new: against the fork baseline the tree adds roughly 100K lines of non-test Go, 33 schema migrations and 16 new packages. The diff is public — [compare it](https://github.com/bitmagnet-io/bitmagnet/compare/main...spencercnorton:bitagent:main).
+BitAgent started in April 2026 as a fork of [`bitmagnet-io/bitmagnet`](https://github.com/bitmagnet-io/bitmagnet), which has been effectively dormant since July 2025 (one dependency bump since). The DHT crawler, metainfo fetcher, CEL classifier and the Postgres/GraphQL foundation are upstream's work and are credited below. Almost everything else on this page is new: against the fork baseline the tree adds roughly 100K lines of non-test Go, 33 schema migrations and 16 new packages. The diff is public — [compare the baseline with `main`](https://github.com/spencercnorton/bitagent/compare/2b9e8eadd34c037830d1fa7470b5ef2746cd6388...main).
 
 ## What BitAgent adds
 
