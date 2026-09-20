@@ -74,7 +74,7 @@ A: Configure your indexer as `http://bitagent.example.com:3333/torznab` in the *
 
 ### Q: How do I map evidence to custom formats?
 
-A: BitAgent returns structured `<info>` attributes containing `resolution`, `hdr`, `audio_channels`, and `encoder` fields that *arr can match via custom format IDs. Import the BitAgent evidence manifest from `bitagent.dev/static/evidence-format.json` into *arr and align IDs with your library standards.
+A: BitAgent returns structured `<info>` attributes containing `resolution`, `hdr`, `audio_channels`, and `encoder` fields that *arr can match via custom format IDs. Align the custom format IDs with your library standards; the field names are documented in the [Torznab API reference](reference/torznab-api.md).
 
 ### Q: How do I fix search timeouts in *arr?
 
@@ -214,7 +214,7 @@ A: Fork `spencercnorton/bitagent`, create a feature branch, run `task lint test`
 
 ### Q: What is the procedure for security disclosures?
 
-A: Email `security@bitagent.dev` or use GitHub's private vulnerability reporting. Do not open public issues for vulnerabilities. We respond within 72 hours and provide CVE attribution upon patch.
+A: Use GitHub's [private vulnerability reporting](https://github.com/spencercnorton/bitagent/security/advisories/new). Do not open public issues for vulnerabilities. We respond within 72 hours and provide CVE attribution upon patch.
 
 ### Q: How is governance structured?
 

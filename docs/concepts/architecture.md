@@ -10,6 +10,10 @@ BitAgent is a 2026 fork of upstream `bitmagnet-io/bitmagnet` (which went dormant
 
 ## Architecture diagram
 
+<img src="../assets/diagrams/pipeline.svg" alt="How BitAgent works: DHT crawl into a Postgres corpus, a classification ladder of your own evidence, CEL rules and an optional LLM stage, served over Torznab, GraphQL and Prometheus, with downloads that worked flowing back in as evidence." width="100%">
+
+The same flow with the dashboard and its sidecar drawn in:
+
 ```mermaid
 flowchart LR
   Clients["*arr suite (Sonarr/Radarr/Prowlarr/Lidarr)"]

@@ -1,0 +1,21 @@
+# go vet + the unit suite on every pull request and on main. Tests that need
+# Postgres skip when it is absent; the maintainer's pipeline runs the race and
+# integration suites. No secrets, read-only token, GitHub-owned actions pinned.
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -count=1 ./...

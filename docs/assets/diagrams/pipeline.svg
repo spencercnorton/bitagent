@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" width="1200" height="560" role="img" aria-labelledby="t d">
+  <title id="t">How BitAgent works</title>
+  <desc id="d">The DHT is crawled into a Postgres corpus; each torrent goes down a classification ladder — labels from your own *arr downloads and qBittorrent categories first, then a CEL rule set, then an optional LLM stage — and is served back to Prowlarr, Sonarr, Radarr and Lidarr over Torznab, to programs over GraphQL and Prometheus. Downloads flow back in as evidence.</desc>
+  <style>
+    :root { --ink:#1f2933; --muted:#52606d; --line:#7b8794; --box:#f5f7fa; --edge:#cbd2d9;
+            --dht:#2f6fed; --corpus:#7c3aed; --ladder:#0f9d58; --out:#d97706; --loop:#dc2626; }
+    @media (prefers-color-scheme: dark) {
+      :root { --ink:#e6edf3; --muted:#9da7b3; --line:#8b949e; --box:#161b22; --edge:#30363d;
+              --dht:#79a6ff; --corpus:#b893ff; --ladder:#4fd18b; --out:#f0b25a; --loop:#ff7b72; }
+    }
+    text { font: 15px/1.2 ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: var(--ink); }
+    .h { font-weight: 700; font-size: 16px; }
+    .s { font-size: 13px; fill: var(--muted); }
+    .box { fill: var(--box); stroke: var(--edge); stroke-width: 1.5; rx: 10; }
+    .flow { fill: none; stroke: var(--line); stroke-width: 2; marker-end: url(#a); }
+    .loop { fill: none; stroke: var(--loop); stroke-width: 2; stroke-dasharray: 7 5; marker-end: url(#al); }
+    .bar { stroke-width: 4; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--line)"/></marker>
+    <marker id="al" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--loop)"/></marker>
+  </defs>
+
+  <!-- DHT -->
+  <rect class="box" x="30" y="150" width="220" height="130"/>
+  <line class="bar" x1="30" y1="160" x2="30" y2="270" stroke="var(--dht)"/>
+  <text class="h" x="52" y="182">BitTorrent DHT</text>
+  <text class="s" x="52" y="206">crawler + metainfo fetch</text>
+  <text class="s" x="52" y="226">BEP 5 · 9 · 10 · 33</text>
+  <text class="s" x="52" y="246">BEP 42 · 43 · 51 compliant</text>
+  <text class="s" x="52" y="266">CSAM blocklist before any fetch</text>
+
+  <path class="flow" d="M250 215 H 318"/>
+
+  <!-- corpus -->
+  <rect class="box" x="320" y="150" width="200" height="130"/>
+  <line class="bar" x1="320" y1="160" x2="320" y2="270" stroke="var(--corpus)"/>
+  <text class="h" x="342" y="182">Corpus</text>
+  <text class="s" x="342" y="206">Postgres, GORM</text>
+  <text class="s" x="342" y="226">torrents · contents</text>
+  <text class="s" x="342" y="246">canonical labels</text>
+  <text class="s" x="342" y="266">opt-in retention purge</text>
+
+  <path class="flow" d="M520 215 H 588"/>
+
+  <!-- ladder -->
+  <rect class="box" x="590" y="60" width="310" height="310"/>
+  <line class="bar" x1="590" y1="70" x2="590" y2="360" stroke="var(--ladder)"/>
+  <text class="h" x="612" y="92">Classification ladder</text>
+  <text class="s" x="612" y="112">first rung that answers wins</text>
+
+  <rect class="box" x="612" y="128" width="266" height="62"/>
+  <text x="626" y="152">1 · Your own evidence</text>
+  <text class="s" x="626" y="174">*arr webhooks · qBittorrent categories</text>
+
+  <rect class="box" x="612" y="202" width="266" height="62"/>
+  <text x="626" y="226">2 · CEL rules</text>
+  <text class="s" x="626" y="248">deterministic, compiled, priority-ordered</text>
+
+  <rect class="box" x="612" y="276" width="266" height="82"/>
+  <text x="626" y="300">3 · LLM stage (optional)</text>
+  <text class="s" x="626" y="322">shadow-mode first, daily call budget,</text>
+  <text class="s" x="626" y="342">verdict cache, rule miner</text>
+
+  <path class="flow" d="M900 215 H 958"/>
+
+  <!-- outputs -->
+  <rect class="box" x="960" y="60" width="210" height="90"/>
+  <line class="bar" x1="960" y1="70" x2="960" y2="140" stroke="var(--out)"/>
+  <text class="h" x="982" y="92">Torznab</text>
+  <text class="s" x="982" y="114">/torznab — Prowlarr, Sonarr,</text>
+  <text class="s" x="982" y="134">Radarr, Lidarr</text>
+
+  <rect class="box" x="960" y="170" width="210" height="90"/>
+  <line class="bar" x1="960" y1="180" x2="960" y2="250" stroke="var(--out)"/>
+  <text class="h" x="982" y="202">GraphQL</text>
+  <text class="s" x="982" y="224">/graphql — your programs,</text>
+  <text class="s" x="982" y="244">the optional dashboard</text>
+
+  <rect class="box" x="960" y="280" width="210" height="90"/>
+  <line class="bar" x1="960" y1="290" x2="960" y2="360" stroke="var(--out)"/>
+  <text class="h" x="982" y="312">Prometheus</text>
+  <text class="s" x="982" y="334">/metrics — bitagent_* for</text>
+  <text class="s" x="982" y="354">every stage above</text>
+
+  <path class="flow" d="M958 215 Q 930 215 930 150 Q 930 105 958 105"/>
+  <path class="flow" d="M958 215 Q 930 215 930 280 Q 930 325 958 325"/>
+
+  <!-- evidence loop: a download that worked comes back as a label -->
+  <rect class="box" x="590" y="404" width="310" height="66"/>
+  <line class="bar" x1="590" y1="414" x2="590" y2="460" stroke="var(--loop)"/>
+  <text x="612" y="430">Evidence: POST /evidence/arr/&lt;instance&gt;</text>
+  <text class="s" x="612" y="452">Sonarr/Radarr download webhook → label → rung 1</text>
+  <path class="loop" d="M1170 105 H 1188 V 437 H 902"/>
+  <text class="s" x="985" y="426" fill="var(--loop)">downloads that worked</text>
+  <path class="loop" d="M745 404 V 372"/>
+
+  <!-- footer -->
+  <text class="s" x="30" y="512">Content filter (script, lossy-audio, NSFW, blocked types) and junk purge sit beside the ladder, both off by default and both two-step to enable.</text>
+  <text class="s" x="30" y="536">Headless by design: no web UI in the core image; the operator dashboard is a separate app that only reads GraphQL.</text>
+</svg>

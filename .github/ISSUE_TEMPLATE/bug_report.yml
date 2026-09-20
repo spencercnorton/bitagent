@@ -1,0 +1,45 @@
+name: Bug report
+description: BitAgent does not behave as documented.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please scrub anything private from logs and configuration before pasting: hostnames, tracker credentials, API keys, library contents.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. `docker compose -f examples/docker-compose.public.yml up -d`
+        2. …
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: ["DHT crawler", "Classifier / content filter", "Evidence pipeline (*arr, qBittorrent)", "Torznab", "GraphQL API", "Retention / junk purge", "Metrics", "Build / deployment", "Other"]
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: BitAgent release tag or commit, Postgres version, how it is deployed (compose / other).
+      placeholder: v2.4.2 · Postgres 16 · examples/docker-compose.public.yml
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log excerpt
+      description: Relevant lines from `docker compose logs bitagent`, scrubbed.
+      render: text

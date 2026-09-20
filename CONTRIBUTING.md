@@ -11,6 +11,17 @@ If you are about to file a security issue, **stop** and read
 [`SECURITY.md`](SECURITY.md) instead — public issues are not the right
 channel for those.
 
+## How changes land
+
+This GitHub repository is a **release mirror**: every commit on `main` is
+a tagged release built from the maintainer's development tree, and `main`
+only ever moves forward by a release. Pull requests are reviewed **here**
+but not merged here: an accepted change is applied to the development
+tree and ships in the next tagged release, after which the pull request is
+closed with a reference to that release and you keep the credit in the
+release notes. Please branch from `main` and do not rebase onto anything
+else.
+
 ## Local development
 
 ### Prerequisites
@@ -27,13 +38,13 @@ channel for those.
 ```bash
 git clone https://github.com/spencercnorton/bitagent.git
 cd bitagent
-cp examples/.env.example .env   # adjust DATABASE_URL etc.
-task dev:up                # postgres + a dev container
-task run                   # bitagent up against the dev DB
+cp examples/.env.example examples/.env.public   # set POSTGRES_PASSWORD
+docker compose -f examples/docker-compose.public.yml --env-file examples/.env.public up -d --build
 ```
 
-The dev compose file is `deploy/docker-compose.yml`. The Go binary's
-entrypoint is `main.go`; subcommands live under `internal/app/cmd/`.
+The public compose stack is described in [`examples/README.md`](examples/README.md).
+The Go binary's entrypoint is `main.go`; subcommands live under
+`internal/app/cmd/`.
 
 ### Running the test suite
 
@@ -41,8 +52,10 @@ entrypoint is `main.go`; subcommands live under `internal/app/cmd/`.
 go test ./... -race -count=1
 ```
 
-CI runs the same invocation plus `golangci-lint run` and the build/push
-chain. Both must pass on every MR.
+CI runs `go vet` and the test suite on every pull request; the
+maintainer's pipeline additionally runs `golangci-lint run`, the race
+suite against Postgres, and the image build. All of it must pass before a
+change ships.
 
 For touched code, run only the relevant package to iterate fast:
 
@@ -53,9 +66,9 @@ go test ./internal/torznab/... -race -count=1 -v
 ## Branch + commit conventions
 
 - Branch from `main`. Branch names: `feat/<topic>`, `fix/<topic>`,
-  `docs/<topic>`. AI-assisted sessions use `claude/<topic>-<YYYY-MM-DD>`.
-- One logical change per MR. If you find a drive-by fix, file it
-  separately or call it out in the description.
+  `docs/<topic>`.
+- One logical change per pull request. If you find a drive-by fix, file
+  it separately or call it out in the description.
 - Conventional Commits subject line (`feat(torznab): …`, `fix(dht): …`,
   `docs(security): …`). Body wraps at ~72 cols.
 - **DCO sign-off required.** Use `git commit --signoff` (or
@@ -63,9 +76,9 @@ go test ./internal/torznab/... -race -count=1 -v
   certify the [Developer Certificate of Origin](https://developercertificate.org).
 - Commit messages explain *why*, not *what* the diff already shows.
 
-## MR description template
+## Pull request description
 
-Every MR must include the following sections:
+The pull request template asks for these sections:
 
 ```markdown
 ## What changed
@@ -85,7 +98,7 @@ Reason: <why this bump level>
 <paste relevant `go test` output or attach evidence>
 ```
 
-MRs missing the template are sent back for revision.
+Pull requests missing them are sent back for revision.
 
 ## Code style
 
@@ -111,22 +124,20 @@ MRs missing the template are sent back for revision.
 
 ## Code review
 
-- The Jeeves AI reviewer (`jeeves/ai-review` commit status) runs on
-  every push. Address blocking findings by pushing a fix commit; do not
-  manually resolve discussions.
-- A maintainer reviews after Jeeves is green. Squash-merge is the
-  default; the squash commit message follows the same Conventional
-  Commits rules.
-- Force-push to `main` is **not** allowed. Force-push to your own
-  branch is fine after a rebase.
+- CI must be green. Address findings by pushing a fix commit to your
+  branch; force-pushing your own branch after a rebase is fine.
+- The maintainer reviews every pull request personally. Accepted changes
+  are applied to the development tree as described above; the release
+  commit that carries them credits the author.
 
 ## Communication
 
-- Self-hosted GitLab issues for tracked work.
-- For broader discussion (design, roadmap), open an issue with the
-  `discussion` label rather than a chat channel — we want decisions
-  written down. A Discord/Matrix room may open after sustained interest;
-  it does not exist yet.
+- GitHub issues for bugs and feature requests — use the forms, they ask
+  for what a maintainer needs first.
+- For broader discussion (design, roadmap), open a GitHub Discussion
+  rather than a chat channel — we want decisions written down. A
+  Discord/Matrix room may open after sustained interest; it does not
+  exist yet.
 
 ## Licensing
 

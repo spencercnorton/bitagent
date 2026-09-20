@@ -9,27 +9,28 @@ operator chooses. We treat security findings as first-class.
 
 | Version stream | Supported? |
 | --- | --- |
-| `main` (rolling) | yes |
-| Latest tagged release (`kleos-v1.18.0` at the time of writing) | yes — patch releases as needed |
+| Latest tagged release | yes — patch releases as needed |
 | Older tagged releases | best effort, no SLA |
 
-Patches land on `main` first, then back-port to the latest tag. If you are
-running an older tag, the upgrade path is the next tag — not a backport.
+Every commit on `main` is a tagged release. If you are running an older
+tag, the upgrade path is the next tag — not a backport.
 
 ## Reporting a vulnerability
 
-**Do not file a public issue, MR, or discussion thread for a security
-finding.** Email `security@bitagent.dev` with:
+**Do not file a public issue, pull request, or discussion thread for a
+security finding.** Use GitHub's private vulnerability reporting:
+**[Report a vulnerability](https://github.com/spencercnorton/bitagent/security/advisories/new)**,
+and include:
 
 - Affected commit SHA or release tag
 - Steps to reproduce (curl invocations, payloads, deployment shape)
 - Impact assessment (auth bypass, RCE, data exfiltration, DoS, etc.)
 - Optional: a suggested fix
 
-If the finding is sensitive enough to need encryption, request our PGP
-public key in the same email and we will send it back over the same
-channel. (Fingerprint placeholder: `<GPG-FINGERPRINT-PLACEHOLDER>` — to
-be published once the maintainer key is generated for the public flip.)
+The advisory thread is private to you and the maintainer; attach
+payloads there rather than in a public place. Please do not include real
+credentials, hostnames or library contents — a description and a minimal
+reproduction are enough.
 
 We aim to acknowledge within **48 hours** and triage within **7 days**.
 A coordinated disclosure window of **90 days** is standard; extensions
@@ -41,8 +42,7 @@ are negotiable for complex fixes or upstream coordination.
 
 - The BitAgent Go codebase (`internal/`, `main.go`, build/CI scaffolding)
 - The `bitagent-ui` companion repo (Python FastAPI dashboard)
-- The deployment scaffolding under `deploy/` and the example
-  `docker-compose.yml`
+- The example deployment under `examples/`
 - Documented integration paths (Sonarr/Radarr evidence webhook, torznab,
   GraphQL admin surface)
 
