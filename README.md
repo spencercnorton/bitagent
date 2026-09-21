@@ -6,7 +6,7 @@
   <a href="https://buy.stripe.com/8x26oH2U44f65TRe574wM04"><img alt="Donate" src="https://img.shields.io/badge/donate-Stripe-635bff.svg?logo=stripe&logoColor=white"></a>
 </p>
 
-**BitAgent is a self-hosted BitTorrent DHT crawler and indexer built for the \*arr stack.** It crawls the DHT into a Postgres corpus, classifies every torrent it finds, and serves the result to Sonarr, Radarr, Lidarr, Readarr and Prowlarr over Torznab. What makes it different is the loop: it watches what your \*arrs actually grab and import, and feeds that ground truth back into classification, ranking and retention. The core is a hardened Go service with no web UI; optional LLM stages and a separate operator dashboard sit on top.
+**BitAgent is a self-hosted BitTorrent DHT crawler and indexer built for the \*arr stack.** It crawls the DHT into a Postgres corpus, classifies every torrent it finds, and serves the result to Sonarr, Radarr, Lidarr, Readarr and Prowlarr over Torznab. What makes it different is the loop: it watches what your \*arrs actually grab and import, and feeds that ground truth back into classification, ranking and retention. The core is a hardened Go service; the operator dashboard and the LLM stages ship in the same image and stay off until you turn them on.
 
 <p align="center">
   <img src="docs/assets/diagrams/pipeline.svg" alt="How BitAgent works: the DHT is crawled into a Postgres corpus, each torrent goes down a classification ladder (your own evidence, CEL rules, an optional LLM stage) and is served over Torznab, GraphQL and Prometheus; downloads that worked flow back in as evidence." width="100%">
@@ -26,9 +26,10 @@ Two containers, no accounts, no API keys. From a clone of this repository:
 cp examples/.env.example examples/.env.public     # set POSTGRES_PASSWORD, nothing else is required
 docker compose -f examples/docker-compose.public.yml --env-file examples/.env.public up -d --build
 curl -s localhost:3333/metrics | grep dht_crawler_persisted   # climbing within a minute
+open http://localhost:8080                                     # the operator console
 ```
 
-Then add `http://<host>:3333/torznab/` as a Torznab indexer in Prowlarr (or in each \*arr directly — [per-app guides](docs/integrations/sonarr.md)), and point the \*arr's webhook at `/evidence/arr/<instance>` so the evidence loop closes ([`docs/evidence.md`](docs/evidence.md)). A GraphQL playground is served at `/graphql`, Prometheus metrics at `/metrics`. [`examples/README.md`](examples/README.md) covers the stack in detail; the recording above is that stack on a laptop, and the numbers are what a fresh instance sees in its first few minutes.
+Then add `http://<host>:3333/torznab/` as a Torznab indexer in Prowlarr (or in each \*arr directly — [per-app guides](docs/integrations/sonarr.md)), and point the \*arr's webhook at `/evidence/arr/<instance>` so the evidence loop closes ([`docs/evidence.md`](docs/evidence.md)). A GraphQL playground is served at `/graphql`, Prometheus metrics at `/metrics`, and the quickstart turns the dashboard on at `http://localhost:8080` (loopback only, no login). [`examples/README.md`](examples/README.md) covers the stack in detail; the recording above is that stack on a laptop, and the numbers are what a fresh instance sees in its first few minutes.
 
 ## What BitAgent adds
 
@@ -71,17 +72,28 @@ The guardrails are the same across stages. Every stage runs in shadow mode first
 | LLM stages | TMDB matcher, type fallback, content-filter tier, junk judge — all opt-in, budgeted, shadow-first |
 | Swarm data | BEP-15 tracker scrape, seeds history, revalidation via DHT |
 | Metrics | `bitagent_*` Prometheus families, `pgstats`, `dashstats`, Grafana dashboards in `observability/`, legacy `bitmagnet_*` dual-emit |
+| Dashboard | the `ui` worker: operator console + public library in the same image, off until `UI_ENABLED=true` — [`ui/README.md`](ui/README.md) |
 | CLI | `worker`, `classifier`, `reprocess`, `attribution`, `eval-freeze` / `eval-replay` / `matcher-eval` / `batch-llm-match`, backfills — see [`docs/reference/cli.md`](docs/reference/cli.md) |
 
 ## The dashboard
 
-The core image ships no web UI: upstream's Angular SPA was removed at fork time, every non-API path returns 404 and the container healthcheck hits `/metrics`. The dashboard is **`bitagent-ui`**, a separate FastAPI + vanilla-JS service that reads the core's GraphQL and Prometheus endpoints and never mutates the corpus. One app serves two hostnames: an **operator console** (indexer win rate, match rate, grab liveness, evidence per source, a quarantine you can spot-check, one scorecard per LLM stage with spend against a budget, a read-only view of the running configuration, a Torznab tester and a GraphQL explorer) and a **public library** for the people you share the indexer with (poster browse and search, and a personal Torznab key per user, stored hashed and rate-limited, so nobody sees the core's credential). Hostname selects the surface; only a verified role header grants operator authority. `bitagent-ui` ships separately from this repository; its surfaces are documented in [`docs/ui-guide.md`](docs/ui-guide.md), [`docs/system-tab.md`](docs/system-tab.md) and [`docs/reference/dashboard-api.md`](docs/reference/dashboard-api.md).
+The operator console and public library ship inside the BitAgent image as the worker `ui`: a small FastAPI app under [`ui/`](ui/) that the Go core starts, supervises and restarts with backoff, whose logs flow into the core's own log stream, and which reads the core over GraphQL and Prometheus on `127.0.0.1:3333` and never writes to the corpus. It is **off by default** (`UI_ENABLED=false`), so a crawler stays headless unless you ask; the quickstart stack turns it on and serves it at `http://localhost:8080`. On an existing deployment, set `UI_ENABLED=true`, publish port 8080, mount a volume at `/data` for its SQLite file and recreate the container — or run it on its own with `UI_ENABLED=true bitagent worker run --keys ui` (the core-side keys are in [`docs/configuration.md`](docs/configuration.md), the UI's own in [`ui/README.md`](ui/README.md)).
+
+<p align="center">
+  <img src="ui/docs/screenshots/dashboard.png" alt="The operator dashboard: indexer win rate against public trackers, match rate, grab liveness, crawl throughput, indexed torrents, category breakdown" width="100%">
+</p>
+<p align="center">
+  <img src="ui/docs/screenshots/library.png" alt="The public library: poster grid with search and facets" width="49%">
+  <img src="ui/docs/screenshots/ai.png" alt="The AI tab: projected monthly spend against the budget and one scorecard per LLM stage" width="49%">
+</p>
+
+One app serves two hostnames. The **operator console** shows indexer win rate, match rate, grab liveness, evidence per source, a quarantine you can spot-check, one scorecard per LLM stage with spend against a budget, a read-only view of the running configuration, a search tester and a GraphQL explorer. The **public library** is for the people you share the indexer with: poster browse and search, and a personal Torznab key per user, stored hashed and rate-limited, so nobody sees the core's credential. `OPERATOR_HOSTS` and `PUBLIC_LIBRARY_HOSTS` select the surface; only a verified role grants operator authority. The quickstart runs with `REQUIRE_AUTH=false`, fine on your own machine and never on anything someone else can reach — the real tiers (`DASHBOARD_API_KEY`, or a reverse proxy that performs the login and injects identity with a proof header) are documented in [`ui/README.md`](ui/README.md); the tabs are walked through in [`docs/ui-guide.md`](docs/ui-guide.md). The captures above come from the console running against [`ui/tools/demo_core.py`](ui/tools/demo_core.py), a stand-in core with synthetic data.
 
 ## Documentation
 
 - [Docs index](docs/index.md) · [Quickstart](docs/quickstart.md) · [Configuration](docs/configuration.md) · [FAQ](docs/faq.md) · [Troubleshooting](docs/troubleshooting.md)
 - Concepts: [Architecture](docs/concepts/architecture.md) · [DHT crawler](docs/concepts/dht-crawler.md) · [Classification](docs/concepts/classification.md) · [Wantbridge](docs/concepts/wantbridge.md) · [Glossary](docs/concepts/glossary.md)
-- Reference: [Torznab API](docs/reference/torznab-api.md) · [GraphQL API](docs/reference/graphql-api.md) · [Dashboard API](docs/reference/dashboard-api.md) · [Metrics](docs/reference/metrics.md) · [CLI](docs/reference/cli.md)
+- Reference: [Torznab API](docs/reference/torznab-api.md) · [GraphQL API](docs/reference/graphql-api.md) · [Dashboard guide](docs/ui-guide.md) · [Dashboard module](ui/README.md) · [Metrics](docs/reference/metrics.md) · [CLI](docs/reference/cli.md)
 - Operations: [Security](docs/operations/security.md) · [Monitoring](docs/operations/monitoring.md) · [Private tracker mode](docs/integrations/private-tracker-mode.md) · [CSAM defence](docs/csam-defense.md)
 - Project: [Improvements over upstream](docs/project/improvements.md) · [Legal disclaimer](docs/legal/disclaimer.md)
 
@@ -94,6 +106,11 @@ cd bitagent
 go test ./...                        # vanilla suite, CGO off
 CGO_ENABLED=1 go test -race ./...    # race-detector suite
 go build .                           # produces ./bitagent
+
+# the dashboard on its own (see ui/README.md for the env it reads):
+cd ui && python3.12 -m venv .venv && . .venv/bin/activate && pip install --require-hashes -r requirements.lock
+REQUIRE_AUTH=false python -m uvicorn app:app --no-proxy-headers --port 8080
+cd ..
 
 # run against a real Postgres:
 POSTGRES_HOST=localhost POSTGRES_PASSWORD=bitagent ./bitagent worker run --all

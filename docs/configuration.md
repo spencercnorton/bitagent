@@ -130,6 +130,20 @@ separate timeouts, rate limits, server errors, and invalid responses. Breaker
 cohorts remain queryable through `junkpurge_judgments.reason`; they are never
 included in `would_delete_total` or applied.
 
+## Dashboard (`ui` worker)
+
+The operator console and public library run inside the `bitagent` container as a child process the core starts, supervises and restarts. Off by default; the quickstart compose turns it on. The UI's own settings (`OPERATOR_HOSTS`, `REQUIRE_AUTH`, `DASHBOARD_API_KEY`, ...) are read by the child straight from the environment and documented in [`ui/README.md`](../ui/README.md).
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `UI_ENABLED` | `false` | Start the dashboard alongside the other workers (`worker run --all`). `worker run --keys ui` runs it alone, but still only when this is `true`. |
+| `UI_LISTEN_ADDRESS` | `0.0.0.0:8080` | `host:port` the dashboard listens on inside the container. |
+| `UI_DIR` | `/app/ui` | Directory holding the dashboard's `app.py`; only change it when running from a checkout. |
+| `UI_PYTHON` | `python3` | Interpreter used to launch uvicorn. |
+| `UI_RESTART_BACKOFF` | `5s` | Wait before restarting a crashed dashboard; doubles per consecutive crash, capped at 60s. |
+
+When co-located the child gets `BITAGENT_GRAPHQL_URL` / `BITAGENT_METRICS_URL` pointing at the core's own `HTTP_SERVER_LOCAL_ADDRESS` (`http://127.0.0.1:3333/...`) unless you set them yourself.
+
 ## Evidence-source ingestors (operator-internal)
 
 These variables configure pollers for downstream `*arr` apps and qBittorrent. They are present in the maintainer's operator-internal compose (a Portainer stack), **not** in `examples/docker-compose.public.yml`. Empty values disable the corresponding source without error — the worker logs `no X instances configured` and idles.

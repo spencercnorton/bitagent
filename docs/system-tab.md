@@ -1,6 +1,6 @@
 # System Tab — Diagnostics & Tools
 
-The System tab is the operator's debugging surface. Open it any time a metric on the Dashboard tab looks wrong, a Sonarr indexer test fails, or the dashboard responds with a non-200 you can't explain. Four sub-tabs: **Health Check**, **Torznab Test**, **GraphQL Explorer**, **Raw Metrics**.
+The System tab is the operator's debugging surface. Open it any time a metric on the Dashboard tab looks wrong, a Sonarr indexer test fails, or the dashboard responds with a non-200 you can't explain. Four sub-tabs: **Health Check**, **Search Test**, **GraphQL Explorer**, **Raw Metrics**.
 
 ## When to open the System tab
 
@@ -9,7 +9,7 @@ A short triage table:
 | Symptom | First sub-tab to open |
 | --- | --- |
 | Dashboard stat cards stuck at 0 / `--` | Health Check → Connectivity Test |
-| Sonarr/Radarr indexer test fails | Torznab Test |
+| Sonarr/Radarr indexer test fails | Search Test |
 | GraphQL queries hanging or 500ing | GraphQL Explorer |
 | Grafana dashboards show wrong/missing series | Raw Metrics |
 | `[Errno 111] Connection refused` in dashboard logs | Health Check (BitAgent Core card) |
@@ -18,25 +18,25 @@ A short triage table:
 
 Health Check is three side-by-side cards, each verifying one subsystem.
 
-**BitAgent Core card.** One row per upstream endpoint:
+**BitAgent Core card.** Live reachability derived from the last `/api/stats` poll:
 
-- **GraphQL API** — `OK` when `${BITAGENT_GRAPHQL_URL}` returns a valid GraphQL envelope on a probe query. Degraded states: `connection refused` (core not running), `timeout` (core overloaded), `404 not found` (URL wrong), `500 internal server error` (core has a bug — open the core's container logs).
-- **Torznab Endpoint** — `OK` when the configured Torznab base returns the caps XML on `?t=caps`. The same failure modes as above, plus `401` if `TORZNAB_API_KEY` is set on the core but the dashboard isn't sending it.
-- **Metrics** — `OK` when `${BITAGENT_METRICS_URL}` returns Prometheus exposition format with `bitagent_*` series. `OK` here is required for the Dashboard tab's stat cards to populate.
+- **GraphQL API** — `OK` if the core answered the GraphQL query behind `/api/stats`; `Unreachable` if it did not (core not running, URL wrong, core overloaded — open the core's container logs).
+- **Torznab Endpoint** — **not probed.** The feed may share a server with GraphQL, but GraphQL success does not prove the Torznab route or its API-key path is healthy; use **Search Test** for that.
+- **Metrics** — `OK` if the core's Prometheus `/metrics` endpoint returned data on the last poll. `OK` here is required for the Dashboard tab's stat cards to populate.
 
-**Dashboard card.**
+**Dashboard card.** The dashboard app itself:
 
-- **FastAPI** — `Running`. (Hard to fail; if you can see the page, FastAPI is running.)
-- **SQLite DB** — `Connected` when the `/data/bitagent-ui.db` file is readable + writable. Common failure: the volume mount has the wrong permissions; the dashboard's container user can't write.
-- **Auth Mode** — the active resolution method on the *current request*: `Open` (when `REQUIRE_AUTH=false`), `API Key`, `NPM`, `Forwarded-User`, or `SSO`.
+- **App Version** — the `ui/version.py` version this page was rendered by.
+- **SQLite DB** — `Connected` if a test `SELECT` on the sidecar database (`/data/bitagent-ui.db`) succeeded on the last poll. Common failure: the volume mount has the wrong permissions for the user the dashboard runs as.
+- **Auth Mode** — which of the auth tiers are active (SSO, forwarded-user headers, NPM headers, API key), or `Open` when none is enforced (`REQUIRE_AUTH=false`).
 
-**Network card.** Bound port readouts (read directly from the bound socket, not from config — so a config drift is visible here):
+**Network card.** The endpoints this dashboard is configured to talk to (from Settings, not from any socket):
 
-- **DHT Port** — `4413/udp`. The crawler's BEP-5 listen port.
-- **Torznab Port** — `3333/tcp`. The core's HTTP port (also serves GraphQL + metrics).
-- **Dashboard Port** — `8080/tcp` (or the value of `APP_PORT`). The FastAPI bind.
+- **Core GraphQL** — the configured `bitagent_graphql_url`.
+- **Core Metrics** — the configured `bitagent_metrics_url`.
+- **Dashboard** — this page's own origin.
 
-A `--` value on any row indicates the socket isn't bound — usually a startup failure; check container logs.
+The dashboard's listen port itself is `UI_LISTEN_ADDRESS` (see `configuration.md`); `--` on a row means the last poll has not completed yet.
 
 ## Connectivity Test
 
@@ -49,33 +49,19 @@ The **Run All Checks** button runs every Health Check probe synchronously and re
 
 Latency expectations: GraphQL and Metrics probes should be sub-50ms on localhost / private LAN, sub-200ms across continents. Over 1s on any check usually means a timeout retry rather than slow latency — check the core's load.
 
-## Torznab Test recipes
+## Search Test recipes
 
-Use the Torznab Test sub-tab when `*arr` says "0 results" or "test failed" but you suspect the issue is on the `*arr` side. The sub-tab takes a query string and submits it against the configured BitAgent core.
+Use the Search Test sub-tab when `*arr` says "0 results" or "test failed" and you want to know whether the corpus has the release at all. It takes a **Content Type** (All / Movie / TV Show / Music / eBook / Software) and a free-text **Query**, and runs them through the dashboard's own `/api/torrents` search — the same GraphQL-backed path the Library tab uses. It does **not** hit the `*arr`-facing `/torznab` endpoint, so a hit here with a miss in Sonarr points at the Torznab key, category mapping or the URL Sonarr was given; a miss here means the crawler has not seen the release yet.
 
-### TV episode search
+For the real Torznab surface, query the core directly:
 
-```text
-?t=tvsearch&q=breaking+bad+s05e16&apikey=<TORZNAB_API_KEY>
+```bash
+curl -s "http://localhost:3333/torznab?t=tvsearch&q=breaking+bad+s05e16&apikey=$TORZNAB_API_KEY"
+curl -s "http://localhost:3333/torznab?t=movie&imdbid=tt0944947&apikey=$TORZNAB_API_KEY"
+curl -s "http://localhost:3333/torznab?t=music&artist=Pink+Floyd&album=Animals&apikey=$TORZNAB_API_KEY"
 ```
 
-Should return XML with `<item>` blocks for any matching releases.
-
-### Movie by IMDb ID
-
-```text
-?t=movie&imdbid=tt0944947&apikey=<TORZNAB_API_KEY>
-```
-
-Note `imdbid` is the bare IMDb identifier *without* the `tt` prefix in some `*arr`s — Torznab itself accepts both. If you get zero results with `tt0944947` and the title-search returns hits, drop the `tt`.
-
-### Music by artist + album
-
-```text
-?t=music&artist=Pink+Floyd&album=Animals&apikey=<TORZNAB_API_KEY>
-```
-
-If you get zero results: `BitAgent`'s caps endpoint must declare `music-search` for Lidarr to call this category. Confirm the core has classified at least one music torrent — otherwise caps suppresses the music category and Lidarr never sends the query.
+Zero music results usually means the caps endpoint does not yet declare `music-search`: the core suppresses a category until it has classified at least one torrent in it, and Lidarr never sends the query until caps advertises it.
 
 ## GraphQL Explorer recipes
 

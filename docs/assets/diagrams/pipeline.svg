@@ -97,5 +97,5 @@
 
   <!-- footer -->
   <text class="s" x="30" y="512">Content filter (script, lossy-audio, NSFW, blocked types) and junk purge sit beside the ladder, both off by default and both two-step to enable.</text>
-  <text class="s" x="30" y="536">Headless by design: no web UI in the core image; the operator dashboard is a separate app that only reads GraphQL.</text>
+  <text class="s" x="30" y="536">One image: the core is headless; the operator dashboard is an optional worker in the same image.</text>
 </svg>

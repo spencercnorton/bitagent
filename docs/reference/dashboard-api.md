@@ -1,9 +1,15 @@
 # BitAgent Dashboard API Reference
 
-This document describes the REST API exposed by the BitAgent dashboard.
-All endpoints are served from the dashboard's base URL. Responses use
-JSON unless otherwise noted. Authenticated endpoints require a valid
-session; unauthenticated requests receive a `401 Unauthorized` response.
+This document describes the REST API exposed by the BitAgent dashboard —
+the `ui` worker inside the BitAgent image, on port 8080 by default. All
+endpoints are served from the dashboard's base URL under an operator host
+(`OPERATOR_HOSTS`); operator APIs are `404` on a public-library host.
+Responses use JSON unless otherwise noted. Authenticated endpoints resolve
+identity through the tiers in [ui/README.md](../../ui/README.md); requests
+that resolve to nobody receive `401 Unauthorized`. The pages below cover the
+endpoints the console's tabs use; `ui/app.py` is the complete list (it also
+serves `/api/quarantine`, `/api/ai/summary`, `/api/block-phrases`,
+`/api/account` and `/api/indexer-stats`, undocumented here).
 
 ---
 
@@ -20,14 +26,16 @@ Returns the current health status of the dashboard service.
 ```json
 {
   "status": "ok",
-  "ts": "2026-04-27T14:30:00.000Z"
+  "ts": 1789989357.809
 }
 ```
 
 | Field    | Type   | Description                            |
 |----------|--------|----------------------------------------|
 | `status` | string | Service status. `"ok"` when healthy.   |
-| `ts`     | string | ISO-8601 timestamp of the health check.|
+| `ts`     | number | Unix timestamp (seconds) of the check. |
+
+`/healthz` is the only host-agnostic path — it answers on any `Host`, so container healthchecks work — and it never calls the core.
 
 ---
 
@@ -216,111 +224,7 @@ Returns a paginated list of webhook evidence events.
 
 ## Wants
 
-Wants represent content the user is actively looking for. Each want
-tracks a desired title, content type, search query, priority, and notes.
-
-### GET /api/wants
-
-Returns the full list of wants.
-
-**Response:**
-
-```json
-[
-  {
-    "id": "w_001",
-    "title": "Some Movie 2026",
-    "content_type": "movie",
-    "query": "some movie 2026 2160p",
-    "priority": "high",
-    "status": "active",
-    "notes": "Prefer HDR release.",
-    "created_at": "2026-04-15T09:00:00.000Z",
-    "updated_at": "2026-04-15T09:00:00.000Z"
-  }
-]
-```
-
-### POST /api/wants
-
-Creates a new want.
-
-**Request Body:**
-
-```json
-{
-  "title": "Some Movie 2026",
-  "content_type": "movie",
-  "query": "some movie 2026 2160p",
-  "priority": "high",
-  "notes": "Prefer HDR release."
-}
-```
-
-| Field          | Type   | Required | Description                                   |
-|----------------|--------|----------|-----------------------------------------------|
-| `title`        | string | Yes      | Human-readable title of the desired content.  |
-| `content_type` | string | Yes      | Content category (e.g. `movie`, `tv`).        |
-| `query`        | string | Yes      | Search query used for automatic matching.     |
-| `priority`     | string | Yes      | Priority level: `low`, `medium`, or `high`.   |
-| `notes`        | string | No       | Free-text notes.                              |
-
-**Response:** `201 Created` with the newly created want object.
-
-### PUT /api/wants/{id}
-
-Updates an existing want. Only the supplied fields are modified;
-omitted fields retain their current values.
-
-**Path Parameters:**
-
-| Parameter | Type   | Description            |
-|-----------|--------|------------------------|
-| `id`      | string | The want's unique ID.  |
-
-**Request Body (all fields optional):**
-
-```json
-{
-  "title": "Updated Title",
-  "status": "fulfilled",
-  "priority": "low",
-  "notes": "Found a good release."
-}
-```
-
-| Field      | Type   | Description                                     |
-|------------|--------|-------------------------------------------------|
-| `title`    | string | Updated title.                                  |
-| `status`   | string | New status (e.g. `active`, `fulfilled`).        |
-| `priority` | string | New priority: `low`, `medium`, or `high`.       |
-| `notes`    | string | Updated notes.                                  |
-
-**Response:** `200 OK` with the updated want object.
-
-**Error Responses:**
-
-| Status | Description                              |
-|--------|------------------------------------------|
-| `404`  | No want found with the specified `id`.   |
-
-### DELETE /api/wants/{id}
-
-Deletes a want permanently.
-
-**Path Parameters:**
-
-| Parameter | Type   | Description            |
-|-----------|--------|------------------------|
-| `id`      | string | The want's unique ID.  |
-
-**Response:** `204 No Content` on success.
-
-**Error Responses:**
-
-| Status | Description                              |
-|--------|------------------------------------------|
-| `404`  | No want found with the specified `id`.   |
+`GET /api/wantbridge` (operator only) reports the core's wantbridge as observations: wanted titles per \*arr, exact matches found, fingerprint keys and poll health. Wants are not created from the dashboard — they come from the \*arrs the core polls (see [Wantbridge](../concepts/wantbridge.md)). There is no `/api/wants` CRUD.
 
 ---
 
@@ -549,34 +453,6 @@ supported by the core's GraphQL schema.
     ]
   },
   "errors": null
-}
-```
-
----
-
-## Seed
-
-### POST /api/seed-demo
-
-Populates the system with demo data for presentation or testing
-purposes. This endpoint is idempotent; calling it multiple times
-will not create duplicate records.
-
-**Authentication:** Required.
-
-**Request Body:** None.
-
-**Response:** `200 OK`
-
-```json
-{
-  "seeded": true,
-  "counts": {
-    "torrents": 50,
-    "evidence": 150,
-    "wants": 5,
-    "notifications": 10
-  }
 }
 ```
 

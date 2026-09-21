@@ -34,7 +34,12 @@ curl -s http://localhost:3333/metrics | head -5
 # bitagent_dht_crawler_persisted_total{entity="torrent"} 0
 # ...
 
-# 5. (optional) GraphQL playground
+# 5. the operator console (loopback only, no login in this stack)
+open http://localhost:8080
+# the public library is the same port under another hostname
+open http://library.localhost:8080
+
+# 6. (optional) GraphQL playground
 open http://localhost:3333/graphql
 ```
 
@@ -43,16 +48,21 @@ warm Docker. Subsequent boots reuse the cached image.
 
 ## What you get
 
-- **`bitagent`** — the DHT crawler + classifier + HTTP API on port 3333
+- **`bitagent`** — the DHT crawler + classifier + HTTP API on port 3333,
+  plus the operator dashboard on port 8080 (the `ui` worker inside the
+  same container, `UI_ENABLED=true` in this file; off by default in the
+  image)
 - **`postgres`** — Postgres 16 on its default 5432, named volume for data
 
 That's it. No VPN, no extra observability stack. Add those layers as
-you need them; this stack is the smallest viable BitAgent.
+you need them; this stack is the smallest viable BitAgent. To run the
+crawler headless, set `UI_ENABLED=false` in `.env.public`.
 
-## Endpoints (default, all on `:3333`)
+## Endpoints (default)
 
 | Path | What it does | Auth |
 |---|---|---|
+| `:8080/` | Operator console (`OPERATOR_HOSTS`) and public library (`PUBLIC_LIBRARY_HOSTS`), selected by `Host` | `REQUIRE_AUTH=false` here, so bound to 127.0.0.1 — see `ui/README.md` before exposing |
 | `/graphql` | Query/mutation API | none unless you front it |
 | `/torznab` | Newznab/Torznab feed for *arr clients | `TORZNAB_API_KEY` if set |
 | `/metrics` | Prometheus exposition | none |
@@ -95,12 +105,15 @@ automatically on boot.
 docker compose -f examples/docker-compose.public.yml down --volumes
 ```
 
-Drops both volumes — your indexed torrents are gone. Skip
+Drops all four volumes — your indexed torrents and the dashboard's
+SQLite file are gone. Skip
 `--volumes` to keep the database between deletes.
 
 ## See also
 
 - `README.md` — repo overview
+- `ui/README.md` — the dashboard module: every setting it reads and
+  the auth tiers for a real deployment
 - `SECURITY.md` — supported versions, vulnerability reporting,
   threat model, CSAM-defense layer
 - `docs/csam-defense.md` — pre-fetch double-hash blocklist details

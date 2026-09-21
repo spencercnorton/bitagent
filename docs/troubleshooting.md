@@ -10,10 +10,10 @@ The Category Breakdown panel on the Dashboard tab is stuck on the placeholder te
 
 ### Diagnosis
 
-From inside the dashboard container, probe the core's GraphQL endpoint:
+From inside the container (the dashboard is the `ui` worker in the same container as the core), probe the core's GraphQL endpoint:
 
 ```bash
-docker exec bitagent-ui curl -sf "${BITAGENT_GRAPHQL_URL}" \
+docker exec bitagent curl -sf "${BITAGENT_GRAPHQL_URL:-http://127.0.0.1:3333/graphql}" \
   -X POST -H "Content-Type: application/json" \
   -d '{"query":"{ __typename }"}'
 ```
@@ -140,7 +140,7 @@ Library grid shows text-based placeholders instead of TMDB poster art.
 ### Diagnosis
 
 ```bash
-docker compose logs bitagent-ui | grep -i tmdb | tail -10
+docker compose logs bitagent | grep -i tmdb | tail -10   # the ui worker's lines carry the logger name `ui`
 ```
 
 You'll see one of: `TMDB_API_KEY unset`, `tmdb 401 invalid api key`, `tmdb 429 rate limited`.
@@ -159,36 +159,29 @@ Dashboard logs show `sqlite3.OperationalError: database is locked`. UI may brief
 
 ### Diagnosis
 
-Concurrent SQLite writers from multiple uvicorn workers. Default Dockerfile runs a single uvicorn process — if you've overridden `--workers N` with `N > 1`, this is the cause.
+Two processes writing the same SQLite file. The core runs exactly one uvicorn process for the `ui` worker; the usual cause is a second copy — a standalone `uvicorn app:app` from a `ui/` checkout, or another container — pointed at the same `/data` volume.
 
 ### Fix
 
-Pin to a single worker:
-
-```yaml
-environment:
-  WEB_CONCURRENCY: "1"
-```
-
-Or remove `--workers` from your override. The dashboard is single-tenant and small enough that one worker handles peak load fine. If you really need horizontal scale, switch the SQLite to a Postgres backend (out-of-scope for v1.0.0).
+Stop the second writer. The dashboard is single-tenant and small enough that one process handles peak load fine; never add `--workers` to the spawned command.
 
 ## Container healthcheck flapping
 
 ### Symptom
 
-`docker ps` shows the bitagent-ui container alternating between `(healthy)` and `(unhealthy)`. The dashboard works in the browser.
+`docker ps` shows the bitagent container alternating between `(healthy)` and `(unhealthy)`. The dashboard works in the browser.
 
 ### Diagnosis
 
 ```bash
-docker inspect bitagent-ui --format '{{json .State.Health}}' | jq
+docker inspect bitagent --format '{{json .State.Health}}' | jq
 ```
 
-Look at the most recent `Output` field. Usually it's a `Connection refused` against `127.0.0.1:8080` because `APP_PORT` is set to something other than 8080.
+Look at the most recent `Output` field. The quickstart healthcheck probes the core's `/metrics` on `127.0.0.1:3333` and, when `UI_ENABLED=true`, the dashboard's `/healthz` on `127.0.0.1:8080`. A `Connection refused` on 8080 means the `ui` worker is not listening: either it is restarting (its log lines carry the logger name `ui` in `docker compose logs bitagent`; startup validation failures such as overlapping `OPERATOR_HOSTS` / `PUBLIC_LIBRARY_HOSTS` exit with code 3 and are retried with backoff) or the in-container port was changed without changing the probe.
 
 ### Fix
 
-The Dockerfile defaults `APP_PORT=8080` and the healthcheck probes `127.0.0.1:${APP_PORT}/healthz`. If you override `APP_PORT` (e.g. to `8081` for host networking), the healthcheck inherits it correctly. Common breakage: setting the port in compose `environment:` but a stale image with a different `EXPOSE`. Rebuild the image after changing the Dockerfile's `EXPOSE` line.
+Fix what the `ui` log lines say, or align the healthcheck with the port you configured. If you run the crawler headless, keep `UI_ENABLED` unset so the probe skips the dashboard.
 
 ## High Postgres CPU after first 24h
 

@@ -18,8 +18,8 @@ BitTorrent Enhancement Proposal 9: extension for peers to send `.torrent` metada
 ### BEP-51
 BitTorrent Enhancement Proposal 51: DHT infohash indexing — the `sample_infohashes` RPC. The fast-path mechanism BitAgent uses to discover new infohashes from neighbouring DHT nodes.
 
-### bitagent-ui
-The Python FastAPI dashboard. A separate repo / image from the Go core. Read-only relative to the core — never mutates indexing state directly; all writes go through the GraphQL API.
+### ui worker
+The Python FastAPI dashboard under `ui/`, run inside the BitAgent image as the core worker `ui` (off by default; `UI_ENABLED=true`). Read-only relative to the core — never mutates indexing state directly; all writes go through the GraphQL API.
 
 ## C
 
@@ -116,7 +116,7 @@ The [Newznab-derived API spec](https://torznab.github.io/spec-1.3-draft/) used b
 BitAgent's active-acquisition layer. Biases the crawler toward indexing infohashes that match active operator-defined or `*arr`-derived wants. See [concepts/wantbridge.md](wantbridge.md).
 
 ### wants
-Operator-defined search targets. Live in the `wants` table; managed via the dashboard's Wants tab. See [wants.md](../wants.md).
+The titles the polled `*arr` applications are still missing; observed in the dashboard's Wants tab. See [ui-guide.md → Wants tab](../ui-guide.md#wants-tab).
 
 ## See also
 

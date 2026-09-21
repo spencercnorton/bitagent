@@ -54,6 +54,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/telemetry/telemetryfx"
 	"github.com/spencercnorton/bitagent/internal/tmdb/tmdbfx"
 	"github.com/spencercnorton/bitagent/internal/torznab/torznabfx"
+	"github.com/spencercnorton/bitagent/internal/ui/uifx"
 	"github.com/spencercnorton/bitagent/internal/validation/validationfx"
 	"github.com/spencercnorton/bitagent/internal/verdicts/verdictsfx"
 	"github.com/spencercnorton/bitagent/internal/version/versionfx"
@@ -96,6 +97,7 @@ func New() fx.Option {
 		telemetryfx.New(),
 		tmdbfx.New(),
 		torznabfx.New(),
+		uifx.New(),
 		validationfx.New(),
 		versionfx.New(),
 		wantbridgefx.New(),

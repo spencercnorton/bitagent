@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bitagent-ui"
+description = "Operator console and public library for the BitAgent DHT crawler"
+readme = "README.md"
+requires-python = ">=3.12"
+dynamic = ["version", "dependencies"]
+
+[project.optional-dependencies]
+# httpx2 is the real PyPI package Starlette 1.3 requires for its TestClient
+# (`import httpx2 as httpx`; without it the import warns and `-W error` fails).
+# It is not a typo for httpx, which stays a runtime dependency.
+test = ["pytest==9.1.1", "httpx2==2.12.0"]
+
+# Flat-layout app: the modules live at the repo root (matches the Dockerfile
+# COPY list). Declared so `pip install -e .` works for local dev + CI.
+[tool.setuptools]
+py-modules = ["app", "auth", "config", "database", "deps", "graphql_client", "prom_metrics", "search_input", "telemetry", "tmdb", "torznab", "version"]
+
+[tool.setuptools.dynamic]
+version = { attr = "version.__version__" }
+# requirements.txt stays the single source of runtime deps (the Dockerfile
+# installs from it too).
+dependencies = { file = ["requirements.txt"] }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py312"
+# app.py is a large single-file app; line length is not enforced (E501).
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+# E402: a few modules deliberately import late (e.g. a section-local `re`/urlparse
+# alias next to the code that uses it). E501: long lines are allowed per-case.
+ignore = ["E402", "E501"]

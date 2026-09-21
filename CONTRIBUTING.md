@@ -30,8 +30,7 @@ else.
 - Postgres 14+ (16 recommended)
 - Docker + Docker Compose (for the local stack)
 - `task` (https://taskfile.dev) — used as the build entrypoint
-- For the dashboard companion: Python 3.12+ (separate repo:
-  `bitagent-ui`)
+- Python 3.12+ and Node 22+ for the web UI under `ui/`
 
 ### Getting the code running
 
@@ -63,6 +62,40 @@ For touched code, run only the relevant package to iterate fast:
 go test ./internal/torznab/... -race -count=1 -v
 ```
 
+### The web UI (`ui/`)
+
+The operator console and public library are a flat-layout FastAPI app
+(`app.py`, `auth.py`, `config.py`, … one Jinja2 template per surface, vanilla
+JavaScript under `static/js/`) with hash-locked dependencies, no build step
+and no framework — a deliberate cost ceiling, not an oversight. It ships in
+the same image as the core and runs as the `ui` worker.
+
+```bash
+cd ui
+python3.12 -m venv .venv && source .venv/bin/activate
+python -m pip install --require-hashes -r requirements.lock -r requirements-test.lock
+python -m pip install --no-deps --no-build-isolation -e .
+python -m pytest -W error        # the suite, warnings as errors — what CI runs
+ruff check .                     # lint (config in ui/pyproject.toml)
+node --check static/js/*.js && node --test tests/library_state.test.js
+```
+
+- The suite is hermetic: `ui/tests/conftest.py` redirects the SQLite file,
+  gives the test client a deterministic transport peer so proxy-CIDR checks
+  are testable, and restores mutable settings around every test.
+- Every endpoint that does I/O is `async def`; blocking calls go through the
+  loop's executor. Anything rendered into the DOM goes through the frontend
+  `escHtml`/`escAttr` helpers.
+- Auth-touching changes need an integration test through the ASGI stack —
+  `ui/tests/test_auth.py` and `ui/tests/test_operator_gate.py` are the
+  source of truth for that boundary.
+- Dependencies are hash-locked. After changing a direct pin, regenerate
+  `requirements.lock` / `requirements-test.lock` with
+  `pip-compile --generate-hashes` in a disposable Python 3.12 environment;
+  `ui/tests/test_dependency_contract.py` fails when they drift.
+- `ui/version.py` carries the release version; it must match the tag (one
+  series for core and UI), and CI checks that on tag pipelines.
+
 ## Branch + commit conventions
 
 - Branch from `main`. Branch names: `feat/<topic>`, `fix/<topic>`,
@@ -93,6 +126,7 @@ The pull request template asks for these sections:
 ## Version
 <current> → <new> (<patch | minor | major>)
 Reason: <why this bump level>
+(every bump also edits `ui/version.py`; CI checks it against this line)
 
 ## Test results
 <paste relevant `go test` output or attach evidence>
@@ -151,8 +185,13 @@ released under the same MIT terms.
 Some changes we will close without merging. Save yourself the round
 trip:
 
-- A bundled web UI inside this repo — the operator dashboard lives in
-  the separate `bitagent-ui` repo on purpose.
+- A UI endpoint that mutates the crawler's corpus (torrents, labels,
+  classifier state in Postgres) — the UI reads it; writes belong in the Go
+  core. The UI owns only its local SQLite (settings overrides, block
+  phrases, notifications, hashed user API keys) and a few outbound
+  convenience actions.
+- Anything that weakens the UI's auth or proxy boundary, the CSP or the
+  rate limits; a JavaScript framework migration.
 - New social features, account systems, multi-tenant auth.
 - Speculative LLM-everywhere refactors. The LLM stage is opt-in,
   shadow-first, and bounded.

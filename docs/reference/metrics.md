@@ -123,7 +123,8 @@ See [csam-defense.md](../csam-defense.md) for the full architecture.
 
 | Metric | Type | Labels | Purpose |
 |---|---|---|---|
-| `bitagent_liveness_observations_total` | counter | `class` | Liveness observations per class. `class` ∈ {`suspect`, `live`, `dead`}. |
+| `bitagent_liveness_observations_total` | counter | `class`, `outcome` | Liveness observations dispatched to the resolver. `class` ∈ {`alive`, `suspect`}; `outcome` ∈ {`upsert`, `error`, `skip_private`, `blacklisted`, `dht_recovered`}. |
+| `bitagent_liveness_revalidations_total` | counter | `outcome` | DHT revalidation attempts on dead infohashes. `outcome` ∈ {`alive_again`, `still_dead`, `error`}. |
 | `bitagent_liveness_blacklist_size` | gauge | — | Current size of the in-memory blacklist (seeders=0 for too long). |
 | `bitagent_liveness_torznab_excluded_total` | counter | — | Torznab response items filtered out for liveness. |
 

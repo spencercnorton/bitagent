@@ -19,7 +19,7 @@ git clone https://github.com/spencercnorton/bitagent.git
 cd bitagent
 ```
 
-`examples/docker-compose.public.yml` orchestrates two services: `bitagent` (the Go indexer, built from the checkout) and `postgres:16`. It serves GraphQL, Torznab, Prometheus metrics and the *arr evidence webhooks on port `3333`. There is no bundled reverse proxy or auth layer — put one in front before exposing the port beyond your LAN (see [examples/README.md](../examples/README.md)).
+`examples/docker-compose.public.yml` orchestrates two services: `bitagent` (the Go indexer plus its `ui` worker, built from the checkout) and `postgres:16`. Port `3333` serves GraphQL, Torznab, Prometheus metrics and the *arr evidence webhooks; port `8080`, bound to loopback, serves the operator dashboard with `REQUIRE_AUTH=false`. There is no bundled reverse proxy or auth layer — put one in front before exposing either port beyond your LAN (see [examples/README.md](../examples/README.md) and [ui/README.md](../ui/README.md) → Authentication).
 
 ## 3. Configure secrets
 
@@ -70,6 +70,8 @@ curl -s "http://localhost:3333/torznab?t=caps&apikey=$TORZNAB_API_KEY" | head -2
 
 Expected: a `bitagent_dht_crawler_persisted_total{entity="torrent"}` counter that climbs over the first minutes, and valid Torznab `<caps>` XML. A 401 on `/torznab` means the key does not match `examples/.env.public`. The GraphQL playground is at `http://localhost:3333/graphql`.
 
+Then open the operator console at `http://localhost:8080` — the Dashboard tab's **Crawl Throughput** card (the classifier's examine rate) and **Indexed Torrents** start moving within a few minutes, and **System → Health Check** confirms the core's GraphQL and metrics endpoints are reachable. The public library is the same port under `http://library.localhost:8080`. Both are loopback-only with no login in this stack; `UI_ENABLED=false` in `.env.public` turns the dashboard off entirely.
+
 ## 6. Add to Sonarr
 
 Open Sonarr → `Settings → Indexers → Add → Torznab → Custom`:
@@ -97,6 +99,7 @@ If nothing appears after 10 minutes, check:
 BitAgent is now operational and feeding your *arr stack. Continue with:
 
 - [Configuration](configuration.md) — every env var, every default
+- [Dashboard guide](ui-guide.md) — the console's tabs, and [ui/README.md](../ui/README.md) for its auth tiers before you expose it
 - [Troubleshooting](troubleshooting.md) — port mapping, DHT starvation, logs
 - [Classification](concepts/classification.md) — the classifier pipeline and CEL rules
 - [Monitoring](operations/monitoring.md) — Prometheus scrape job and the bundled Grafana dashboard

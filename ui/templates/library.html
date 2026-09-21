@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Library — {{ library_brand }}</title>
+  <meta name="theme-color" content="#0f1117">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Library">
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+  <!-- Apply the saved theme before first paint to avoid a light→dark flash. -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('bitagent-theme');
+        if (!t) t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version }}">
+  <link rel="stylesheet" href="/static/css/library.css?v={{ asset_version }}">
+  <link rel="icon" href="/static/img/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+</head>
+<body>
+<div class="lib-app">
+
+  <!-- ── Top bar ─────────────────────────────────────────────────────── -->
+  <header class="lib-topbar">
+    <a class="lib-brand" href="/" title="Library">
+      <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--color-accent)"/><path d="M8 11h6v2H8zm0 4h10v2H8zm0 4h8v2H8zm18-7l-5 5-3-3 1.4-1.4L21 14.2l3.6-3.6L26 12z" fill="#fff"/></svg>
+      <span class="lib-brand-text">Library</span>
+    </a>
+
+    <div class="lib-search">
+      <svg class="lib-search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input id="libSearch" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Search movies and TV shows…"
+             oninput="libSearchInput()" onkeydown="libSearchKeydown(event)"
+             aria-label="Search the library">
+      <div id="libSearchSpinner" class="lib-spinner" style="display:none" aria-hidden="true"></div>
+      <button id="libSearchClear" class="lib-search-clear" style="display:none"
+              onclick="clearLibSearch()" aria-label="Clear search" title="Clear">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+
+    <div class="lib-actions">
+      <div id="ge-switcher-mount"></div>
+      <button class="lib-iconbtn" id="themeToggle" onclick="toggleTheme()"
+              aria-label="Toggle light / dark theme" title="Toggle theme">
+        <svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/></svg>
+      </button>
+      <button class="lib-user lib-user-btn" onclick="openAccount()" title="{{ identity.display }}" aria-label="Open account settings">
+        <span class="lib-user-avatar">{{ (identity.display or '?')[0] | upper }}</span>
+        <span class="lib-user-name">{{ identity.display }}</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── Browse view ─────────────────────────────────────────────────── -->
+  <main class="lib-browse" id="libBrowse">
+    <h1 class="lib-sr-only">Library</h1>
+    {% if show_library_stats %}
+    <section class="lib-stats-banner" aria-labelledby="libStatsTitle">
+      <div class="lib-stats-copy">
+        <span class="lib-stats-eyebrow">Library snapshot</span>
+        <h2 id="libStatsTitle">Browse the collection</h2>
+        <p>Search and filter indexed movie and TV releases.</p>
+      </div>
+      <dl class="lib-stats-grid" id="libStatsGrid" aria-busy="true">
+        <div class="lib-stat-card">
+          <dt>Total torrents</dt>
+          <dd>
+            <span class="lib-stat-number is-loading" id="libStatTotal" aria-hidden="true">—</span>
+            <span class="lib-stat-hint" id="libStatTotalHint">Loading…</span>
+          </dd>
+        </div>
+        <div class="lib-stat-card">
+          <dt>Added this week</dt>
+          <dd>
+            <span class="lib-stat-number is-loading" id="libStatAdded" aria-hidden="true">—</span>
+            <span class="lib-stat-hint" id="libStatAddedHint">Last 7 days</span>
+          </dd>
+        </div>
+      </dl>
+      <p class="lib-stats-unavailable" id="libStatsUnavailable" hidden>
+        Library totals are temporarily unavailable.
+      </p>
+      <p class="lib-sr-only" id="libStatsStatus" role="status" aria-live="polite" aria-atomic="true">
+        Loading library statistics.
+      </p>
+    </section>
+    {% endif %}
+    <div class="lib-layout">
+      <aside class="lib-filterrail" id="libFilterRail" aria-label="Library filters">
+        <div class="lib-filterrail-head">
+          <div>
+            <span class="lib-drawer-eyebrow">Browse</span>
+            <h2>Filters</h2>
+          </div>
+          <button class="lib-iconbtn lib-clearfilters" onclick="clearFacets()" aria-label="Clear filters" title="Clear filters">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>
+          </button>
+        </div>
+
+        <section class="lib-filter-section">
+          <div class="lib-filter-title">Type</div>
+          <div class="lib-typepills" id="libTypeFilters"></div>
+        </section>
+
+        <section class="lib-filter-section">
+          <div class="lib-filter-title">Year</div>
+          <div class="lib-decade-chips" id="libDecadeChips"></div>
+          <div class="lib-year-range">
+            <label>
+              <span>From</span>
+              <input id="libYearMin" type="number" inputmode="numeric" min="1800" max="3000"
+                     placeholder="Any" onchange="setYearBound('min', this.value)"
+                     oninput="setYearBound('min', this.value, true)">
+            </label>
+            <label>
+              <span>To</span>
+              <input id="libYearMax" type="number" inputmode="numeric" min="1800" max="3000"
+                     placeholder="Any" onchange="setYearBound('max', this.value)"
+                     oninput="setYearBound('max', this.value, true)">
+            </label>
+          </div>
+        </section>
+
+        <section class="lib-filter-section">
+          <div class="lib-filter-title">Genre</div>
+          <div class="lib-filter-chips lib-filter-chips-scroll" id="libGenreChips"></div>
+        </section>
+
+        <section class="lib-filter-section">
+          <div class="lib-filter-title">Quality</div>
+          <div class="lib-filter-chips" id="libQualityChips"></div>
+        </section>
+
+        <section class="lib-filter-section">
+          <div class="lib-filter-title">Features</div>
+          <div class="lib-feature-toggles" id="libFeatureChips"></div>
+        </section>
+
+        <section class="lib-filter-section">
+          <div class="lib-filter-title">Source</div>
+          <div class="lib-filter-chips" id="libSourceChips"></div>
+        </section>
+
+        <section class="lib-filter-section">
+          <div class="lib-filter-title">Release</div>
+          <div class="lib-toggles rail">
+            <button class="lib-chip" id="fltHideForeign" onclick="toggleLibFilter('foreign')"
+                    aria-pressed="false" title="Hide releases with no English audio track">English only</button>
+            <button class="lib-chip" id="fltShowUnmatched" onclick="toggleLibFilter('unmatched')"
+                    aria-pressed="false" title="Also include titles not yet matched to TMDB (no poster)">Include unmatched</button>
+          </div>
+          <label class="lib-sort rail-sort">
+            <span>Sort</span>
+            <select id="libSort" onchange="setLibSort(this.value)">
+              <option value="seeders">Most seeded</option>
+              <option value="newest">Newest</option>
+              <option value="name">A-Z</option>
+              <option value="size">Largest</option>
+            </select>
+          </label>
+        </section>
+      </aside>
+
+      <div class="lib-contentpane">
+        <!-- Sectioned landing page (shown when there's no search + no type filter) -->
+        <div class="lib-home" id="libHome"></div>
+
+        <!-- Flat results grid (search results / single-type browse) -->
+        <div class="lib-results" id="libResults" style="display:none">
+          <div class="lib-resultnote" id="libResultNote" role="status" aria-live="polite" aria-atomic="true"></div>
+          <div class="lib-grid" id="libraryGrid"></div>
+          <div class="lib-pager" id="libPager">
+            <button class="lib-pagerbtn" id="libPrev" onclick="libPage(-1)" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+              Prev
+            </button>
+            <span class="lib-pagerinfo" id="libPaginationInfo"></span>
+            <button class="lib-pagerbtn" id="libNext" onclick="libPage(1)" disabled>
+              Next
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ── Detail view (title hero + releases) ─────────────────────────── -->
+  <section class="lib-detail" id="libDetail" role="dialog" aria-modal="true" aria-labelledby="libHeroTitle" aria-hidden="true">
+    <button class="lib-detail-back" onclick="closeDetail()" aria-label="Back to library">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      <span>Library</span>
+    </button>
+    <div class="lib-detail-scroll" id="libDetailScroll"></div>
+  </section>
+
+  <!-- ── Account settings ────────────────────────────────────────────── -->
+  <div class="lib-account-scrim" id="libAccountScrim" onclick="closeAccount()"></div>
+  <aside class="lib-account" id="libAccount" role="dialog" aria-modal="true" aria-hidden="true" aria-label="Account settings">
+    <div class="lib-account-head">
+      <div>
+        <span class="lib-drawer-eyebrow">Account</span>
+        <h2>Settings</h2>
+      </div>
+      <button class="lib-iconbtn" onclick="closeAccount()" aria-label="Close account settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="lib-account-body">
+      <section class="lib-account-section">
+        <div class="lib-account-avatar" id="acctAvatar">?</div>
+        <div class="lib-account-who">
+          <div class="lib-account-name" id="acctName">Loading…</div>
+          <div class="lib-account-sub" id="acctSub"></div>
+        </div>
+      </section>
+
+      <section class="lib-account-section stack">
+        <div class="lib-section-head compact">
+          <h3>API Key</h3>
+          <span class="count" id="acctKeyStatus">Loading</span>
+        </div>
+        <div class="lib-account-meta" id="acctKeyMeta" style="display:none"></div>
+        <label class="lib-account-field">
+          <span>Torznab URL</span>
+          <div class="lib-copyfield">
+            <input id="acctTorznabUrl" readonly value="">
+            <button class="lib-iconbtn" onclick="copyAccountField('acctTorznabUrl')" aria-label="Copy Torznab URL" title="Copy URL">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button>
+          </div>
+        </label>
+        <label class="lib-account-field" id="acctSecretWrap" style="display:none">
+          <span>New key</span>
+          <div class="lib-copyfield">
+            <input id="acctApiSecret" readonly value="">
+            <button class="lib-iconbtn" onclick="copyAccountField('acctApiSecret')" aria-label="Copy API key" title="Copy key">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button>
+          </div>
+        </label>
+        <div class="lib-account-actions">
+          <button class="lib-btn primary" id="acctGenerateBtn" onclick="generateAccountKey()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 11-7.8 7.8 5.5 5.5 0 017.8-7.8zm0 0L15 8m0 0l3 3m-3-3l3-3"/></svg>
+            <span id="acctGenerateLabel">Generate</span>
+          </button>
+          <button class="lib-btn" id="acctRevokeBtn" onclick="revokeAccountKey()" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+            <span>Revoke</span>
+          </button>
+        </div>
+        <p class="lib-account-hint">
+          Add this as a <strong>Torznab</strong> indexer in Prowlarr (or Sonarr/Radarr):
+          use the URL above with your API key. In Prowlarr, choose
+          <em>Add Indexer → Generic Torznab</em>, paste the URL, and set the key.
+        </p>
+      </section>
+    </div>
+  </aside>
+
+  <!-- ── Torrent detail drawer ───────────────────────────────────────── -->
+  <div class="lib-drawer-scrim" id="libDrawerScrim" onclick="closeTorrentDrawer()"></div>
+  <aside class="lib-drawer" id="libDrawer" role="dialog" aria-modal="true" aria-hidden="true" aria-label="Torrent details">
+    <div class="lib-drawer-head">
+      <span class="lib-drawer-eyebrow">Torrent</span>
+      <button class="lib-iconbtn" onclick="closeTorrentDrawer()" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="lib-drawer-body" id="libDrawerBody"></div>
+  </aside>
+
+  <div class="lib-toast" id="libToast" role="status" aria-live="polite"></div>
+</div>
+
+<script src="/static/js/torrent-kind.js?v={{ asset_version }}"></script>
+<script src="/static/js/norm-title.js?v={{ asset_version }}"></script>
+<script src="/static/js/library.js?v={{ asset_version }}"></script>
+{% if app_switcher_script_url %}
+<!-- Optional shared app switcher (APP_SWITCHER_SCRIPT_URL). data-me: this app
+     exposes the verified privilege as `priv` on /api/me, and that check must
+     be same-origin. -->
+<script src="{{ app_switcher_script_url }}"
+        data-current="bitagent" data-me="/api/me" defer></script>
+{% endif %}
+</body>
+</html>

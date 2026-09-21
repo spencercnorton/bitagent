@@ -27,12 +27,14 @@ MIT-licensed. No telemetry. No accounts. Just an indexer you own.
 - **Evidence pipeline** --
   Webhook feedback from Sonarr, Radarr, and the rest of the *arr
   family becomes ground-truth, so the classifier improves over time
-- **Multi-tier auth** --
-  API-key, reverse-proxy header, forwarded-user, and SSO --
-  pick the layer that fits your network
-- **Operator dashboard** --
-  FastAPI + vanilla JS with six tabs covering crawl health,
-  classifier metrics, evidence review, retention, and more
+- **Operator dashboard in the same image** --
+  A supervised `ui` worker, off by default: eight tabs covering crawl
+  health, the library, wants, evidence, the junk-purge quarantine, LLM
+  stage scorecards, configuration and diagnostics, plus a public
+  library for the people you share the indexer with
+- **Dashboard auth tiers** --
+  API key, or a reverse proxy that performs the login and injects
+  identity with a proof header -- pick the layer that fits your network
 - **TMDB poster integration** --
   Movie and series results include poster art pulled from TMDB
 - **Retention controls** --
@@ -53,17 +55,19 @@ MIT-licensed. No telemetry. No accounts. Just an indexer you own.
 - [Quickstart](quickstart.md) --
   Docker Compose, one API key, and a working indexer in 15 minutes
 - [Architecture](concepts/architecture.md) --
-  How the Go core, Python dashboard, classifier, and evidence
-  pipeline fit together
+  How the Go core, the `ui` worker, classifier, and evidence
+  pipeline fit together in one image
 - [FAQ](faq.md) --
   Common questions about crawling, legality, resource usage,
   and integration
 - [Integrations](integrations/sonarr.md) --
   Per-app setup guides for Sonarr, Radarr, Prowlarr, Lidarr,
   and Readarr
-- [Dashboard guide](project/improvements.md) --
-  Walkthrough of the operator dashboard and the improvements
-  over upstream bitmagnet
+- [Dashboard guide](ui-guide.md) --
+  Walkthrough of the operator console's tabs; the module's own
+  settings and auth tiers are in [ui/README.md](../ui/README.md)
+- [Improvements over upstream](project/improvements.md) --
+  What BitAgent adds to bitmagnet, with the design notes behind each
 
 ---
 

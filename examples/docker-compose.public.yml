@@ -6,10 +6,11 @@
 # no Sonarr/Radarr/qBittorrent integration). The maintainer's own stack
 # is tied to a Portainer + VPN + tailnet topology and is not shipped.
 #
-# Two-service stack: bitagent (built from this repo) + postgres-16.
-# Direct host networking on port 3333 (HTTP / GraphQL / metrics /
-# torznab / evidence webhook) — add a reverse proxy + auth gate before
-# exposing publicly.
+# Two-service stack: bitagent (the Go core plus the `ui` worker, built
+# from this repo) + postgres-16. Port 3333 is the API (HTTP / GraphQL /
+# metrics / torznab / evidence webhook); port 8080 is the dashboard, bound
+# to loopback because this file runs it without a login. Add a reverse
+# proxy + auth gate before exposing either publicly.
 #
 # Quickstart
 # ----------
@@ -17,7 +18,8 @@
 #   1. cp examples/.env.example examples/.env.public
 #   2. edit examples/.env.public — at minimum set POSTGRES_PASSWORD
 #   3. docker compose -f examples/docker-compose.public.yml --env-file examples/.env.public up -d --build
-#   4. open http://localhost:3333/graphql
+#   4. open http://localhost:8080 (operator console) — the GraphQL
+#      playground stays at http://localhost:3333/graphql
 #
 # Once GHCR / Docker Hub images are published (Phase 2 of public
 # release; tracked in the bitmagnet master plan), swap the `build:`
@@ -98,11 +100,33 @@ services:
       RETENTION_ENABLE_PURGE: "${RETENTION_ENABLE_PURGE:-false}"
 
       LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # --- Dashboard (the `ui` worker) ---
+      # The operator console + public library run inside this container,
+      # started and supervised by the core. The core's own default is
+      # false; this quickstart turns it on. The UI's settings are the
+      # un-prefixed names from ui/config.py (see ui/README.md); TMDB_API_KEY,
+      # TORZNAB_API_KEY and LOG_LEVEL above are read by both the core and
+      # the UI — set once.
+      UI_ENABLED: "${UI_ENABLED:-true}"
+      # Which Host header serves which surface. Disjoint, non-empty; any
+      # other Host is answered 421. library.localhost resolves to loopback
+      # in Chrome/Firefox with no setup; add an /etc/hosts line elsewhere.
+      OPERATOR_HOSTS: ${OPERATOR_HOSTS:-localhost,127.0.0.1}
+      PUBLIC_LIBRARY_HOSTS: ${PUBLIC_LIBRARY_HOSTS:-library.localhost}
+      # false = open dashboard, which is why port 8080 below binds to
+      # loopback only. Set DASHBOARD_API_KEY or a proxy tier before
+      # exposing it — ui/README.md → Authentication.
+      REQUIRE_AUTH: "${REQUIRE_AUTH:-false}"
+      DASHBOARD_API_KEY: ${DASHBOARD_API_KEY:-}
     ports:
       # Single host port serves GraphQL, /metrics, /torznab,
       # /evidence/arr/*, /import. Put a reverse proxy in front before
       # exposing to the open internet.
       - "${BITAGENT_HTTP_PORT:-3333}:3333"
+      # The dashboard. Loopback only because REQUIRE_AUTH is off above;
+      # the *arrs never need this port.
+      - "127.0.0.1:${BITAGENT_UI_PORT:-8080}:8080"
       # BitTorrent peer port. Outbound-dominant; if you can't open
       # this in your firewall, the crawler still works (the DHT and
       # peer-find paths are outbound), throughput is just lower.
@@ -111,13 +135,16 @@ services:
     volumes:
       - bitagent-config:/root/.config/bitmagnet
       - bitagent-data:/root/.local/share/bitmagnet
+      - bitagent-ui-data:/data          # the dashboard's SQLite file
     logging:
       driver: json-file
       options:
         max-size: "50m"
         max-file: "5"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3333/metrics || exit 1"]
+      # curl, not wget: the combined image is Debian-slim (python) and has
+      # no busybox. The UI probe only runs when the worker is on.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3333/metrics >/dev/null && { [ \"$$UI_ENABLED\" != true ] || curl -fsS http://127.0.0.1:8080/healthz >/dev/null; }"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -172,3 +199,4 @@ volumes:
   bitagent-config:
   bitagent-data:
   bitagent-postgres:
+  bitagent-ui-data:

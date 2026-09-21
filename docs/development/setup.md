@@ -100,20 +100,21 @@ golangci-lint run  # explicitly
 
 ## Dashboard development
 
-The dashboard is a separate Python FastAPI app in the `ui/` subdirectory. Open a second terminal:
+The dashboard is the Python FastAPI app in the `ui/` subdirectory, which the built binary runs as the worker `ui`. For a fast edit loop run it on its own with uvicorn's reloader. Open a second terminal:
 
 ```bash
 cd ui
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --require-hashes -r requirements.lock -r requirements-test.lock
 
+REQUIRE_AUTH=false \
 BITAGENT_GRAPHQL_URL=http://localhost:3333/graphql \
 BITAGENT_METRICS_URL=http://localhost:3333/metrics \
-  uvicorn app:app --reload
+  python -m uvicorn app:app --no-proxy-headers --reload --port 8080
 ```
 
-Dashboard is at `http://localhost:8000`. The `--reload` flag picks up Python changes; restart for env-var changes.
+Dashboard is at `http://localhost:8080` (the public library at `http://library.localhost:8080`). The `--reload` flag picks up Python changes; restart for env-var changes. To exercise the supervised path instead, `UI_ENABLED=true UI_DIR=./ui go run . worker run --keys ui` (with the venv active, so `python3` is the one holding the lock) spawns the same command from the core; see [`configuration.md`](../configuration.md) for the other `UI_*` keys.
 
 ## Working with the GraphQL schema
 

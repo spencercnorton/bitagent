@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.venv/
+venv/
+env/
+.env
+.env.*
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.DS_Store
+.idea/
+.vscode/
+*.sqlite3
+
+# Runtime SQLite DB (created on first boot)
+/data/

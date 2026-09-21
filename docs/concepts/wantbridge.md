@@ -8,13 +8,11 @@ It is not magic. Wantbridge cannot create torrents that don't exist on the DHT; 
 
 ## How wants enter the system
 
-Two paths feed the wants table.
+One path feeds the wantlist: the `*arr` applications the core polls (`internal/wantbridge`). There is no operator-defined want and no dashboard form — the [Wants tab](../ui-guide.md#wants-tab) only observes what the bridge is tracking.
 
-**Operator-defined.** You add a Want via the dashboard's [Wants tab](../wants.md) — "TV: Game of Thrones, S08, priority 100". This is the explicit knob; use it for high-value targets you want the crawler to chase aggressively.
+**Derived from `*arr` wantlists.** The core polls each configured Sonarr/Radarr/Lidarr for its missing/wanted list and records every entry as a want — show + season + episode, movie, or album. Operators get wantbridge behaviour without ever touching the Wants tab.
 
-**Auto-derived from `*arr` queries.** When Sonarr asks for `tvsearch?tvdbid=121361&season=8&ep=6`, the request is recorded as an implicit want for that show + season + episode. Same for Radarr movie searches and Lidarr album searches. Most operators get useful wantbridge behaviour without ever touching the Wants tab — the auto-derivation does the work.
-
-Wants have a TTL: auto-derived wants age out after a week of `*arr` not asking for them. Operator-defined wants persist until you remove them.
+A want lives as long as the `*arr` still reports the title as missing; each poll replaces the previous snapshot.
 
 ## How wantbridge biases the crawler
 
@@ -54,7 +52,7 @@ This is the focus area for the next minor release. The infrastructure works (wan
 
 The dashboard exposes wantbridge state in three places.
 
-- **Wants tab** — the operator-defined wants list. Add, edit, delete, prioritise. See [docs/wants.md](../wants.md).
+- **Wants tab** — observation of the wants the bridge is tracking. See [ui-guide.md → Wants tab](../ui-guide.md#wants-tab).
 - **Dashboard tab** — `wantbridge_yield_pct` is a top-line metric.
 - **Library tab** — filter to "wantbridge-matched" to see what the system pulled in because of an active want.
 
@@ -68,7 +66,7 @@ If you're an operator chasing a specific high-value title that BitAgent doesn't 
 
 ## See also
 
-- [Wants tab guide](../wants.md)
+- [Wants tab guide](../ui-guide.md#wants-tab)
 - [Concepts / Classification](classification.md) — how matched torrents flow through the priority lane
 - [Project / Improvements](../project/improvements.md)
 - [Troubleshooting](../troubleshooting.md)

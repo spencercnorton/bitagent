@@ -41,7 +41,7 @@ are negotiable for complex fixes or upstream coordination.
 **In scope:**
 
 - The BitAgent Go codebase (`internal/`, `main.go`, build/CI scaffolding)
-- The `bitagent-ui` companion repo (Python FastAPI dashboard)
+- The web UI under `ui/` (Python FastAPI operator console and public library, run by the core as the `ui` worker)
 - The example deployment under `examples/`
 - Documented integration paths (Sonarr/Radarr evidence webhook, torznab,
   GraphQL admin surface)
@@ -76,7 +76,7 @@ findings are credited in `SECURITY.md` once a fix has shipped.
 - The GraphQL admin surface is privileged. It currently expects to live
   behind a trusted reverse proxy or tailnet; the public-release plan
   layers an API-key gate on the dashboard side
-  (`bitagent-ui!9` — `DASHBOARD_API_KEY`).
+  (`DASHBOARD_API_KEY` and the proxy tiers in `ui/README.md` → Authentication).
 - Postgres is the system of record. A SQL-injection or unsafe migration
   would be high severity; only `gorm` parameterised paths are accepted
   in the data layer.

@@ -22,6 +22,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/seeds"
 	"github.com/spencercnorton/bitagent/internal/tmdb"
 	"github.com/spencercnorton/bitagent/internal/torznab"
+	"github.com/spencercnorton/bitagent/internal/ui"
 )
 
 // The config env resolver derives env keys from the Go STRUCT FIELD NAME via
@@ -432,6 +433,9 @@ func TestEnvBinding_ComposeKeys(t *testing.T) {
 		}},
 		{"tmdb", tmdb.NewDefaultConfig(), map[string]string{
 			"TMDB_API_KEY": "tmdb-key",
+		}},
+		{"ui", ui.NewDefaultConfig(), map[string]string{
+			"UI_ENABLED": "true",
 		}},
 		{"classifier_llm", llmstage.NewDefaultConfig(), map[string]string{
 			"CLASSIFIER_LLM_ENABLED":     "false",

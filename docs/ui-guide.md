@@ -2,118 +2,73 @@
 
 ## Overview
 
-The BitAgent v1.0.0 dashboard is the operator surface for the DHT crawler — live metrics, indexed catalogue, operator-defined search targets, *arr feedback, runtime configuration, and diagnostics, all in a single page. It is read-mostly: heavy mutations (settings overrides, want CRUD) are persisted to a local SQLite sidecar; everything else streams from the BitAgent core's GraphQL and Prometheus endpoints.
+The dashboard is the `ui` worker inside the BitAgent image: a small FastAPI app under [`ui/`](../ui/README.md) that the Go core starts when `UI_ENABLED=true` (or alone with `UI_ENABLED=true bitagent worker run --keys ui`), supervises, and restarts with backoff. It reads the core over GraphQL and Prometheus and never writes to the corpus; its own state — settings overrides, block phrases, notifications, hashed user API keys — lives in one SQLite file at `/data/bitagent-ui.db`.
 
-Use the dashboard for: confirming the crawler is healthy, telling BitAgent what content you actually want via Wants, verifying that *arr import webhooks are reaching the evidence pipeline, and troubleshooting connectivity from the System tab. The dashboard never bypasses the core — every change you make is via documented endpoints, so anything you can do here you can also script with `curl`.
+One app serves two hostnames. `OPERATOR_HOSTS` selects the **operator console** described on this page; `PUBLIC_LIBRARY_HOSTS` selects the **public library** (poster grid, search and facets, title pages, and an account panel where each user mints a personal Torznab key). Any other `Host` is answered `421`. The quickstart binds the console to `http://localhost:8080` and the library to `http://library.localhost:8080`.
+
+Use the console for: confirming the crawler is healthy, seeing what your \*arrs are still missing, verifying that \*arr webhooks reach the evidence pipeline, spot-checking the junk-purge quarantine, watching what each LLM stage costs, and troubleshooting connectivity from the System tab. Everything you can do here you can also script with `curl` against the same `/api/*` endpoints.
 
 ## Layout
 
-The interface is a left **sidebar** + top **header bar** + scrollable **main content area**. The sidebar is grouped:
+A left **sidebar**, a top **header bar**, and a scrollable **main content area**. The sidebar has three groups:
 
-- **OVERVIEW** — Dashboard, Library
-- **OPERATIONS** — Wants, Evidence
-- **SYSTEM** — Settings, System
+- **Overview** — Dashboard, Library
+- **Operations** — Wants, Evidence, Quarantine, AI
+- **System** — Settings, System
 
-The sidebar footer carries a **Dark mode** toggle (persists to `localStorage`) and a user avatar that renders the first letter of the authenticated `display` name with the auth method label below it. The wordmark in the top-left shows `BitAgent` and `v1.0.0`.
-
-The header strip carries three controls in the top-right:
-
-- **Notifications bell** — recent webhook delivery failures and crawler warnings.
-- **Seed Demo** — POST to `/api/seed-demo`, populates wants / evidence / notifications with deterministic sample rows. Idempotent. Useful for screenshots and demos.
-- **Refresh** — re-fetches the data for the visible tab only.
+The sidebar footer carries a **Dark mode** toggle (persisted to `localStorage` under `bitagent-theme`) and an avatar showing the first letter of the authenticated identity's display name. The header has a **Notifications** bell and a **Refresh** button that re-fetches the visible tab. Every stat card, section header and table column carries a small ⓘ with a plain-English explanation of what it measures and where the number comes from.
 
 ## Dashboard tab
 
-The Dashboard tab is the at-a-glance health view.
+The at-a-glance health view. The north-star card is **Indexer Win Rate (30d)** — the share of \*arr grabs won by BitAgent against every other indexer, from the core's grab evidence. Beside it: **Match Rate**, **Grab Liveness** (whether the swarm was alive when grabbed, not whether the grab succeeded), **Crawl Throughput**, **Indexed Torrents** and **Dead Blocked**. Every headline is source-aware: an unavailable value renders as *unknown*, never as zero, and a rate whose baseline is still filling says `measuring…`.
 
-The top row is six stat cards: **DHT PEERS**, **TOTAL TORRENTS**, **RELEASES**, **EVIDENCE EVENTS**, **THROUGHPUT** (torrents/min), **CACHE HIT RATIO**. Values update on each refresh tick (default 10s when not connected to SSE).
-
-Below the stat cards, two side-by-side panels:
-
-- **Category Breakdown** — share of the indexed catalogue by media type. Empty placeholder until the core has classified any content: *"Connect to BitAgent core to see category data."*
-- **System Health** — a green **Healthy** badge plus rows for **Uptime**, **Last Crawl** timestamp, **GraphQL API** status, **Metrics Endpoint** status, **Dashboard DB** (`SQLite OK` / `SQLite ERROR`).
-
-A **Recent Activity** table at the bottom (TIME / EVENT / CONTENT / TYPE / STATUS) shows the most recent 20 evidence events. *"View all"* in its top-right takes you to the Evidence tab. Empty state: *"No recent activity. Events appear when *arr webhooks fire."*
+Below the cards: a category breakdown of the corpus, uptime, and the recent-activity feed.
 
 ## Library tab
 
-The Library is the indexed catalogue — every torrent the BitAgent core has classified and admitted. Search is text-only (free text matches title / infohash / category tags). The **All types** dropdown filters by classifier verdict (`movie`, `tv_show`, `music`, `ebook`). The grid/list view toggle in the top-right switches between a poster gallery (TMDB-fetched art when `TMDB_API_KEY` is set, text fallback otherwise) and a denser table.
-
-Pagination is **Previous / Next** with a *"Showing X–Y of Z"* footer. The page size is fixed at 50.
-
-Empty state: *"No torrents found. Adjust your search or wait for the DHT crawler to index content."*
-
-When the BitAgent core has classified content, every row resolves to a [TorrentContent GraphQL object](reference/dashboard-api.md). Clicking a row reveals the infohash beneath the title — useful for `magnet:?xt=urn:btih:` links.
+A sortable, searchable table of recently crawled torrents with posters from TMDB when `TMDB_API_KEY` is set. A row opens a detail panel with the magnet URI to copy and, when `SONARR_*` / `RADARR_*` / `LIDARR_*` are configured, a send-to-\*arr button.
 
 ## Wants tab
 
-Wants are the operator's voice in the indexer. Each want is a persistent search target (title, query string, type, priority 0–100, status). The classifier biases admission toward content that matches an active want — the same way a `*arr` quality profile biases its grabs.
-
-Columns: **TITLE**, **QUERY**, **TYPE** (movie / tv_show / music / ebook badge), **PRIORITY** (integer 0-100, higher first), **STATUS** (`active` / `paused`), **CREATED**, **ACTIONS** (Pause/Resume + Delete).
-
-Use **Add Want** in the top-right to create one — the modal exposes Title, Query (free-text, case-insensitive), Type dropdown, Priority slider (default 50). Pause keeps the row + history; Delete is permanent. See [Wants Guide](wants.md) for the API and priority semantics.
+The crawler's *wantbridge*, reported as observations: **Wanted Titles** (what Sonarr/Radarr/Lidarr are still missing), **Exact Matches** found in the corpus, **Fingerprint Keys** and **Poll Cycles**. Wants are not created here — they come from the \*arrs the core polls; see [Wantbridge](concepts/wantbridge.md).
 
 ## Evidence tab
 
-The Evidence tab is the read-only view of incoming `*arr` webhook events. Each row is one POST from Sonarr / Radarr / Lidarr / Readarr to `/api/evidence`. Columns: **TIME**, **SOURCE** (`sonarr` / `radarr` / `lidarr` badge), **TORRENT**, **TYPE** (`grab` / `download` / `import`), **RESULT** (`success` / `failed` / `duplicate`).
+Per-source **Source Health** first — received and persisted counters per webhook source — then the raw evidence stream. See [Evidence Pipeline](evidence.md) for the \*arr webhook setup.
 
-Empty state: *"No evidence events. Events appear when *arr sends download webhooks."*
+## Quarantine tab
 
-This is the closed-loop feedback signal that distinguishes BitAgent from naïve Torznab providers — every successful import is a ground-truth label that flows back into classifier weights. See [Evidence Pipeline](evidence.md) for the full diagram and the `*arr` webhook configuration steps.
+The junk-purge hold: every row shows name, confidence, when it was quarantined and days left. **Restore** re-inserts the row and re-queues a rematch, **Delete now** drops it, and **Spot-check 25** pulls a random offset — the honest way to sample a queue nobody will read through. Bulk restore works on the selected rows.
+
+## AI tab
+
+One scorecard per LLM stage the crawler runs (TMDB matcher, content filter, junk judge) on shared axes: model, throughput, latency, a quality *proxy* (there is no ground truth, so nothing is called accuracy) and spend. The header row shows **Projected / month** against `LLM_MONTHLY_BUDGET_USD`, **Tokens**, **Spent This Boot** and **Models Billing**. Money is never guessed: an unpriced model makes the total a floor (`≥ $x`), and an idle stage is *still measuring*, not free.
 
 ## Settings tab
 
-Settings is the runtime configuration surface. Six sub-tabs:
-
-- **Configuration** — the mutable runtime knobs (image above). One card per field: `torznab_api_key`, `bitagent_metrics_url`, `sso_cookie_name`, `tmdb_api_key`, `bitagent_graphql_url`, `trust_npm_headers`, `trust_forwarded_user`, `log_level`. Each card shows the current value, the `Default` line, a freeform input, and a Save button. Saved overrides apply on the next request — no restart.
-- **Auth & Security** — toggle `REQUIRE_AUTH`, set/rotate `DASHBOARD_API_KEY`, configure SSO cookie name + lifetime.
-- **Integrations** — Torznab base URL, TMDB API key, optional metric scrape targets.
-- **Retention** — DHT routing-table TTL, evidence log retention, poster cache eviction interval.
-- **Classifier** — heuristic weights, regex normalizers, NSFW filter strictness.
-- **Audit Log** — append-only history of override changes, auth events, and health-state transitions. Read-only.
-
-All cards on the Configuration sub-tab are backed by the `MUTABLE_FIELDS` allowlist in `config.py` — fields outside the allowlist (e.g. `host`, `port`, `db_path`) are not exposed here on purpose; they require a container restart to change.
+Read-only: the configuration the running container sees, split into **Configuration**, **Auth & Security**, **Integrations**, **Retention**, **Classifier**, **Liveness**, **Filters**, **Block Lists** and **Audit Log**. Secrets render as `🔒 •••••• <n> chars`. The only values that can be overridden from here are the integration credentials in `MUTABLE_FIELDS` (`ui/config.py`: TMDB, Torznab and the \*arr URLs and keys); they are never echoed back and their audit rows store `[redacted]`. Host lists, proxy trust, proxy CIDRs, the proof secret, operator roles and the upstream URLs are startup-only.
 
 ## System tab
 
-System is the diagnostics surface — open it any time the Dashboard tab looks wrong, or a Sonarr indexer test fails. Four sub-tabs:
+The diagnostics surface. Four sub-tabs:
 
-- **Health Check** — three cards (BitAgent Core / Dashboard / Network) each with one-line status rows. The **Connectivity Test** panel underneath has a **Run All Checks** button that probes every endpoint synchronously and reports per-check latency.
-- **Torznab Test** — submit a manual Torznab query (e.g. `?t=tvsearch&q=...&apikey=...`) against the configured BitAgent core. Useful when *arr says "0 results" but you suspect a filter / key issue.
-- **GraphQL Explorer** — minimalist text-area + "Run" button. Not GraphiQL — no autocomplete, no schema browser. Use it to confirm the schema after a core upgrade.
-- **Raw Metrics** — streams `/metrics` (Prometheus exposition format). Verify the metric names match what your Grafana dashboards expect.
+- **Health Check** — per-endpoint reachability cards and a **Connectivity Test** panel whose **Run All Checks** button fetches `/healthz`, `/api/me`, `/api/stats` and `/api/metrics` and reports OK/FAIL, status and round-trip time.
+- **Search Test** — runs a search against the core's indexed catalogue through the dashboard's own `/api/torrents` query (the path the Library uses); it does not hit the \*arr-facing Torznab endpoint.
+- **GraphQL Explorer** — a text area and a Run button, no autocomplete. Use it to confirm the schema after a core upgrade.
+- **Raw Metrics** — the core's `/metrics` in Prometheus exposition format.
 
-Network card values are read directly from the bound sockets, not from config — so a mismatch between configured port and actual bound port is visible here.
-
-See [System Tab — Diagnostics & Tools](system-tab.md) for sub-tab walkthroughs and ready-to-paste Torznab + GraphQL recipes.
+See [System Tab — Diagnostics & Tools](system-tab.md) for recipes.
 
 ## Authentication
 
-The dashboard supports four auth tiers, all gated by `REQUIRE_AUTH=true`. With `REQUIRE_AUTH=false` (default), every endpoint is open — fine for a private-network-only deployment, **never safe on the public internet**.
+The app validates no passwords and no session cookies. With `REQUIRE_AUTH=false` — the quickstart's setting — every endpoint is open, which is why the quickstart binds port 8080 to loopback; **never** expose it that way. With `REQUIRE_AUTH=true` (the default) identity is resolved through three tiers, in order:
 
-When enforced, identity is resolved in this order:
+1. **`DASHBOARD_API_KEY`** — `?apikey=`, `X-Api-Key` or `Authorization: Bearer`. A wrong key is `401` with no fall-through.
+2. **`X-Auth-User-Id`** from a reverse proxy, when `TRUST_NPM_HEADERS=true`.
+3. **`X-Forwarded-User`** from a reverse proxy, when `TRUST_FORWARDED_USER=true`.
 
-1. **HMAC API key** — passed as `?apikey=`, `Authorization: Bearer <key>`, or `X-API-Key: <key>`. Compared with `hmac.compare_digest` against `DASHBOARD_API_KEY`.
-2. **NPM `x-auth-user` header** — when `TRUST_NPM_HEADERS=true`, the dashboard trusts the username injected by Nginx Proxy Manager's auth subrequest.
-3. **`X-Forwarded-User` reverse-proxy header** — when `TRUST_FORWARDED_USER=true`, the dashboard trusts the username injected by Authelia, oauth2-proxy, Cloudflare Access, or any standard reverse proxy.
-4. **SSO cookie** — when an HS256-signed JWT is present in the cookie named by `SSO_COOKIE_NAME`, the dashboard validates it and uses the `sub` claim as the identity.
-
-Failures fall through to the next tier; if none match, the request gets `401 Unauthorized`. The current resolution method is shown on the **System → Health Check** card and on the sidebar avatar's secondary line.
+The proxy tiers are honoured only when the transport peer is inside `TRUSTED_PROXY_CIDRS` **and** the request carries `X-BitAgent-Proxy-Proof` equal to `PROXY_AUTH_SECRET`; enabling a tier without both fails startup. Hostname selects a surface, it never grants authority: only a verified `X-Auth-Priv` value in `OPERATOR_ROLES` reaches the operator console, and operator APIs are `404` on the public host. The full table of settings is in [`ui/README.md`](../ui/README.md).
 
 ## Theming and accessibility
 
-The dashboard ships dark by default. The **Dark mode** toggle in the sidebar footer flips the `data-theme` attribute on `<html>` and persists the preference to `localStorage` under `bitagent-ui:theme`. The toggle takes effect instantly — no page reload.
-
-`prefers-reduced-motion` is honoured: pulse animations on the stream-pill and sidebar transitions are suppressed when the OS reports motion sensitivity.
-
-Keyboard navigation is partial in v1.0.0: `Tab` / `Shift+Tab` cycles primary controls and the Add Want / Save buttons are reachable, but full ←/→ tab navigation across the sidebar is on the v1.1.0 roadmap.
-
-## Seeding demo data
-
-Click **Seed Demo** in the header to populate wants, evidence, and notifications with deterministic sample rows. The endpoint (`POST /api/seed-demo`) is idempotent — it dedupes on `(title, query)` for wants and on `(infohash, type)` for evidence, so repeated clicks don't duplicate. Use this when:
-
-- Generating screenshots for documentation (this exact UI was screenshotted with seeded data).
-- Smoke-testing webhook parsing without a live `*arr`.
-- Demoing the dashboard before the DHT has finished bootstrapping.
-
-The seeded rows persist in `bitagent_ui_data` (the named volume mounted at `/data`) until you delete them by hand or destroy the volume.
+The **Dark mode** toggle flips the theme instantly and persists it in `localStorage`; the browser's `theme-color` follows. `prefers-reduced-motion` is honoured.

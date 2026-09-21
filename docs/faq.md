@@ -48,7 +48,7 @@ A: Use `network_mode: host` or map UDP 4413 explicitly to expose your DHT node t
 
 ### Q: What authentication modes are supported?
 
-A: BitAgent supports `none`, `apikey`, `forms`, and `external` (reverse-proxy / SSO). Configure via `AUTH_METHOD=apikey` in your environment. The `apikey` mode validates `Authorization: Bearer <key>` or `?apikey=<key>` against the `DASHBOARD_API_KEY`. The `external` mode trusts headers from an upstream proxy that already authenticated the user.
+A: Two surfaces, two answers. The core's HTTP API has no login of its own: `/torznab` is gated by `TORZNAB_API_KEY` and `/evidence/arr/*` by an evidence token; everything else trusts whoever connects, so put a reverse proxy in front before exposing it. The dashboard (the `ui` worker) resolves identity through three tiers: `DASHBOARD_API_KEY` (`?apikey=`, `X-Api-Key` or `Authorization: Bearer`), then `X-Auth-User-Id` or `X-Forwarded-User` injected by a reverse proxy that performed the login — the proxy tiers require both a trusted peer CIDR and a proof header. `REQUIRE_AUTH=false` opens everything and is for development only. See [ui/README.md](../ui/README.md) → Authentication.
 
 ### Q: Why is apikey the default auth method?
 
@@ -60,7 +60,7 @@ A: The model assumes untrusted *arr clients on internal networks and focuses on 
 
 ### Q: How do I rotate API keys safely?
 
-A: Hit `POST /api/settings/regenerate-api-key` from the dashboard while authenticated. The new key takes effect on the next request; the old key is immediately invalidated. Update your *arr indexer configuration with the new key. For zero-downtime rotation, use the dual-key window with `BITAGENT_API_KEY_NEW` env var.
+A: `TORZNAB_API_KEY` and `DASHBOARD_API_KEY` are environment variables: change the value, recreate the container, then update the *arr indexer configuration (or your scripts) with the new key. There is no dual-key window; do it in a maintenance moment. Users of the public library rotate their own personal Torznab keys from the account panel without touching the core's key.
 
 ### Q: What reverse proxy guidance applies?
 
@@ -192,7 +192,7 @@ A: Extend `$BITAGENT_DATA_DIR/schema/tags.json` with `{"tag":"4K_DOLBY","weight"
 
 ### Q: SQLite vs Postgres for evidence storage?
 
-A: Postgres handles concurrent writes and large indexes efficiently for >50k entries. SQLite is acceptable for <20k caches but lacks connection pooling. Use SQLite only for single-writer dev or the `bitagent-ui` settings/poster cache.
+A: Postgres handles concurrent writes and large indexes efficiently for >50k entries. SQLite is acceptable for <20k caches but lacks connection pooling. Evidence always lives in Postgres; the only SQLite in BitAgent is the dashboard's own file at `/data/bitagent-ui.db` (settings overrides, audit log, hashed user keys).
 
 ### Q: How do I override the Torznab response template?
 

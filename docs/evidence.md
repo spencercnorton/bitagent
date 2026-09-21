@@ -76,6 +76,6 @@ The longer the evidence log gets, the stronger `E(N)` is. After ~100 rows the cl
 
 ## Privacy
 
-Every evidence row stays local to the dashboard's SQLite sidecar (`bitagent_ui_data` volume → `/data/bitagent-ui.db`). Nothing is sent upstream — not to BitAgent.org, not to TMDB, not to any third party. The classifier weights derived from evidence also stay local.
+Every evidence row stays local, in the core's Postgres (`label_evidence`); the dashboard only reads it. Nothing is sent upstream — not to BitAgent.org, not to TMDB, not to any third party. The classifier weights derived from evidence also stay local.
 
-To purge evidence (e.g. before sharing a snapshot, or to reset classifier bias), open **Settings → Audit Log** and use the bulk-delete control. Evidence is preserved across container recreates as long as `bitagent_ui_data` survives — destroy the volume only if you mean to fully reset the operator profile.
+To purge evidence (e.g. before sharing a snapshot, or to reset classifier bias), delete from the `label_evidence` table in the core's Postgres (the `bitagent-postgres` volume in the quickstart) — or drop that volume to reset everything the core knows. The dashboard's SQLite holds no evidence, so recreating the UI volume neither purges nor preserves it.

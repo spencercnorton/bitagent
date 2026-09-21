@@ -1,0 +1,1449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>BitAgent Console</title>
+  <!-- theme-color is kept in sync with the active theme by syncThemeColor() -->
+  <meta name="theme-color" content="#ffffff">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="BitAgent">
+  <!-- use-credentials: the SSO gate sits in front of every path, and manifest
+       fetches are credential-less by default — without this the fetch bounces
+       to the login redirect and the browser never offers install. -->
+  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+  <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version }}">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}">
+  <link rel="icon" href="/static/img/favicon.ico" sizes="any">
+  <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+</head>
+<body>
+<div class="app-layout">
+  <!-- ── Sidebar ──────────────────────────────────────────────────── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <svg viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="var(--color-accent)"/><path d="M8 11h6v2H8zm0 4h10v2H8zm0 4h8v2H8zm18-7l-5 5-3-3 1.4-1.4L21 14.2l3.6-3.6L26 12z" fill="#fff"/></svg>
+      <div>
+        <h1>BitAgent</h1>
+        <small>v{{ app_version }}</small>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="sidebar-nav-group">
+        <div class="sidebar-nav-label">Overview</div>
+        <a class="nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          Dashboard
+        </a>
+        <a class="nav-item" data-tab="library" onclick="switchTab('library')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+          Library
+          <span class="badge" id="libCount">0</span>
+        </a>
+      </div>
+
+      <div class="sidebar-nav-group">
+        <div class="sidebar-nav-label">Operations</div>
+        <a class="nav-item" data-tab="wants" onclick="switchTab('wants')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          Wants
+        </a>
+        <a class="nav-item" data-tab="evidence" onclick="switchTab('evidence')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Evidence
+        </a>
+        <a class="nav-item" data-tab="quarantine" onclick="switchTab('quarantine')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Quarantine
+        </a>
+        <a class="nav-item" data-tab="ai" onclick="switchTab('ai')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+          AI
+        </a>
+      </div>
+
+      <div class="sidebar-nav-group">
+        <div class="sidebar-nav-label">System</div>
+        <a class="nav-item" data-tab="settings" onclick="switchTab('settings')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.32 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+          Settings
+        </a>
+        <a class="nav-item" data-tab="system" onclick="switchTab('system')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          System
+        </a>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="theme-toggle">
+        <span id="darkModeLabel">Dark mode</span>
+        <div class="theme-toggle-switch" onclick="toggleTheme()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleTheme();}" role="switch" tabindex="0" aria-labelledby="darkModeLabel" aria-checked="false" id="themeToggleSwitch"></div>
+      </div>
+      <div class="sidebar-user">
+        <div class="avatar">{{ (identity.display or '?')[0] | upper }}</div>
+        <div style="min-width:0;">
+          <div style="font-weight:500;display:flex;align-items:center;gap:6px;min-width:0;">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{{ identity.display }}</span>
+            {% if identity.priv %}<span class="pill pill-accent" style="font-size:10px;flex-shrink:0;">{{ identity.priv }}</span>{% endif %}
+          </div>
+          <div class="text-xs text-subtle" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            {% if identity.username and identity.username != identity.display %}@{{ identity.username }} · {% endif %}{{ identity.provider or identity.method }}
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
+
+  <!-- ── Main Content ─────────────────────────────────────────────── -->
+  <main class="main-content">
+    <header class="page-header">
+      <div class="page-header-left">
+        <button class="mobile-toggle btn-icon" onclick="toggleSidebar()" aria-label="Toggle navigation">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div>
+          <h2 class="page-title" id="pageTitle">Dashboard</h2>
+          <p class="page-subtitle" id="pageSubtitle">System overview and live metrics</p>
+        </div>
+      </div>
+      <div class="page-header-actions">
+        <div id="ge-switcher-mount"></div>
+        <div style="position:relative">
+          <button class="btn btn-ghost btn-icon notif-btn" onclick="toggleNotifications()" aria-label="Notifications">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
+            <span class="notif-dot" id="notifDot" style="display:none;"></span>
+          </button>
+          <div class="notif-panel" id="notifPanel">
+            <div class="notif-panel-header">
+              <span style="font-weight:var(--weight-semibold);font-size:var(--text-sm)">Notifications</span>
+              <button class="btn btn-ghost btn-sm" onclick="markAllRead()">Mark all read</button>
+            </div>
+            <div class="notif-panel-body" id="notifList">
+              <p class="text-sm text-muted" style="padding:var(--space-6);text-align:center">No notifications</p>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="refreshCurrentTab()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+          Refresh
+        </button>
+      </div>
+    </header>
+
+    <div class="page-body">
+      <!-- ═══════════════════════ DASHBOARD TAB ═══════════════════════ -->
+      <div class="tab-panel active" id="tab-dashboard">
+        <div class="card section-gap" id="winRateCard">
+          <div class="card-header">
+            <span class="card-title" data-help="North-star KPI: share of *arr grabs won by the BitAgent indexer vs. every other indexer, from the core's label_evidence grab webhooks. Aggregate counts only.">Indexer Win Rate <span class="text-xs text-subtle">30d</span></span>
+            <span class="text-sm font-mono" id="winRateCounts">--</span>
+          </div>
+          <div class="card-body">
+            <div class="winrate-layout">
+              <div class="winrate-headline">
+                <div class="stat-value" id="winRateValue">--</div>
+                <div class="text-xs text-subtle">of grabs won by BitAgent</div>
+                <svg id="winRateSpark" viewBox="0 0 300 60" preserveAspectRatio="none" aria-label="Daily win-rate trend"></svg>
+              </div>
+              <div id="indexerBreakdown">
+                <div class="empty-state" style="padding:var(--space-8)">
+                  <p class="text-sm text-muted">Waiting for grab data…</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stats-grid section-gap" id="statsGrid">
+          <div class="stat-card" data-accent="blue" data-help="Movie/TV torrents added in the last 30 days that matched a content entry (music/eBooks excluded — no metadata source). The single best measure of how much of the incoming crawl becomes usable catalogue.">
+            <div class="stat-card-head">
+              <div class="stat-icon blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
+              </div>
+            </div>
+            <div class="stat-label">Match Rate <span class="stat-window">30d</span></div>
+            <div class="stat-value" id="statMatchRate">--</div>
+            <div class="stat-meter"><i id="statMatchMeter"></i></div>
+            <div class="text-xs text-subtle" id="statMatchSub">movie/TV</div>
+          </div>
+          <div class="stat-card" data-accent="green" data-help="Share of resolved *arr grab attempts that finished as a live download. This measures TORRENT LIVENESS, not whether the *arr succeeded in grabbing — a dead swarm counts as a failure here even though every step of the grab worked. Pending attempts are excluded from the percentage and reported separately.">
+            <div class="stat-card-head">
+              <div class="stat-icon green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+              </div>
+            </div>
+            <div class="stat-label">Grab Liveness</div>
+            <div class="stat-value" id="statGrabSuccess">--</div>
+            <div class="stat-meter"><i id="statGrabMeter"></i></div>
+            <div class="text-xs text-subtle" id="statGrabSub">live / dead / pending</div>
+          </div>
+          <div class="stat-card" data-accent="orange" data-help="Torrents per minute reaching the content filter — the crawler's actual end-to-end productivity, not DHT packet chatter. Measured in-process from two scrapes at least ten seconds apart, so it reads 'measuring…' for the first poll after a page load.">
+            <div class="stat-card-head">
+              <div class="stat-icon orange">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              </div>
+              <span class="live-dot" id="statThroughputPulse" title="Live rate" hidden></span>
+            </div>
+            <div class="stat-label">Crawl Throughput</div>
+            <div class="stat-value" id="statThroughput">--</div>
+            <div class="text-xs text-subtle">torrents examined / min</div>
+          </div>
+          <div class="stat-card" data-accent="violet" data-help="Rows in the core's torrent_contents table — indexed torrents that carry a classified content row. The core answers this from the Postgres planner's estimate once the table is too large for an exact count, so it is shown rounded; the exact figure is not available and rendering one would be a fiction.">
+            <div class="stat-card-head">
+              <div class="stat-icon violet">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+              </div>
+            </div>
+            <div class="stat-label">Indexed Torrents</div>
+            <div class="stat-value" id="statTorrents">--</div>
+            <div class="text-xs text-subtle" id="statTorrentsSub">catalogue size</div>
+          </div>
+          <div class="stat-card" data-accent="red" data-help="Per-infohash liveness blocklist size. Torrents marked dead by the qB stall observer or *arr download-failed events; excluded from Torznab responses until revalidation succeeds.">
+            <div class="stat-card-head">
+              <div class="stat-icon red">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+              </div>
+            </div>
+            <div class="stat-label">Dead Blocked</div>
+            <div class="stat-value" id="statBlacklist">--</div>
+            <div class="text-xs text-subtle" id="statBlacklistSub">currently blocked</div>
+          </div>
+        </div>
+
+        <div class="grid-2 section-gap">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title" data-help="Count of indexed torrents per media type (Movie, TV, Music, etc.), from the core GraphQL contentType aggregation; bars scale to the largest slice, the percent is share of total.">Category Breakdown</span>
+            </div>
+            <div class="card-body" id="categoryChart">
+              <div class="empty-state" style="padding:var(--space-8)">
+                <p class="text-sm text-muted">Connect to BitAgent core to see category data</p>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title" data-help="How long this dashboard's own backend process has been running, not the core or crawler. Per-endpoint reachability moved to System → Health, which is the surface built for it.">Uptime</span>
+              <button class="btn btn-ghost btn-sm" onclick="switchTab('system')">Health detail</button>
+            </div>
+            <div class="card-body">
+              <div class="uptime-readout">
+                <div class="stat-value" id="statUptime">--</div>
+                <div class="text-xs text-subtle">bitagent-ui service</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title" data-help="Latest evidence events from the core's label_evidence table (qBittorrent state polls and *arr webhooks/history); shows the 10 most recent.">Recent Activity</span>
+            <button class="btn btn-ghost btn-sm" onclick="switchTab('evidence')">View all</button>
+          </div>
+          <div class="card-body table-wrap">
+            <table>
+              <thead>
+                <tr><th>Time</th><th data-help="Where the evidence row came from, e.g. qbittorrent or a specific *arr instance (sonarr/radarr).">Source</th><th>Content</th><th data-help="Media type of the torrent as classified by the core (Movie, TV Show, Music, eBook, etc.); blank when unknown.">Type</th><th data-help="The raw event kind recorded upstream, e.g. qb_state_observation or an *arr grab/import; there is no success/fail verdict.">Event</th></tr>
+              </thead>
+              <tbody id="activityTable">
+                <tr><td colspan="5" class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">Loading activity...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════ LIBRARY TAB ═════════════════════════ -->
+      <div class="tab-panel" id="tab-library">
+        <div class="lib-toolbar mb-6">
+          <div class="lib-toolbar-row">
+            <div class="search-box lib-search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+              <input class="input" id="libSearch" type="text" placeholder="Search titles — press / to focus" oninput="libSearchInput()" onkeydown="libSearchKeydown(event)">
+              <span class="search-spinner" id="libSearchSpinner"></span>
+              <button class="search-clear" id="libSearchClear" style="display:none" title="Clear search (Esc)" onclick="clearLibSearch()" aria-label="Clear search">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <select class="input lib-sort" id="libSort" onchange="setLibSort(this.value)" title="Sort titles">
+              <option value="seeders">Most seeders</option>
+              <option value="newest">Recently discovered</option>
+              <option value="size">Largest</option>
+              <option value="name">Name A–Z</option>
+            </select>
+            <div class="view-toggle" role="group" aria-label="View mode">
+              <button class="view-toggle-btn active" id="viewGrid" onclick="setLibView('grid')" title="Poster grid">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+              </button>
+              <button class="view-toggle-btn" id="viewList" onclick="setLibView('list')" title="List">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="lib-toolbar-row">
+            <div class="lib-type-filters" id="libTypeFilters"></div>
+            <span class="lib-toolbar-divider"></span>
+            <button class="filter-toggle" id="fltHideUnmatched" data-help="Hides library torrents the core could not map to a known title (no contentSource/contentId), so only identified movies and shows remain." onclick="toggleLibFilter('unmatched')" title="Only show torrents with a matched content id">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+              Hide unmatched
+            </button>
+            <button class="filter-toggle active" id="fltHideForeign" data-help="Hides releases whose detected language set contains no English (en) track; releases with no language data are kept. On by default." onclick="toggleLibFilter('foreign')" title="Hide releases whose language set has no English">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+              Hide non-English
+            </button>
+            <span class="lib-result-note text-xs text-subtle" id="libResultNote"></span>
+          </div>
+        </div>
+
+        <div id="libraryGrid" class="poster-grid"></div>
+        <div id="libraryTable" style="display:none;">
+          <div class="card">
+            <div class="card-body table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Name</th><th>Type</th><th data-help="Video resolution and source of the release (e.g. 1080p WEBDL), parsed by the core from the torrent name. Blank if not detected.">Quality</th><th>Size</th><th data-help="Number of seeders the core last observed for this torrent from its DHT crawl; higher usually means more available and faster.">Seeders</th><th>Discovered</th></tr>
+                </thead>
+                <tbody id="libTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between mt-6" id="libPagination">
+          <span class="text-sm text-muted" id="libPaginationInfo">Showing 0 of 0</span>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary btn-sm" id="libPrev" onclick="libPage(-1)" disabled>Previous</button>
+            <button class="btn btn-secondary btn-sm" id="libNext" onclick="libPage(1)">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════ WANTS TAB ═══════════════════════════ -->
+      <div class="tab-panel" id="tab-wants">
+        <div class="flex items-center justify-between mb-6">
+          <p class="text-sm text-muted">
+            <b>What this is:</b> the core's wantbridge — it polls Sonarr/Radarr/Lidarr for what they are still missing
+            and checks every newly discovered infohash against that list.
+            <b>What to do:</b> confirm each *arr's wantlist is non-zero and that poll cycles are still climbing.
+            <b>Ignore:</b> the tier-1 count — it is a cheap pre-check that fires on almost everything.
+          </p>
+          <button class="btn btn-secondary btn-sm" onclick="loadWants()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+            Refresh
+          </button>
+        </div>
+
+        <div id="wbEnforceBanner" class="callout callout-warn mb-6" style="display:none"></div>
+
+        <div class="stats-grid section-gap" id="wbStats">
+          <div class="stat-card" data-accent="blue" data-help="Canonical wantlist entries across every configured *arr, after canonicalisation — one entry per indexable key, so it does not equal the *arr's own item count.">
+            <div class="stat-card-head"><div class="stat-icon blue">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </div></div>
+            <div class="stat-label">Wanted Titles</div>
+            <div class="stat-value" id="wbWantlistTotal">--</div>
+            <div class="text-xs text-subtle" id="wbWantlistSub">across *arr sources</div>
+          </div>
+          <div class="stat-card" data-accent="green" data-help="Tier-0 is the exact canonical-key hit: a discovered torrent matched a specific title an *arr is actually missing. This is the number that says the bridge is doing useful work.">
+            <div class="stat-card-head"><div class="stat-icon green">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+            </div></div>
+            <div class="stat-label">Exact Matches</div>
+            <div class="stat-value" id="wbTier0">--</div>
+            <div class="text-xs text-subtle" id="wbTier0Sub">tier-0 hits</div>
+          </div>
+          <div class="stat-card" data-accent="cyan" data-help="Canonical keys currently indexed in the fingerprint table the matcher consults. Rebuilt once per refresh cycle; a frozen value means refreshes have stopped.">
+            <div class="stat-card-head"><div class="stat-icon cyan">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+            </div></div>
+            <div class="stat-label">Fingerprint Keys</div>
+            <div class="stat-value" id="wbFingerprint">--</div>
+            <div class="text-xs text-subtle">indexed canonical keys</div>
+          </div>
+          <div class="stat-card" data-accent="violet" data-help="Completed *arr poll cycles since core boot, with mean latency. If this stops climbing between refreshes the bridge has stopped talking to your *arr.">
+            <div class="stat-card-head"><div class="stat-icon violet">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+            </div></div>
+            <div class="stat-label">Poll Cycles</div>
+            <div class="stat-value" id="wbCycles">--</div>
+            <div class="text-xs text-subtle" id="wbCyclesSub">per source</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title" data-help="Per-source wantlist size, exact tier-0 matches and poll health, from the core's bitagent_wantbridge_* metrics. A source missing from this table is not configured in the core.">Sources</span>
+            <span class="text-xs text-subtle">one row per configured *arr</span>
+          </div>
+          <div class="card-body table-wrap">
+            <table>
+              <thead>
+                <tr><th>Source</th><th data-help="Canonical wantlist entries this source contributes.">Wanted</th><th data-help="Discovered torrents that matched this source's wantlist exactly (tier 0).">Exact matches</th><th data-help="Completed poll cycles since core boot.">Polls</th><th data-help="Mean wall-clock latency of one poll call to this *arr.">Avg poll</th></tr>
+              </thead>
+              <tbody id="wbSourcesTable">
+                <tr><td colspan="5" class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">Loading wantbridge…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════ QUARANTINE TAB ══════════════════════ -->
+      <div class="tab-panel" id="tab-quarantine">
+        <div class="flex items-center justify-between mb-6">
+          <p class="text-sm text-muted">
+            <b>What this is:</b> torrents the junk judge pulled out of the index. Nothing here is ever permanently deleted — after <span id="quarantineWindow">30</span> days an entry is tombstoned, which drops it out of this list but leaves it restorable from its snapshot indefinitely.
+            <b>What to do:</b> spot-check a random sample and restore anything the judge got wrong. This is not housekeeping: every restore and every confirm-delete writes a gold label, and that corpus is the only thing that can measure the judge's false-deletion rate.
+            <b>Why it matters:</b> entries you do not adjudicate before the window lapses leave this list, and the sample is gone with them.
+          </p>
+          <div class="flex gap-2">
+            <button class="btn btn-primary btn-sm" onclick="qSpotCheck()" title="Jump to a random page of the hold — the honest way to sample a queue too large to read">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.2" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.2" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.2" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.2" fill="currentColor"/></svg>
+              Spot-check 25
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="qResetToNewest()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Newest
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body table-wrap">
+            <table>
+              <thead>
+                <tr><th style="width:28px"><input type="checkbox" id="qSelectAll" onchange="qToggleSelectAll(this)" title="Select page"></th><th>Name</th><th data-help="How sure the judge was, 0-100%. Sort order is not available from the core, so the low-confidence end is reached by spot-checking rather than sorting.">Confidence</th><th>Quarantined</th><th data-help="Days left before this entry is tombstoned and leaves this list. It is not deleted — restore still works from its snapshot afterwards — but it stops being reviewable here. Turns red at 3 or fewer.">Days left</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="quarantineTable">
+                <tr><td colspan="6" class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">Loading quarantine...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between mt-6">
+          <div class="flex items-center gap-3">
+            <span class="text-sm text-muted" id="qPaginationInfo">Showing 0 of 0</span>
+            <div id="qBulkBar" class="flex items-center gap-2" style="display:none">
+              <span class="text-sm" id="qBulkCount">0 selected</span>
+              <button class="btn btn-secondary btn-sm" onclick="_qBulk('restore')">Restore selected</button>
+              <button class="btn btn-secondary btn-sm" style="color:var(--color-danger)" onclick="_qBulk('delete')">Delete selected</button>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary btn-sm" id="qPrev" onclick="qPage(-1)" disabled>Previous</button>
+            <button class="btn btn-secondary btn-sm" id="qNext" onclick="qPage(1)">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════ EVIDENCE TAB ════════════════════════ -->
+      <div class="tab-panel" id="tab-evidence">
+        <div class="flex items-center justify-between mb-6">
+          <p class="text-sm text-muted">
+            <b>What this is:</b> the audit trail of what qBittorrent and your *arr apps told the core.
+            <b>What to do:</b> read the source table below — an *arr showing no <span class="font-mono text-xs">webhook_*</span> events since boot is worth checking against
+            <span class="font-mono text-xs">/evidence/arr/&lt;instance&gt;</span>, though a quiet *arr looks the same as an unconfigured one.
+            <b>Ignore:</b> duplicated counts and the raw log; polls re-read the same rows every cycle by design.
+          </p>
+          <button class="btn btn-secondary btn-sm" onclick="loadEvidence()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+            Refresh
+          </button>
+        </div>
+
+        <div class="card section-gap">
+          <div class="card-header">
+            <span class="card-title" data-help="Per-source event flow from the core's bitagent_evidence_events_* counters, which carry source and kind labels the event list itself cannot filter on. Received is everything offered; persisted is what was new; duplicated is what the core already had.">Source Health</span>
+            <span class="text-xs text-subtle">is each source actually reporting?</span>
+          </div>
+          <div class="card-body table-wrap">
+            <table>
+              <thead>
+                <tr><th>Source</th><th data-help="webhook_* events received from this source SINCE CORE BOOT — an observation, not a verdict. Zero is consistent with no webhook configured, but a correctly wired *arr that has not grabbed anything since the core restarted reads the same. Poll-only means the core pulls from this source by design and no webhook is expected.">Webhook</th><th data-help="Every event offered by this source since core boot.">Received</th><th data-help="Events that were new and got written. A poll source persisting far less than it receives is normal — it re-reads the same history each cycle.">Persisted</th><th data-help="Event kinds seen from this source, largest first.">Kinds</th></tr>
+              </thead>
+              <tbody id="evSourcesTable">
+                <tr><td colspan="5" class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">Loading source health…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title" data-help="The raw event list, newest first. The core's evidence API takes only limit and offset — no source or kind filter — so this cannot be narrowed to *arr rows; use Source Health above for that question.">Recent Events</span>
+            <span class="text-xs text-subtle">newest first · no server-side filter available</span>
+          </div>
+          <div class="card-body table-wrap">
+            <table>
+              <thead>
+                <tr><th>Time</th><th data-help="Which system produced the event: a qBittorrent state poll or a specific *arr instance (from the core's label_evidence table).">Source</th><th>Torrent</th><th data-help="Media type of the torrent (Movie, TV Show, Music, etc.), mapped from the core's mediaType.">Type</th><th data-help="What happened: e.g. a qB state observation or an *arr grab/import/failure. There is no success/fail verdict; the pill just colours the kind.">Event</th></tr>
+              </thead>
+              <tbody id="evidenceTable">
+                <tr><td colspan="5" class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">Loading evidence events...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between mt-6">
+          <span class="text-sm text-muted" id="evPaginationInfo">Showing 0 of 0</span>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary btn-sm" id="evPrev" onclick="evPage(-1)" disabled>Previous</button>
+            <button class="btn btn-secondary btn-sm" id="evNext" onclick="evPage(1)">Next</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════ AI TAB ══════════════════════════════ -->
+      <div class="tab-panel" id="tab-ai">
+        <div class="flex items-center justify-between mb-6">
+          <p class="text-sm text-muted">
+            Scorecards for all three LLM stages the core runs — the TMDB matcher, the content filter and the
+            junk-purge judge. Counters are since core boot. Auto-refreshes every 30s while this tab is open.
+            A metric shown as <span class="font-mono">—</span> with a note is one the core does not emit; it is
+            never rendered as a zero.
+          </p>
+          <button class="btn btn-secondary btn-sm" onclick="loadAiTab()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+            Refresh
+          </button>
+        </div>
+        <div id="aiUnavailableNote" class="callout callout-warn mb-6" role="status" style="display:none"></div>
+
+        <div class="stats-grid section-gap">
+          <div class="stat-card" data-accent="orange" id="aiSpendCard" data-help="Spend-to-date across every LLM stage that reports tokens, priced from a static per-model table. The core publishes no process-start gauge, so a monthly figure cannot come from one scrape — it is measured by sampling spend across this page's own polls, and reads 'measuring…' until two samples 10s apart exist.">
+            <div class="stat-card-head"><div class="stat-icon orange">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+            </div></div>
+            <div class="stat-label">Projected / month</div>
+            <div class="stat-value" id="aiSpendMonthly">--</div>
+            <div class="stat-meter"><i id="aiSpendMeter"></i></div>
+            <div class="text-xs text-subtle" id="aiSpendSub">against budget</div>
+          </div>
+          <div class="stat-card" data-accent="blue" data-help="Total provider-reported tokens across every reporting stage, since core boot. Input dominates on this workload, which is why prompt size — not model choice — is the lever on the bill.">
+            <div class="stat-card-head"><div class="stat-icon blue">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+            </div></div>
+            <div class="stat-label">Tokens</div>
+            <div class="stat-value" id="aiTokensTotal">--</div>
+            <div class="text-xs text-subtle" id="aiTokensSub">in / out</div>
+          </div>
+          <div class="stat-card" data-accent="green" data-help="Spend-to-date since the core last restarted, priced from the same table. Resets when the core does — the counters behind it are per-process.">
+            <div class="stat-card-head"><div class="stat-icon green">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div></div>
+            <div class="stat-label">Spent This Boot</div>
+            <div class="stat-value" id="aiSpendTotal">--</div>
+            <div class="text-xs text-subtle" id="aiSpendTotalSub">since core restart</div>
+          </div>
+          <div class="stat-card" data-accent="cyan" data-help="Models with recorded token usage. Each is priced from the static table; a model that is not in the table is named here and contributes no dollars, so the total is reported as a floor rather than silently reading low.">
+            <div class="stat-card-head"><div class="stat-icon cyan">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
+            </div></div>
+            <div class="stat-label">Models Billing</div>
+            <div class="stat-value" id="aiModelCount">--</div>
+            <div class="text-xs text-subtle" id="aiModelSub">reporting tokens</div>
+          </div>
+        </div>
+
+        <div class="card section-gap">
+          <div class="card-header">
+            <span class="card-title" data-help="Spend-to-date per model with its measured monthly projection, and what each dollar bought. Cost per unit is the comparison that ranks stages: a stage can be cheap in total and still be the worst value per decision it makes.">Spend by Model</span>
+            <span class="text-xs text-subtle" id="aiSpendPrices">list prices</span>
+          </div>
+          <div class="card-body" id="aiSpendPanel">
+            <div class="empty-state" style="padding:var(--space-6)"><p class="text-sm text-muted">Loading…</p></div>
+          </div>
+        </div>
+
+        <div class="llm-stage-grid section-gap" id="aiStageGrid">
+          <div class="empty-state" style="padding:var(--space-8)"><p class="text-sm text-muted">Loading LLM scorecards…</p></div>
+        </div>
+
+        <div class="stats-grid section-gap">
+          <div class="stat-card" data-accent="green" data-help="TMDB ids the matcher attached for real (mode=live), by media type.">
+            <div class="stat-card-head">
+              <div class="stat-icon green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
+              </div>
+            </div>
+            <div class="stat-label">Live Attaches</div>
+            <div class="stat-value" id="aiLiveMatches">--</div>
+            <div class="text-xs text-subtle" id="aiLiveMatchesSub">movie / TV</div>
+          </div>
+          <div class="stat-card" data-accent="cyan" data-help="Decision-cache hit ratio — repeated torrent names skip the LLM entirely.">
+            <div class="stat-card-head">
+              <div class="stat-icon cyan">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </div>
+            </div>
+            <div class="stat-label">Matcher Cache</div>
+            <div class="stat-value" id="aiCacheRatio">--</div>
+            <div class="stat-meter"><i id="aiCacheMeter"></i></div>
+            <div class="text-xs text-subtle" id="aiCacheSub">hits / misses</div>
+          </div>
+          </div>
+
+        <div class="grid-2 section-gap">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title" data-help="Torrents the classifier's cheap pre-filters rejected before spending an LLM call, broken down by gate (e.g. plausibility, size, files, privacy, config). Counts come from the core's llm_match gate_rejects metric.">Pre-LLM Gate Rejects</span>
+              <span class="text-xs text-subtle">torrents filtered before any LLM call</span>
+            </div>
+            <div class="card-body" id="aiGatePanel">
+              <div class="empty-state" style="padding:var(--space-6)"><p class="text-sm text-muted">Loading...</p></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title" data-help="Anime torrents kept vs rejected, grouped by English track (dub / sub / none / unknown). From the core's llm_match anime metric.">Anime English Gate</span>
+              <span class="text-xs text-subtle">kept vs rejected, by English track</span>
+            </div>
+            <div class="card-body" id="aiAnimePanel">
+              <div class="empty-state" style="padding:var(--space-6)"><p class="text-sm text-muted">Loading...</p></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ═══════════════════════ SETTINGS TAB ════════════════════════ -->
+      <div class="tab-panel" id="tab-settings">
+        <div class="tab-bar">
+          <button class="tab-btn active" data-stab="config" onclick="switchSettingsTab('config')">Configuration</button>
+          <button class="tab-btn" data-stab="auth" onclick="switchSettingsTab('auth')">Auth & Security</button>
+          <button class="tab-btn" data-stab="integrations" onclick="switchSettingsTab('integrations')">Integrations</button>
+          <button class="tab-btn" data-stab="retention" onclick="switchSettingsTab('retention')">Retention</button>
+          <button class="tab-btn" data-stab="classifier" onclick="switchSettingsTab('classifier')">Classifier</button>
+          <button class="tab-btn" data-stab="liveness" onclick="switchSettingsTab('liveness')">Liveness</button>
+          <button class="tab-btn" data-stab="filters" onclick="switchSettingsTab('filters')">Filters</button>
+          <button class="tab-btn" data-stab="blocklists" onclick="switchSettingsTab('blocklists')">Block Lists</button>
+          <button class="tab-btn" data-stab="audit" onclick="switchSettingsTab('audit')">Audit Log</button>
+        </div>
+
+        <!-- Config sub-tab -->
+        <div class="tab-panel active" id="stab-config">
+          <div class="flex items-center justify-between mb-6">
+            <div>
+              <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold);" data-help="Live editor for non-security mutable settings. Security trust, hosts, proxy CIDRs, proof, and operator roles are startup-only deployment configuration.">Runtime Configuration</h3>
+              <p class="text-sm text-muted mt-2">Override application settings without restarting. Secrets are never displayed; enter a value only to replace one.</p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="loadSettings()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Reload
+            </button>
+          </div>
+          <div class="settings-grid" id="settingsGrid"></div>
+        </div>
+
+        <!-- Auth sub-tab -->
+        <div class="tab-panel" id="stab-auth">
+          <div class="card mb-6">
+            <div class="card-header"><span class="card-title" data-help="Which request-auth tiers are actually configured, from /api/auth/tiers. The resolver checks tiers in priority order and the first match wins; Status shows only whether each tier is enabled (no secrets).">Authentication Tiers</span></div>
+            <div class="card-body">
+              <p class="text-sm text-muted mb-4">BitAgent uses a layered auth resolver — the first matching tier wins. Proxy identity requires both a configured transport-peer CIDR and shared proof; operator routes also require an allowed role.</p>
+              <div class="table-wrap">
+              <table>
+                <thead><tr><th data-help="Order the resolver tries this tier; lower number checked first, and the first tier that matches authenticates the request.">Priority</th><th data-help="The authentication method for this row (API key, reverse-proxy header, forwarded-user header, or upstream SSO gate).">Tier</th><th data-help="The request header, query param, or upstream check this tier reads to identify the caller.">Source</th><th data-help="Whether this tier is currently enabled in config: Active means configured/trusted, Disabled means off (from /api/auth/tiers, booleans only).">Status</th></tr></thead>
+                <tbody>
+                  <tr><td>1</td><td>API Key</td><td><code class="font-mono text-xs">?apikey= / X-Api-Key / Authorization: Bearer</code></td><td id="authTierApi"><span class="pill pill-neutral">--</span></td></tr>
+                  <tr><td>2</td><td>Reverse Proxy</td><td><code class="font-mono text-xs">X-Auth-User-Id (NPM)</code></td><td id="authTierNpm"><span class="pill pill-neutral">--</span></td></tr>
+                  <tr><td>3</td><td>Forwarded User</td><td><code class="font-mono text-xs">X-Forwarded-User / Remote-User</code></td><td id="authTierFwd"><span class="pill pill-neutral">--</span></td></tr>
+                  <tr><td>—</td><td>SSO (via gate)</td><td><code class="font-mono text-xs">validated upstream by the auth-portal; surfaced via a trusted proxy tier</code></td><td id="authTierSso"><span class="pill pill-neutral">--</span></td></tr>
+                </tbody>
+              </table>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title" data-help="Key values are never returned to the browser. These fields report configured state only; replace mutable keys through the configuration or integration form.">API Keys</span></div>
+            <div class="card-body">
+              <div class="grid-2">
+                <div class="input-group">
+                  <label class="input-label">Dashboard API Key</label>
+                  <div class="flex gap-2">
+                    <input class="input font-mono" type="password" id="dashKeyDisplay" readonly value="" placeholder="loading…">
+                  </div>
+                </div>
+                <div class="input-group">
+                  <label class="input-label">Torznab API Key</label>
+                  <div class="flex gap-2">
+                    <input class="input font-mono" type="password" id="tzKeyDisplay" readonly value="" placeholder="loading…">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Integrations sub-tab -->
+        <div class="tab-panel" id="stab-integrations">
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title" data-help="Copy-paste settings to add BitAgent to Sonarr as a Torznab indexer (TV categories 5000/5030/5040). Static reference text, not a live connection status.">Sonarr</span>
+                <span class="pill pill-info">Torznab</span>
+              </div>
+              <div class="card-body">
+                <p class="text-sm text-muted mb-4">Add BitAgent as a Torznab indexer in Sonarr.</p>
+                <div class="code-block">URL: http://bitagent:3333/torznab
+API Key: ${TORZNAB_API_KEY}
+Categories: 5000, 5030, 5040</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title" data-help="Copy-paste settings to add BitAgent to Radarr as a Torznab indexer (movie categories 2000/2030/2040/2050). Static reference text, not a live connection status.">Radarr</span>
+                <span class="pill pill-info">Torznab</span>
+              </div>
+              <div class="card-body">
+                <p class="text-sm text-muted mb-4">Add BitAgent as a Torznab indexer in Radarr.</p>
+                <div class="code-block">URL: http://bitagent:3333/torznab
+API Key: ${TORZNAB_API_KEY}
+Categories: 2000, 2030, 2040, 2050</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title" data-help="Copy-paste settings to add BitAgent in Prowlarr (as a Generic Torznab or drop-in definition), which then syncs the indexer to all connected *arr apps. Static reference text.">Prowlarr</span>
+                <span class="pill pill-info">Newznab</span>
+              </div>
+              <div class="card-body">
+                <p class="text-sm text-muted mb-4">Add as Generic Torznab or use the drop-in definition file.</p>
+                <div class="code-block">URL: http://bitagent:3333/torznab
+API Key: ${TORZNAB_API_KEY}
+Sync to: all connected *arr apps</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title" data-help="Copy-paste settings to add BitAgent to Lidarr as a Torznab indexer for music (categories 3000/3010/3020). Static reference text, not a live connection status.">Lidarr</span>
+                <span class="pill pill-info">Torznab</span>
+              </div>
+              <div class="card-body">
+                <p class="text-sm text-muted mb-4">Music search support via Torznab caps.</p>
+                <div class="code-block">URL: http://bitagent:3333/torznab
+API Key: ${TORZNAB_API_KEY}
+Categories: 3000, 3010, 3020</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mt-6">
+            <div class="card-header">
+              <span class="card-title" data-help="Store each app's base URL and API key (saved as settings overrides) so the Library tab's one-click Send-to can push a release into Sonarr/Radarr/Lidarr via its API.">*arr API Configuration</span>
+              <span class="text-xs text-subtle">Required for "Send to" release push from Library</span>
+            </div>
+            <div class="card-body">
+              <p class="text-sm text-muted mb-4">Set base URL and API key for each app to enable one-click release push from the Library tab. Find API keys in each app under Settings → General.</p>
+              <div class="grid-2" id="arrSettingsGrid">
+                <div>
+                  <div style="font-weight:var(--weight-semibold);font-size:var(--text-sm);margin-bottom:var(--space-3)">Sonarr</div>
+                  <div class="input-group mb-2">
+                    <label class="input-label">Base URL</label>
+                    <input class="input font-mono" id="arr-sonarr-url" placeholder="http://sonarr:8989">
+                  </div>
+                  <div class="input-group">
+                    <label class="input-label">API Key</label>
+                    <input class="input font-mono" type="password" id="arr-sonarr-key" placeholder="32-char hex key">
+                  </div>
+                  <button class="btn btn-primary btn-sm mt-2" onclick="saveArrSettings('sonarr')">Save Sonarr</button>
+                </div>
+                <div>
+                  <div style="font-weight:var(--weight-semibold);font-size:var(--text-sm);margin-bottom:var(--space-3)">Radarr</div>
+                  <div class="input-group mb-2">
+                    <label class="input-label">Base URL</label>
+                    <input class="input font-mono" id="arr-radarr-url" placeholder="http://radarr:7878">
+                  </div>
+                  <div class="input-group">
+                    <label class="input-label">API Key</label>
+                    <input class="input font-mono" type="password" id="arr-radarr-key" placeholder="32-char hex key">
+                  </div>
+                  <button class="btn btn-primary btn-sm mt-2" onclick="saveArrSettings('radarr')">Save Radarr</button>
+                </div>
+                <div>
+                  <div style="font-weight:var(--weight-semibold);font-size:var(--text-sm);margin-bottom:var(--space-3)">Lidarr</div>
+                  <div class="input-group mb-2">
+                    <label class="input-label">Base URL</label>
+                    <input class="input font-mono" id="arr-lidarr-url" placeholder="http://lidarr:8686">
+                  </div>
+                  <div class="input-group">
+                    <label class="input-label">API Key</label>
+                    <input class="input font-mono" type="password" id="arr-lidarr-key" placeholder="32-char hex key">
+                  </div>
+                  <button class="btn btn-primary btn-sm mt-2" onclick="saveArrSettings('lidarr')">Save Lidarr</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mt-6">
+            <div class="card-header">
+              <span class="card-title" data-help="Instructions to point each *arr app's Connect webhook at the BitAgent core's /evidence/arr/<instance> endpoint; those events feed the same Evidence stream this UI shows. Set on the core, not here.">Download Event Webhooks</span>
+              <span class="text-xs text-subtle">Configure on the BitAgent core, not this UI</span>
+            </div>
+            <div class="card-body">
+              <p class="text-sm text-muted">In each *arr app: Settings → Connect → Webhook → URL <code class="font-mono text-xs">&lt;bitagent-core-host&gt;/evidence/arr/&lt;instance-name&gt;</code> with the <code class="font-mono text-xs">X-Evidence-Token</code> header set to the core's <code>EVIDENCE_WEBHOOK_SECRET</code>. The core feeds the same Evidence stream this UI displays.</p>
+            </div>
+          </div>
+
+          <div class="card mt-6">
+            <div class="card-header">
+              <span class="card-title" data-help="Optional TMDB API key (saved as the tmdb_api_key setting) that provides poster art in the Library tab; the pill shows Configured or Not configured based on whether that key is set.">TMDB Integration</span>
+              <span class="pill pill-neutral" id="tmdbStatus">Not configured</span>
+            </div>
+            <div class="card-body">
+              <p class="text-sm text-muted mb-4">Optional. Provides poster art for the Library tab. Set TMDB_API_KEY in settings.</p>
+              <div class="input-group">
+                <label class="input-label">TMDB API Key</label>
+                <div class="flex gap-2">
+                  <input class="input font-mono" type="password" id="tmdbKeyInput" placeholder="Enter TMDB API key...">
+                  <button class="btn btn-primary btn-sm" onclick="saveTmdbKey()">Save</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Retention sub-tab -->
+        <div class="tab-panel" id="stab-retention">
+          <!-- Honest placeholder: there is NO retention backend anywhere in
+               the stack. The old panel here was pure fiction — sliders wired
+               to nothing and a Save button that toasted success without an
+               API call. Do not re-add controls until a real backend exists. -->
+          <div class="card mb-6">
+            <div class="card-header">
+              <span class="card-title" data-help="Placeholder only. Age-based retention/purge is NOT implemented in the core or this dashboard; the only deletion path is the junk classifier quarantine in the Quarantine tab.">Retention Policy</span>
+              <span class="pill pill-warning">Not implemented</span>
+            </div>
+            <div class="card-body">
+              <p class="text-sm text-muted">Age-based retention/purge is not implemented in the core or this dashboard — there is nothing to configure yet.</p>
+              <p class="text-sm text-muted mt-2">The only deletion path today is the junk classifier's quarantine (review, restore, or purge per release in the <a href="#" onclick="switchTab('quarantine');return false">Quarantine tab</a>).</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title" data-help="Intended to show on-disk size of the Postgres catalog, SQLite sidecar, and poster cache. Currently static placeholders; no live storage endpoint feeds these numbers yet.">Storage Usage</span>
+            </div>
+            <div class="card-body">
+              <div class="grid-3">
+                <div data-help="On-disk size of the main BitAgent Postgres database — the indexed torrent catalogue and TMDB content.">
+                  <div class="stat-label">Postgres</div>
+                  <div class="text-lg" style="font-size:var(--text-lg);font-weight:var(--weight-semibold)">--</div>
+                  <div class="progress mt-2"><div class="progress-bar" style="width:0%"></div></div>
+                </div>
+                <div data-help="Size of the local SQLite sidecar DB that stores *arr webhook evidence and liveness observations.">
+                  <div class="stat-label">SQLite Sidecar</div>
+                  <div class="text-lg" style="font-size:var(--text-lg);font-weight:var(--weight-semibold)">--</div>
+                  <div class="progress mt-2"><div class="progress-bar green" style="width:0%"></div></div>
+                </div>
+                <div data-help="Disk used by cached TMDB poster/artwork images served to this dashboard.">
+                  <div class="stat-label">Poster Cache</div>
+                  <div class="text-lg" style="font-size:var(--text-lg);font-weight:var(--weight-semibold)">--</div>
+                  <div class="progress mt-2"><div class="progress-bar orange" style="width:0%"></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Classifier sub-tab -->
+        <div class="tab-panel" id="stab-classifier">
+          <div class="flex items-center justify-between mb-6">
+            <div>
+              <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold)">Classifier Rules <span class="pill pill-neutral" style="vertical-align:middle" data-help="Illustrative examples of the CEL classification approach, NOT the live ruleset. The authoritative logic is the CLASSIFIER_WORKFLOW config on the core, which this dashboard cannot read.">Reference</span></h3>
+              <p class="text-sm text-muted mt-2">Illustrative examples of the CEL classification approach — not the live, authoritative ruleset.</p>
+            </div>
+            <div class="flex gap-2">
+              <button class="btn btn-secondary btn-sm" onclick="loadClassifierRules()" data-help="Re-renders the illustrative reference cards below; it does NOT fetch the live ruleset. The refresh icon is cosmetic here because these examples are static, not read from the running classifier.">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                Reload
+              </button>
+            </div>
+          </div>
+
+          <div class="card mb-6" style="border-left:3px solid var(--color-warning)">
+            <div class="card-body">
+              <p class="text-sm" style="font-weight:var(--weight-semibold)">These rules are illustrative references, not the live ruleset.</p>
+              <p class="text-xs text-muted mt-2">
+                The cards below document <em>how</em> BitAgent's CEL classifier reasons about releases — they are
+                <strong>not editable here and are not fetched from the running classifier</strong>. The authoritative
+                classification logic is the CEL workflow configured on the BitAgent core via the
+                <code class="font-mono">CLASSIFIER_WORKFLOW</code> environment variable
+                (currently <code class="font-mono">norvi</code>), which this dashboard cannot introspect. Treat the
+                examples as documentation of the approach, not as a mirror of production behaviour.
+              </p>
+            </div>
+          </div>
+
+          <div id="classifierRules">
+            <div class="flex flex-col gap-4" id="classifierRulesList">
+              <!-- Illustrative reference rules rendered by JS (see banner above) -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Liveness sub-tab -->
+        <div class="tab-panel" id="stab-liveness">
+          <div class="flex items-center justify-between mb-6">
+            <div>
+              <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold)" data-help="Per-infohash health from qBittorrent state observations and *arr import outcomes; dead torrents are filtered out of Torznab responses. Counters come from the core's liveness metrics via /api/stats.">Liveness Pipeline</h3>
+              <p class="text-sm text-muted mt-2">
+                Per-infohash health derived from qBittorrent state observations and *arr import outcomes.
+                Dead torrents are excluded from Torznab responses; revalidation re-checks them on a schedule.
+              </p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="loadLivenessOps()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Refresh
+            </button>
+          </div>
+
+          <!-- Live counters -->
+          <div class="stats-grid mb-6">
+            <div class="stat-card" data-help="Count of liveness checks that found the torrent healthy — qBittorrent seeding/uploading, or a successful *arr import.">
+              <div class="stat-icon green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div class="stat-label">Alive Observations</div>
+              <div class="stat-value" id="livenessObsAlive">--</div>
+              <div class="text-xs text-subtle">qB seeding/uploading + *arr import</div>
+            </div>
+            <div class="stat-card" data-help="Count of liveness checks that came back unhealthy — qBittorrent stalledDL / metaDL / error states. Repeated suspects get moved to the dead blocklist.">
+              <div class="stat-icon orange">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              </div>
+              <div class="stat-label">Suspect Observations</div>
+              <div class="stat-value" id="livenessObsSuspect">--</div>
+              <div class="text-xs text-subtle">qB stalledDL/metaDL/error</div>
+            </div>
+            <div class="stat-card" data-help="Torrents currently marked dead and excluded from Torznab search responses, pending a successful revalidation re-check.">
+              <div class="stat-icon red">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+              </div>
+              <div class="stat-label">Dead Blocklist</div>
+              <div class="stat-value" id="livenessBlacklist">--</div>
+              <div class="text-xs text-subtle"><span id="livenessExcluded">--</span> total filtered</div>
+            </div>
+            <div class="stat-card" data-help="Share of blocklisted dead torrents that came back alive when revalidation re-checked them — how many the pipeline recovers rather than permanently excludes.">
+              <div class="stat-icon blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              </div>
+              <div class="stat-label">Revalidation Recovery</div>
+              <div class="stat-value" id="livenessRecoveryRate">--</div>
+              <div class="text-xs text-subtle"><span id="livenessRevalidAlive">0</span> alive / <span id="livenessRevalidDead">0</span> still dead</div>
+            </div>
+          </div>
+
+          <!-- Configured thresholds (read-only — set via env vars on the bitagent core) -->
+          <div class="card mb-6">
+            <div class="card-header">
+              <span class="card-title" data-help="Read-only reference of the liveness pipeline's tuning knobs and their defaults. These are set via env vars on the bitagent core stack; changing them requires a core restart.">Configured Thresholds</span>
+              <span class="text-xs text-subtle">Set via env vars on the bitagent core. Restart required to change.</span>
+            </div>
+            <div class="card-body table-wrap">
+              <table>
+                <thead><tr><th>Knob</th><th data-help="Full environment variable that sets this knob on the bitagent core; changing it needs a core restart.">Env var</th><th>Default</th><th>What it does</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code class="font-mono text-xs">enabled</code></td>
+                    <td><code class="font-mono text-xs">BITAGENT_EVIDENCE__LIVENESS__ENABLED</code></td>
+                    <td><span class="pill pill-success">true</span></td>
+                    <td>Master toggle. When false, no observations are emitted and Torznab responses are unfiltered (zero overhead).</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">stall_threshold_hours</code></td>
+                    <td><code class="font-mono text-xs">…__STALL_THRESHOLD_HOURS</code></td>
+                    <td><code>4</code></td>
+                    <td>How long a torrent must stay in stalledDL/metaDL before it's eligible to be marked dead.</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">min_observations</code></td>
+                    <td><code class="font-mono text-xs">…__MIN_OBSERVATIONS</code></td>
+                    <td><code>2</code></td>
+                    <td>How many independent suspect observations are required. Guards against transient network issues.</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">blacklist_ttl_days</code></td>
+                    <td><code class="font-mono text-xs">…__BLACKLIST_TTL_DAYS</code></td>
+                    <td><code>30</code></td>
+                    <td>How long until a dead torrent gets re-checked. Lower = faster recovery if it comes back; higher = less DHT load.</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">revalidate_interval</code></td>
+                    <td><code class="font-mono text-xs">…__REVALIDATE_INTERVAL</code></td>
+                    <td><code>6h</code></td>
+                    <td>How often the revalidation worker wakes up to re-check a batch of dead torrents.</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">revalidate_min_peers</code></td>
+                    <td><code class="font-mono text-xs">…__REVALIDATE_MIN_PEERS</code></td>
+                    <td><code>2</code></td>
+                    <td>Minimum DHT peers that must respond to a get_peers query for the torrent to be marked alive again.</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">exclude_private_tracker_grabs</code></td>
+                    <td><code class="font-mono text-xs">…__EXCLUDE_PRIVATE_TRACKER_GRABS</code></td>
+                    <td><span class="pill pill-success">true</span></td>
+                    <td>When a *arr imports a torrent in the qB <code>private</code> category, don't credit it as alive evidence — the file came from a private tracker, not BitAgent's catalog.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Explainer -->
+          <div class="card">
+            <div class="card-header"><span class="card-title">How it works</span></div>
+            <div class="card-body">
+              <div class="text-sm" style="line-height:1.7">
+                <p class="mb-3"><strong>Inputs.</strong> Every <code class="font-mono text-xs">/api/v2/torrents/info</code> poll cycle, qBittorrent reports the state of each torrent it knows about. <code>seeding/uploading/downloading</code> = alive. <code>stalledDL/metaDL/error/missingFiles</code> = suspect. Plus every successful <code>*arr</code> import webhook = alive.</p>
+                <p class="mb-3"><strong>Resolution.</strong> A torrent is marked <span class="pill pill-error">dead</span> only after <em>min_observations</em> independent suspect observations across at least <em>stall_threshold_hours</em>. Any single alive observation immediately wins.</p>
+                <p class="mb-3"><strong>Output.</strong> Dead infohashes are filtered out of Torznab responses before they reach Sonarr/Radarr — no stale grabs.</p>
+                <p class="mb-0"><strong>Revalidation.</strong> Every <em>revalidate_interval</em>, the worker picks a batch of dead torrents and fires a DHT <code>get_peers</code> query. If <em>revalidate_min_peers</em> respond, the torrent is reinstated as alive. Otherwise it stays dead until the next sweep.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filters sub-tab — read-only view of the bitagent core's contentfilter -->
+        <div class="tab-panel" id="stab-filters">
+          <div class="flex items-center justify-between mb-6">
+            <div>
+              <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold)" data-help="Read-only view of the core's enforced-drop and shadow would-drop counters (via /api/filters/status). These filters are configured only through env vars on the core stack, not here.">Content Filters</h3>
+              <p class="text-sm text-muted mt-2">
+                Three high-volume rule groups are shown below. Their badges report the
+                operating state evidenced by the core: live effects, shadow decisions,
+                or no observed activity. Configuration remains on the core stack.
+              </p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="loadFiltersStatus()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Refresh
+            </button>
+          </div>
+
+          <div class="filter-grid mb-6">
+            <div class="filter-card" id="filterNsfw">
+              <div class="filter-card-head">
+                <div class="filter-icon" style="color:#f87171">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                </div>
+                <div>
+                  <div class="filter-name">NSFW Keyword Filter</div>
+                  <div class="text-xs text-subtle">Evaluates adult-content keywords in torrent titles</div>
+                </div>
+                <div class="filter-toggle" id="filterNsfwToggle"><span class="pill pill-neutral">--</span></div>
+              </div>
+              <div class="filter-stat">
+                <span class="text-xs text-subtle" id="filterNsfwCountLabel">Decision count</span>
+                <span class="font-mono text-sm" id="filterNsfwCount">--</span>
+              </div>
+              <div class="filter-env">
+                <code class="font-mono text-xs">CLASSIFIER_DELETE_XXX</code>
+              </div>
+            </div>
+
+            <div class="filter-card" id="filterNonLatin">
+              <div class="filter-card-head">
+                <div class="filter-icon" style="color:#fbbf24">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+                </div>
+                <div>
+                  <div class="filter-name">Non-Latin Script Filter</div>
+                  <div class="text-xs text-subtle">Evaluates titles that are primarily non-Latin (CJK, Cyrillic, etc.)</div>
+                </div>
+                <div class="filter-toggle" id="filterNonLatinToggle"><span class="pill pill-neutral">--</span></div>
+              </div>
+              <div class="filter-stat">
+                <span class="text-xs text-subtle" id="filterNonLatinCountLabel">Decision count</span>
+                <span class="font-mono text-sm" id="filterNonLatinCount">--</span>
+              </div>
+              <div class="filter-env">
+                <code class="font-mono text-xs">CLASSIFIER_NON_LATIN_FILTER</code>
+              </div>
+            </div>
+
+            <div class="filter-card" id="filterExt">
+              <div class="filter-card-head">
+                <div class="filter-icon" style="color:#a78bfa">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                </div>
+                <div>
+                  <div class="filter-name">Blocked Extensions</div>
+                  <div class="text-xs text-subtle">Evaluates primary file extensions against the blocklist</div>
+                </div>
+                <div class="filter-toggle" id="filterExtToggle"><span class="pill pill-neutral">--</span></div>
+              </div>
+              <div class="filter-stat">
+                <span class="text-xs text-subtle" id="filterExtCountLabel">Decision count</span>
+                <span class="font-mono text-sm" id="filterExtCount">--</span>
+              </div>
+              <div class="filter-env">
+                <code class="font-mono text-xs">CLASSIFIER_BLOCKED_EXTENSIONS</code>
+              </div>
+            </div>
+          </div>
+
+          <!-- Per-extension breakdown -->
+          <div class="card mb-6">
+            <div class="card-header">
+              <span class="card-title" data-help="Per-extension blocked decisions from bitagent_contentfilter_blocked_ext_total. This counter increments for both enforced drops and shadow would-drops; the status badge above tells you which mode the current boot has evidenced.">Blocked Extensions — Per-Type Counts</span>
+              <span class="text-xs text-subtle" id="filterExtTotal">--</span>
+            </div>
+            <div class="card-body">
+              <div id="filterExtBreakdown" class="ext-grid">
+                <div class="empty-state" style="padding:var(--space-6)">
+                  <p class="text-sm text-muted">Loading...</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Examined total -->
+          <div class="card">
+            <div class="card-header"><span class="card-title" data-help="Total torrents the core's contentfilter has examined since it booted (bitagent_contentfilter_examined_total). Enforced drops and shadow would-drops are separate subsets of this workload.">Pipeline Throughput</span></div>
+            <div class="card-body">
+              <p class="text-sm text-muted mb-3">Total torrents examined since boot. A shadow decision means the row was evaluated and retained; it is not a deletion.</p>
+              <div style="font-size:var(--text-2xl);font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums" id="filterExamined">--</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Block Lists sub-tab — liveness + CSAM read-only + operator block phrases -->
+        <div class="tab-panel" id="stab-blocklists">
+          <div class="flex items-center justify-between mb-6">
+            <div>
+              <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold)" data-help="Two automatic core blocklists (Liveness and CSAM), plus operator-managed block phrases that filter this dashboard's Library tab only.">Block Lists</h3>
+              <p class="text-sm text-muted mt-2">
+                Two automatic blocklists run on the bitagent core (Liveness + CSAM).
+                Below them: operator-managed block phrases that filter the Library tab
+                in this dashboard. (Future: feed these phrases into the core's filter chain.)
+              </p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="loadBlockLists()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Refresh
+            </button>
+          </div>
+
+          <!-- Automatic blocklists -->
+          <div class="grid-2 mb-6">
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title" data-help="Infohashes the core marked dead from qBittorrent evidence; these are filtered out of Torznab before Sonarr/Radarr see them. Counts come from /api/stats liveness.">Liveness Blocklist</span>
+                <span class="text-xs text-subtle">Per-infohash, qB-driven</span>
+              </div>
+              <div class="card-body">
+                <div class="kv-row"><span>Currently blocked</span><span class="font-mono" id="blListLivenessSize">--</span></div>
+                <div class="kv-row"><span>Filtered from Torznab</span><span class="font-mono" id="blListLivenessExcluded">--</span></div>
+                <div class="kv-row"><span>Block rate</span><span class="font-mono"><span id="blListLivenessRate">--</span> filtered/min</span></div>
+                <p class="text-xs text-muted mt-3">
+                  Configure thresholds in the <a href="#" onclick="switchSettingsTab('liveness');return false;">Liveness</a> sub-tab.
+                </p>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title" data-help="Core blocklist of known-illegal-content hashes from community feeds (CSAM_BLOCKLIST_FEED_URLS); matches are dropped before fetch. Empty means no feed configured. Counts via /api/filters/status.">CSAM Blocklist</span>
+                <span class="text-xs text-subtle">Pre-fetch double-hash defense</span>
+              </div>
+              <div class="card-body">
+                <div class="kv-row"><span>Blocklist entries</span><span class="font-mono" id="blListCsamEntries">--</span></div>
+                <div class="kv-row"><span>Lookups performed</span><span class="font-mono" id="blListCsamLookups">--</span></div>
+                <div class="kv-row"><span>Exports</span><span class="font-mono" id="blListCsamExports">--</span></div>
+                <p class="text-xs text-muted mt-3">
+                  Sourced from upstream community feeds via <code class="font-mono text-xs">CSAM_BLOCKLIST_FEED_URLS</code>.
+                  Empty = NoOp (no feed configured).
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Operator block phrases — full CRUD -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title" data-help="Operator-defined text phrases; any torrent whose title contains one is hidden from this dashboard's Library tab (case-insensitive substring). Does not affect the core or Torznab yet.">Operator Block Phrases</span>
+              <span class="text-xs text-subtle">Substring-matched against torrent titles. Library tab only (for now).</span>
+            </div>
+            <div class="card-body">
+              <div class="flex gap-2 mb-4">
+                <input
+                  type="text"
+                  id="blockPhraseInput"
+                  class="input flex-1"
+                  placeholder="Phrase (case-insensitive substring, e.g. 'TGx' or 'sample only')"
+                  maxlength="200"
+                  onkeydown="if(event.key==='Enter') addBlockPhrase()"
+                />
+                <input
+                  type="text"
+                  id="blockPhraseNote"
+                  class="input"
+                  style="width:240px"
+                  placeholder="Optional note (why)"
+                  maxlength="120"
+                />
+                <button class="btn btn-primary" onclick="addBlockPhrase()">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  Add
+                </button>
+              </div>
+              <div id="blockPhraseError" class="text-xs" style="color:var(--color-danger);margin-bottom:var(--space-3);display:none"></div>
+              <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Phrase</th>
+                    <th>Note</th>
+                    <th style="text-align:right" data-help="How many times a Library-tab title matched this phrase and was hidden. Incremented each time the phrase blocks a result.">Hits</th>
+                    <th>Added</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="blockPhraseTable">
+                  <tr><td colspan="5"><div class="empty-state"><p class="text-sm text-muted">Loading...</p></div></td></tr>
+                </tbody>
+              </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Audit sub-tab -->
+        <div class="tab-panel" id="stab-audit">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title" data-help="Chronological record of settings-override changes (key, old value, new value, actor) from the audit_log table via /api/settings/audit.">Configuration Audit Log</span>
+              <span class="text-xs text-subtle">Every settings change is recorded</span>
+            </div>
+            <div class="card-body" id="auditLog">
+              <div class="text-sm text-muted" style="text-align:center;padding:var(--space-8)">Loading audit log...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════ SYSTEM TAB ══════════════════════════ -->
+      <div class="tab-panel" id="tab-system">
+        <div class="tab-bar">
+          <button class="tab-btn active" data-systab="health" onclick="switchSystemTab('health')">Health Check</button>
+          <button class="tab-btn" data-systab="torznab" onclick="switchSystemTab('torznab')">Search Test</button>
+          <button class="tab-btn" data-systab="graphql" onclick="switchSystemTab('graphql')">GraphQL Explorer</button>
+          <button class="tab-btn" data-systab="metrics" onclick="switchSystemTab('metrics')">Raw Metrics</button>
+        </div>
+
+        <!-- Health sub-tab -->
+        <div class="tab-panel active" id="systab-health">
+          <div class="grid-3">
+            <div class="card">
+              <div class="card-header"><span class="card-title" data-help="Live reachability of the BitAgent core, derived from the bounded /api/stats snapshot: GraphQL and Prometheus are probed independently. Torznab is not inferred from either route.">BitAgent Core</span></div>
+              <div class="card-body flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm" data-help="OK if the core answered the GraphQL query behind /api/stats on the last poll; Unreachable if it did not.">GraphQL API</span>
+                  <span class="pill pill-neutral" id="sysGql">--</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-sm" data-help="Not probed. The Torznab feed may share a server with GraphQL, but GraphQL success does not prove the Torznab route or its API-key path is healthy.">Torznab Endpoint</span>
+                  <span class="pill pill-neutral" id="sysTz">--</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-sm" data-help="OK if the core's Prometheus /metrics endpoint returned data on the last poll; Unreachable if empty or unreachable.">Metrics</span>
+                  <span class="pill pill-neutral" id="sysMetrics">--</span>
+                </div>
+              </div>
+            </div>
+            <!-- Wired from /api/stats + /api/auth/tiers by loadSystem() —
+                 no hardcoded "Running"/"Connected" fiction (ops-dashboard
+                 honesty rule). Ports/URLs come from the page itself and the
+                 core URL setting rather than static copy. -->
+            <div class="card">
+              <div class="card-header"><span class="card-title" data-help="Status of this dashboard app itself: its version, its sidecar SQLite database, and which authentication tiers are active.">Dashboard</span></div>
+              <div class="card-body flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm">App Version</span>
+                  <span class="font-mono text-sm">v{{ app_version }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-sm" data-help="The dashboard's own sidecar SQLite database (settings, audit log, wants); Connected if a test SELECT succeeded on the last poll.">SQLite DB</span>
+                  <span class="pill pill-neutral" id="sysDb">--</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-sm" data-help="Which of the four auth tiers are active (SSO, forwarded-user headers, NPM headers, API key); shows Open (no auth) if none is enforced.">Auth Mode</span>
+                  <span class="pill pill-neutral" id="sysAuthMode">--</span>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-header"><span class="card-title" data-help="The endpoint URLs this dashboard is configured to talk to: the core's GraphQL and metrics addresses (from settings) and this page's own origin.">Network</span></div>
+              <div class="card-body flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm" data-help="The configured GraphQL endpoint URL the dashboard queries the core through (settings field bitagent_graphql_url).">Core GraphQL</span>
+                  <span class="font-mono text-xs truncate sys-url" id="sysCoreUrl" title="">--</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-sm" data-help="The configured Prometheus metrics endpoint URL the dashboard scrapes the core through (settings field bitagent_metrics_url).">Core Metrics</span>
+                  <span class="font-mono text-xs truncate sys-url" id="sysMetricsUrl" title="">--</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-sm">Dashboard</span>
+                  <span class="font-mono text-sm" id="sysDashOrigin">--</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mt-6">
+            <div class="card-header">
+              <span class="card-title" data-help="On demand, fetches four dashboard endpoints (/healthz, /api/me, /api/stats, /api/metrics) and reports OK/FAIL, HTTP status, and round-trip time for each.">Connectivity Test</span>
+              <button class="btn btn-primary btn-sm" onclick="runHealthChecks()">Run All Checks</button>
+            </div>
+            <div class="card-body" id="healthCheckResults">
+              <p class="text-sm text-muted">Click "Run All Checks" to test connectivity to all services.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Search test sub-tab. Honesty note: this exercises the
+             dashboard's own /api/torrents JSON search (the same GraphQL
+             path the Library uses) — it does NOT hit the *arr-facing
+             Torznab endpoint, which is separately API-key-gated on the
+             core. The old card claimed to test Torznab and offered a
+             t=search/tvsearch/... select that was wired to nothing. -->
+        <div class="tab-panel" id="systab-torznab">
+          <div class="card">
+            <div class="card-header"><span class="card-title" data-help="Runs a search against the core's indexed catalog via the dashboard's own GraphQL-backed /api/torrents query (the same path the Library uses); it does NOT hit the *arr-facing Torznab endpoint.">Search Tester</span></div>
+            <div class="card-body">
+              <p class="text-sm text-muted mb-4">Run a search against the core's indexed catalog (the same GraphQL-backed query the Library tab uses) and inspect the raw JSON. Filter by content type below.</p>
+              <div class="grid-2 mb-4">
+                <div class="input-group">
+                  <label class="input-label" for="tzSearchType">Content Type</label>
+                  <select class="select" id="tzSearchType">
+                    <option value="">All types</option>
+                    <option value="movie">Movie</option>
+                    <option value="tv_show">TV Show</option>
+                    <option value="music">Music</option>
+                    <option value="ebook">eBook</option>
+                    <option value="software">Software</option>
+                  </select>
+                </div>
+                <div class="input-group">
+                  <label class="input-label" for="tzQuery">Query</label>
+                  <input class="input" id="tzQuery" placeholder="Search term...">
+                </div>
+              </div>
+              <button class="btn btn-primary" onclick="runTorznabTest()">Execute Query</button>
+              <div class="code-block mt-4" id="tzResult" style="display:none;max-height:400px;overflow:auto;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- GraphQL sub-tab -->
+        <div class="tab-panel" id="systab-graphql">
+          <div class="card">
+            <div class="card-header"><span class="card-title" data-help="Sends a raw GraphQL query and JSON variables to the BitAgent core (via /api/graphql) and shows the raw response; for ad-hoc inspection of the core's schema.">GraphQL Explorer</span></div>
+            <div class="card-body">
+              <p class="text-sm text-muted mb-4">Run queries against the BitAgent GraphQL API.</p>
+              <div class="input-group mb-4">
+                <label class="input-label">Query</label>
+                <textarea class="textarea gql-editor" id="gqlQuery" rows="8">{
+  torrentContent {
+    search(input: { limit: 3, totalCount: true }) {
+      totalCount
+      items { infoHash contentType seeders torrent { name } }
+    }
+  }
+}</textarea>
+              </div>
+              <div class="input-group mb-4">
+                <label class="input-label">Variables (JSON)</label>
+                <textarea class="textarea gql-editor" id="gqlVars" rows="3">{}</textarea>
+              </div>
+              <button class="btn btn-primary" onclick="runGqlQuery()">Execute</button>
+              <div class="mt-4">
+                <div class="input-label mb-2">Result</div>
+                <div class="gql-result" id="gqlResult">Results will appear here...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Metrics sub-tab -->
+        <div class="tab-panel" id="systab-metrics">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title" data-help="The core's Prometheus /metrics exposition parsed into raw metric-name to value pairs (via /api/metrics), shown unfiltered for debugging.">Prometheus Metrics (Raw)</span>
+              <button class="btn btn-secondary btn-sm" onclick="loadRawMetrics()">Refresh</button>
+            </div>
+            <div class="card-body">
+              <div class="code-block" id="rawMetrics" style="max-height:600px;overflow:auto;">Loading metrics...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- ── Want Modal ────────────────────────────────────────────────────── -->
+<!-- ── Torrent Detail Modal ──────────────────────────────────────────── -->
+<div class="modal-overlay" id="torrentModal">
+  <div class="modal" style="max-width:720px;">
+    <div class="modal-header">
+      <span class="modal-title">Release Details</span>
+      <button class="modal-close" onclick="closeTorrentModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="torrentDetail">Loading...</div>
+    <div class="modal-footer" id="torrentActions" style="display:none;">
+      <div class="flex gap-2" style="flex-wrap:wrap;">
+        <a id="magnetLink" href="#" class="btn btn-secondary btn-sm" target="_blank">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 2a3 3 0 013 3v4a9 9 0 01-9 9 9 9 0 01-9-9V5a3 3 0 013-3h12z"/><path d="M9 14V5"/><path d="M15 14V5"/></svg>
+          Open Magnet
+        </a>
+        <button onclick="copyMagnet()" class="btn btn-ghost btn-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy Magnet
+        </button>
+      </div>
+      <div class="flex gap-2" id="arrPushBtns" style="flex-wrap:wrap;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Group Detail Modal ───────────────────────────────────────────── -->
+<div class="modal-overlay" id="groupDetailModal" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="modal gd-modal" style="max-width:780px;width:95vw">
+    <button class="modal-close gd-close" onclick="document.getElementById('groupDetailModal').classList.remove('open')">✕</button>
+    <div class="gd-hero">
+      <div class="gd-poster" id="groupDetailPoster"></div>
+      <div class="gd-hero-info">
+        <h2 class="gd-title" id="groupDetailTitle"></h2>
+        <div class="flex items-center gap-2 mt-1" id="groupDetailMeta"></div>
+        <div class="gd-filters" id="groupDetailFilters"></div>
+      </div>
+    </div>
+    <div class="modal-body gd-body" id="groupDetailBody"></div>
+  </div>
+</div>
+
+<!-- ── Toast container ───────────────────────────────────────────────── -->
+<div class="toast-container" id="toasts"></div>
+
+<script src="/static/js/torrent-kind.js?v={{ asset_version }}"></script>
+<script src="/static/js/norm-title.js?v={{ asset_version }}"></script>
+<script src="/static/js/app.js?v={{ asset_version }}"></script>
+{% if app_switcher_script_url %}
+<!-- Optional shared app switcher (APP_SWITCHER_SCRIPT_URL). data-me: this app
+     exposes the verified privilege as `priv` on /api/me, and that check must
+     be same-origin. -->
+<script src="{{ app_switcher_script_url }}"
+        data-current="bitagent" data-me="/api/me" defer></script>
+{% endif %}
+</body>
+</html>
