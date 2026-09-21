@@ -10,8 +10,9 @@ const (
 // Config controls the prospective production-evaluation capture. The feature
 // is deliberately disabled by default. When disabled, Recorder returns before
 // it initializes the database or performs a privacy lookup. The independent
-// expiry janitor remains active so disabling collection cannot disable the
-// retention guarantee.
+// expiry janitor (worker key llm_evaluation_capture_janitor, started by
+// `worker run --all`) ignores Enabled so disabling collection cannot disable
+// the retention guarantee.
 type Config struct {
 	Enabled         bool          `yaml:"enabled"`
 	Retention       time.Duration `yaml:"retention"`

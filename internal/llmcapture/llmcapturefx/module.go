@@ -4,9 +4,15 @@ import (
 	"github.com/spencercnorton/bitagent/internal/config/configfx"
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
+
+// janitorWorkerKey is the worker registry key for the capture expiry janitor.
+// `worker run --all` starts it; a `--keys` subset that omits it never opens
+// the database for retention.
+const janitorWorkerKey = "llm_evaluation_capture_janitor"
 
 func New() fx.Option {
 	return fx.Module(
@@ -17,7 +23,7 @@ func New() fx.Option {
 		),
 		fx.Provide(llmcapture.NewPostgresStore),
 		fx.Provide(provideRecorder),
-		fx.Invoke(registerExpiryJanitor),
+		fx.Provide(fx.Annotated{Group: "workers", Target: provideExpiryJanitorWorker}),
 	)
 }
 
@@ -29,19 +35,17 @@ func provideRecorder(
 	return llmcapture.NewRecorder(cfg, privacy, store)
 }
 
-func registerExpiryJanitor(
-	lifecycle fx.Lifecycle,
+func provideExpiryJanitorWorker(
 	cfg llmcapture.Config,
 	store *llmcapture.PostgresStore,
 	logger *zap.SugaredLogger,
-) error {
+) (worker.Worker, error) {
 	janitor, err := llmcapture.NewJanitor(cfg, store, logger)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	lifecycle.Append(fx.Hook{
+	return worker.NewWorker(janitorWorkerKey, fx.Hook{
 		OnStart: janitor.Start,
 		OnStop:  janitor.Stop,
-	})
-	return nil
+	}), nil
 }

@@ -65,7 +65,7 @@ type RevalidatorParams struct {
 	Config   evidence.Config
 	Resolver *Resolver
 	Store    *Store
-	KTable   ktable.Table
+	KTable   lazy.Lazy[ktable.Table]
 	Client   lazy.Lazy[client.Client]
 	Metrics  *Metrics
 	Logger   *zap.SugaredLogger
@@ -85,7 +85,7 @@ func NewRevalidator(p RevalidatorParams) RevalidatorResult {
 		cfg:      p.Config.Liveness,
 		resolver: p.Resolver,
 		store:    p.Store,
-		kTable:   p.KTable,
+		lazyKT:   p.KTable,
 		client:   p.Client,
 		metrics:  p.Metrics,
 		logger:   p.Logger.Named("liveness-revalidator"),
@@ -100,6 +100,7 @@ type revalidator struct {
 	cfg      evidence.LivenessConfig
 	resolver *Resolver
 	store    *Store
+	lazyKT   lazy.Lazy[ktable.Table]
 	kTable   ktable.Table
 	client   lazy.Lazy[client.Client]
 	metrics  *Metrics
@@ -117,6 +118,13 @@ func (r *revalidator) start(context.Context) error {
 	if r.cfg.RevalidateInterval <= 0 {
 		return errors.New("liveness: revalidate_interval must be > 0")
 	}
+	// Resolving the routing table here (not at construction) keeps the
+	// external-IP lookup out of processes that never enable this worker.
+	kTable, err := r.lazyKT.Get()
+	if err != nil {
+		return err
+	}
+	r.kTable = kTable
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
 	r.wg.Add(2)

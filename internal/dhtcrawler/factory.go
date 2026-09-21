@@ -37,7 +37,7 @@ type Params struct {
 	// consumes them.
 	ContentFilter        *contentfilter.Filter
 	ContentFilterMetrics *contentfilter.Metrics
-	KTable               ktable.Table
+	KTable               lazy.Lazy[ktable.Table]
 	Client               lazy.Lazy[client.Client]
 	MetainfoRequester    metainforequester.Requester
 	BanningChecker       banning.Checker `name:"metainfo_banning_checker"`
@@ -50,14 +50,15 @@ type Params struct {
 	Dao                  lazy.Lazy[*dao.Query]
 	BlockingManager      lazy.Lazy[blocking.Manager]
 	DiscoveredNodes      concurrency.BatchingChannel[ktable.Node] `name:"dht_discovered_nodes"`
-	// RandomFallback is true iff the node ID pipeline booted in
-	// random-fallback mode (external IP could not be resolved →
-	// node ID is not BEP-42 derived). Emitted by dhtfx; see the external-IP watcher.
-	// The crawler uses this to gate outbound sample_infohashes,
-	// which is the RPC peers actively refuse from non-compliant
-	// IDs — running it while non-compliant is wasted bandwidth.
-	RandomFallback bool `name:"dht_random_fallback"`
-	Logger         *zap.SugaredLogger
+	// Identity carries RandomFallback: true iff the node ID pipeline
+	// resolved in random-fallback mode (external IP could not be
+	// resolved → node ID is not BEP-42 derived). Emitted lazily by
+	// dhtfx; see the external-IP watcher. The crawler uses it to gate
+	// outbound sample_infohashes, which is the RPC peers actively
+	// refuse from non-compliant IDs — running it while non-compliant
+	// is wasted bandwidth.
+	Identity lazy.Lazy[protocol.NodeIdentity]
+	Logger   *zap.SugaredLogger
 }
 
 type Result struct {
@@ -114,6 +115,16 @@ func New(params Params) Result {
 					if err != nil {
 						return err
 					}
+					// Client.Get already resolved the identity and the
+					// routing table; these are memoised hits.
+					kTable, err := params.KTable.Get()
+					if err != nil {
+						return err
+					}
+					identity, err := params.Identity.Get()
+					if err != nil {
+						return err
+					}
 					query, err := params.Dao.Get()
 					if err != nil {
 						return err
@@ -152,7 +163,7 @@ func New(params Params) Result {
 					}
 
 					c = crawler{
-						kTable:                       params.KTable,
+						kTable:                       kTable,
 						client:                       cl,
 						metainfoRequester:            params.MetainfoRequester,
 						banningChecker:               params.BanningChecker,
@@ -198,7 +209,7 @@ func New(params Params) Result {
 						},
 						blockingManager:      blockingManager,
 						soughtNodeID:         &concurrency.AtomicValue[protocol.ID]{},
-						randomFallback:       params.RandomFallback,
+						randomFallback:       identity.RandomFallback,
 						stopped:              make(chan struct{}),
 						persistedTotal:       persistedTotal,
 						contentFilter:        cf,

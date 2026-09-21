@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable/btree"
 	"github.com/spencercnorton/bitagent/internal/telemetry/dualemit"
 	"go.uber.org/fx"
@@ -12,12 +14,12 @@ import (
 
 type Params struct {
 	fx.In
-	NodeID ID `name:"dht_node_id"`
+	Identity lazy.Lazy[protocol.NodeIdentity]
 }
 
 type Result struct {
 	fx.Out
-	Table                Table
+	Table                lazy.Lazy[Table]
 	NodesCountGauge      prometheus.Collector `group:"prometheus_collectors"`
 	NodesAddedCounter    prometheus.Collector `group:"prometheus_collectors"`
 	NodesDroppedCounter  prometheus.Collector `group:"prometheus_collectors"`
@@ -32,10 +34,37 @@ const (
 )
 
 func New(p Params) Result {
+	// Collectors are allocated up front so they register with Prometheus
+	// exactly once; the table itself waits for the node identity, which
+	// is resolved on first use (external-IP lookup) rather than at
+	// construction.
+	nodesCollector := newPrometheusCollector("nodes")
+	hashesCollector := newPrometheusCollector("hashes")
+
+	table := lazy.New(func() (Table, error) {
+		identity, err := p.Identity.Get()
+		if err != nil {
+			return nil, err
+		}
+		return newTable(identity.ID, nodesCollector, hashesCollector), nil
+	})
+
+	return Result{
+		Table:                table,
+		NodesCountGauge:      nodesCollector.CountGauge,
+		NodesAddedCounter:    nodesCollector.AddedCounter,
+		NodesDroppedCounter:  nodesCollector.DroppedCounter,
+		HashesCountGauge:     hashesCollector.CountGauge,
+		HashesAddedCounter:   hashesCollector.AddedCounter,
+		HashesDroppedCounter: hashesCollector.DroppedCounter,
+	}
+}
+
+func newTable(nodeID ID, nodesCollector, hashesCollector btree.PrometheusCollector) Table {
 	rm := &reverseMap{addrs: make(map[string]*infoForAddr)}
 	nodes := nodeKeyspace{
 		keyspace: newKeyspace[netip.AddrPort, NodeOption, Node, *node](
-			p.NodeID,
+			nodeID,
 			nodesK,
 			func(id ID, addr netip.AddrPort) *node {
 				return &node{
@@ -49,10 +78,10 @@ func New(p Params) Result {
 			},
 		),
 	}
-	nodesCollector := patchPrometheusCollector("nodes", &nodes.keyspace)
+	patchPrometheusCollector(nodesCollector, &nodes.keyspace)
 	hashes := hashKeyspace{
 		keyspace: newKeyspace[[]HashPeer, HashOption, Hash, *hash](
-			p.NodeID,
+			nodeID,
 			hashesK,
 			func(id ID, peers []HashPeer) *hash {
 				peersMap := make(map[string]HashPeer, len(peers))
@@ -69,23 +98,15 @@ func New(p Params) Result {
 			},
 		),
 	}
-	hashesCollector := patchPrometheusCollector("hashes", &hashes.keyspace)
+	patchPrometheusCollector(hashesCollector, &hashes.keyspace)
 
-	return Result{
-		Table: &table{
-			origin:  p.NodeID,
-			nodesK:  nodesK,
-			hashesK: hashesK,
-			nodes:   nodes,
-			hashes:  hashes,
-			addrs:   rm,
-		},
-		NodesCountGauge:      nodesCollector.CountGauge,
-		NodesAddedCounter:    nodesCollector.AddedCounter,
-		NodesDroppedCounter:  nodesCollector.DroppedCounter,
-		HashesCountGauge:     hashesCollector.CountGauge,
-		HashesAddedCounter:   hashesCollector.AddedCounter,
-		HashesDroppedCounter: hashesCollector.DroppedCounter,
+	return &table{
+		origin:  nodeID,
+		nodesK:  nodesK,
+		hashesK: hashesK,
+		nodes:   nodes,
+		hashes:  hashes,
+		addrs:   rm,
 	}
 }
 
@@ -94,14 +115,8 @@ const (
 	subsystem = "dht_ktable"
 )
 
-func patchPrometheusCollector[
-	Input any,
-	Option any,
-	ItemPublic keyspaceItem,
-	ItemPrivate keyspaceItemPrivate[Input, Option, ItemPublic],
-](itemName string, ks *keyspace[Input, Option, ItemPublic, ItemPrivate]) btree.PrometheusCollector {
-	collector := btree.PrometheusCollector{
-		Btree: ks.btree,
+func newPrometheusCollector(itemName string) btree.PrometheusCollector {
+	return btree.PrometheusCollector{
 		CountGauge: dualemit.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
@@ -121,7 +136,16 @@ func patchPrometheusCollector[
 			Help:      "Total number of " + itemName + " dropped from routing table.",
 		}),
 	}
-	ks.btree = collector
+}
 
-	return collector
+// patchPrometheusCollector wraps the keyspace's btree in the given
+// (already registered) collector.
+func patchPrometheusCollector[
+	Input any,
+	Option any,
+	ItemPublic keyspaceItem,
+	ItemPrivate keyspaceItemPrivate[Input, Option, ItemPublic],
+](collector btree.PrometheusCollector, ks *keyspace[Input, Option, ItemPublic, ItemPrivate]) {
+	collector.Btree = ks.btree
+	ks.btree = collector
 }

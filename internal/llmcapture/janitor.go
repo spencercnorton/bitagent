@@ -16,6 +16,8 @@ type captureExpiryStore interface {
 // Janitor deletes expired capture payloads and their cascaded raw-infohash
 // admissions independently of Config.Enabled. Capture collection can be
 // disabled immediately after a bounded window without suspending retention.
+// It runs as the llm_evaluation_capture_janitor worker, so only processes
+// whose enabled workers include it ever touch the database for retention.
 type Janitor struct {
 	cfg    Config
 	store  captureExpiryStore

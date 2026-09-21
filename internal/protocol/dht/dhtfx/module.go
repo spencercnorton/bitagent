@@ -7,6 +7,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spencercnorton/bitagent/internal/config/configfx"
+	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/protocol/dht/client"
 	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
@@ -25,13 +26,12 @@ func New() fx.Option {
 		fx.Provide(
 			provideExternalIPResolver,
 			provideExternalIPMetrics,
-			provideNodeID,
+			provideNodeIdentity,
 			client.New,
 			ktable.New,
 			responder.New,
 			server.New,
 		),
-		fx.Invoke(startExternalIPWatcher),
 	)
 }
 
@@ -67,19 +67,82 @@ func provideExternalIPMetrics() externalIPMetricsResult {
 	}
 }
 
-// nodeIDResult is the startup output of the BEP-42 pipeline: the
-// node ID the crawler should use, the IP it was derived from (zero
-// when we fell back to random), and whether the fallback is active.
-// The watcher consumes all three.
-type nodeIDResult struct {
-	fx.Out
+type identityParams struct {
+	fx.In
 
-	NodeID         protocol.ID `name:"dht_node_id"`
-	InitialIP      netip.Addr  `name:"dht_initial_external_ip"`
-	RandomFallback bool        `name:"dht_random_fallback"`
+	Config     externalip.FxConfig
+	Resolver   externalip.Resolver
+	Metrics    *externalip.WatcherMetrics
+	Shutdowner fx.Shutdowner
+	Logger     *zap.SugaredLogger
 }
 
-// provideNodeID resolves the crawler's DHT node ID.
+type identityResult struct {
+	fx.Out
+
+	Identity lazy.Lazy[protocol.NodeIdentity]
+	AppHook  fx.Hook `group:"app_hooks"`
+}
+
+// provideNodeIdentity wires the BEP-42 pipeline behind a lazy so the
+// external-IP lookup happens on the first DHT consumer (`ktable`,
+// `client`) rather than at fx construction. A process whose enabled
+// workers never touch the DHT (e.g. `worker run --keys ui`) makes no
+// outbound lookup, logs no node-id line and never runs the watcher.
+//
+// The watcher starts the moment the identity is resolved — same as the
+// dht server, which starts its socket inside its lazy and stops it via
+// `app_hooks` — so under `--all` the tuple it observes is unchanged.
+func provideNodeIdentity(p identityParams) identityResult {
+	log := p.Logger.Named("externalip.watcher")
+
+	// ctx is created up front so an OnStop can precede first Get()
+	// without leaking a watcher goroutine (see internal/ui/worker.go).
+	ctx, cancel := context.WithCancel(context.Background())
+
+	onChange := func(old, current netip.Addr) {
+		log.Warnw(
+			"external IP invalidates current node ID — shutting down so the container "+
+				"restarts with a fresh BEP-42-compliant ID",
+			"old", old.String(),
+			"current", current.String(),
+		)
+		if err := p.Shutdowner.Shutdown(); err != nil {
+			log.Errorw("shutdowner.Shutdown failed", "err", err.Error())
+		}
+	}
+
+	identity := lazy.New(func() (protocol.NodeIdentity, error) {
+		id := resolveNodeIdentity(p.Config, p.Resolver, p.Metrics, p.Logger)
+		watcher := externalip.NewWatcher(
+			p.Resolver,
+			id.ID,
+			id.ExternalIP,
+			id.RandomFallback,
+			externalip.WatcherConfig{
+				Interval:                 p.Config.Interval,
+				JitterFraction:           p.Config.JitterFraction,
+				PerCheckTimeout:          p.Config.PerCheckTimeout,
+				ConsecutiveConfirmations: p.Config.ConsecutiveConfirmations,
+			},
+			onChange,
+			log,
+			p.Metrics,
+		)
+		go watcher.Run(ctx)
+		return id, nil
+	})
+
+	return identityResult{
+		Identity: identity,
+		AppHook: fx.Hook{OnStop: func(context.Context) error {
+			cancel()
+			return nil
+		}},
+	}
+}
+
+// resolveNodeIdentity resolves the crawler's DHT node ID.
 //
 // BEP-42 ("DHT Security extension") ties node ID to external IP via
 // CRC32C. Compliant derivation unlocks storage-eligibility on
@@ -96,17 +159,27 @@ type nodeIDResult struct {
 //     trigger a restart so we graduate into compliance.
 //  3. Derivation fails on the resolved IP (pathological) → WARN +
 //     fallback as (2).
-func provideNodeID(
+//
+// The watcher that follows is intentionally unchanged in behaviour:
+//
+//  1. No in-flight ID swap. Kademlia caches our ID at peers; a clean
+//     restart is less disruptive than trying to hot-rotate.
+//  2. No restart on resolver error. Only confirmed, validated,
+//     BEP-42-invalidating IPs fire.
+//  3. No restart on raw IP inequality. The trigger condition is
+//     `!VerifySecureNodeID(currentID, newIP)`, which is what peers
+//     actually enforce.
+func resolveNodeIdentity(
 	cfg externalip.FxConfig,
 	resolver externalip.Resolver,
 	metrics *externalip.WatcherMetrics,
 	logger *zap.SugaredLogger,
-) nodeIDResult {
+) protocol.NodeIdentity {
 	log := logger.Named("dht_node_id")
 
 	// Startup path gets its own (short) deadline — we'd rather boot
 	// in random-fallback mode and let the watcher recover than hold
-	// the whole fx graph on a slow IP echo service.
+	// the first DHT worker on a slow IP echo service.
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.StartupTimeout)
 	defer cancel()
 
@@ -126,9 +199,8 @@ func provideNodeID(
 
 		metrics.SetSecureNodeIDValid(false)
 
-		return nodeIDResult{
-			NodeID:         protocol.RandomNodeIDWithClientSuffix(),
-			InitialIP:      netip.Addr{},
+		return protocol.NodeIdentity{
+			ID:             protocol.RandomNodeIDWithClientSuffix(),
 			RandomFallback: true,
 		}
 	}
@@ -140,9 +212,8 @@ func provideNodeID(
 
 		metrics.SetSecureNodeIDValid(false)
 
-		return nodeIDResult{
-			NodeID:         protocol.RandomNodeIDWithClientSuffix(),
-			InitialIP:      netip.Addr{},
+		return protocol.NodeIdentity{
+			ID:             protocol.RandomNodeIDWithClientSuffix(),
 			RandomFallback: true,
 		}
 	}
@@ -151,83 +222,8 @@ func provideNodeID(
 		"external_ip", ip.String())
 	metrics.SetSecureNodeIDValid(true)
 
-	return nodeIDResult{
-		NodeID:         id,
-		InitialIP:      ip,
-		RandomFallback: false,
+	return protocol.NodeIdentity{
+		ID:         id,
+		ExternalIP: ip,
 	}
-}
-
-type watcherParams struct {
-	fx.In
-
-	Config         externalip.FxConfig
-	Resolver       externalip.Resolver
-	Metrics        *externalip.WatcherMetrics
-	NodeID         protocol.ID `name:"dht_node_id"`
-	InitialIP      netip.Addr  `name:"dht_initial_external_ip"`
-	RandomFallback bool        `name:"dht_random_fallback"`
-	Lifecycle      fx.Lifecycle
-	Shutdowner     fx.Shutdowner
-	Logger         *zap.SugaredLogger
-}
-
-// startExternalIPWatcher hooks a background goroutine into the fx
-// lifecycle that polls the external IP and fires when the current
-// node ID no longer verifies. On confirmed invalidation, it calls
-// `fx.Shutdowner.Shutdown()` so the container runtime's restart
-// policy brings us back with a fresh node ID.
-//
-// Intentional non-goals:
-//
-//  1. No in-flight ID swap. Kademlia caches our ID at peers; a clean
-//     restart is less disruptive than trying to hot-rotate.
-//  2. No restart on resolver error. Only confirmed, validated,
-//     BEP-42-invalidating IPs fire.
-//  3. No restart on raw IP inequality. The trigger condition is
-//     `!VerifySecureNodeID(currentID, newIP)`, which is what peers
-//     actually enforce.
-func startExternalIPWatcher(p watcherParams) {
-	log := p.Logger.Named("externalip.watcher")
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	onChange := func(old, current netip.Addr) {
-		log.Warnw(
-			"external IP invalidates current node ID — shutting down so the container "+
-				"restarts with a fresh BEP-42-compliant ID",
-			"old", old.String(),
-			"current", current.String(),
-		)
-		if err := p.Shutdowner.Shutdown(); err != nil {
-			log.Errorw("shutdowner.Shutdown failed", "err", err.Error())
-		}
-	}
-
-	watcher := externalip.NewWatcher(
-		p.Resolver,
-		p.NodeID,
-		p.InitialIP,
-		p.RandomFallback,
-		externalip.WatcherConfig{
-			Interval:                 p.Config.Interval,
-			JitterFraction:           p.Config.JitterFraction,
-			PerCheckTimeout:          p.Config.PerCheckTimeout,
-			ConsecutiveConfirmations: p.Config.ConsecutiveConfirmations,
-		},
-		onChange,
-		log,
-		p.Metrics,
-	)
-
-	p.Lifecycle.Append(fx.Hook{
-		OnStart: func(context.Context) error {
-			go watcher.Run(ctx)
-			return nil
-		},
-		OnStop: func(context.Context) error {
-			cancel()
-			return nil
-		},
-	})
 }

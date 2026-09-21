@@ -16,7 +16,7 @@ A: No. BitAgent complements Prowlarr rather than replacing it. You should config
 
 ### Q: What protocols does BitAgent actually index?
 
-A: BitAgent primarily indexes BitTorrent v2 and standard v1 torrents via DHT, BEP-09 fast resume, and peer exchange. It parses .torrent files, magnet URIs, and tracker announces to extract metadata like size, seeders, and file lists. It does not index Usenet, HTTP trackers, or direct download links out of the box.
+A: BitAgent indexes torrents it discovers on the mainline DHT and fetches their metadata from peers over BEP-9 (`ut_metadata`). From that it extracts size, file lists and names; seeder/leecher counts come from the optional `seeds` worker, which scrapes public trackers over BEP-15. It does not index Usenet, HTTP trackers, or direct download links out of the box.
 
 ### Q: How does it differ from standard DHT crawlers?
 
@@ -26,23 +26,19 @@ A: Generic DHT crawlers dump raw k-bucket entries and lack parsing logic, wherea
 
 ### Q: What are the Docker Compose prerequisites?
 
-A: You need Docker 24.0+, Docker Compose v2.24+, and a minimum of 2 vCPUs and 512MB RAM allocated to the service. Ensure your host kernel supports `net.ipv4.ip_forward=1` and `net.core.somaxconn=65535` for DHT binding. Create `/var/lib/bitagent/data` and `/etc/bitagent` before mounting volumes.
+A: You need Docker with the Compose v2 plugin (`docker compose version`), a Postgres 14+ instance (the bundled `postgres:16` service in `examples/docker-compose.public.yml` works with zero configuration), and a minimum of 2 vCPUs and 512MB RAM allocated to the service. There are no host directories to pre-create: the reference stack uses named volumes. See [quickstart.md](quickstart.md).
 
 ### Q: How do I initialize the Postgres database?
 
-A: BitAgent auto-migrates tables on first boot if the schema is missing. Set `DATABASE_URL=postgres://user:pass@postgres:5432/bitagent` in your compose environment block. For external Postgres, run `CREATE DATABASE bitagent OWNER bitagent;` and verify connectivity with `pg_isready -h db -U bitagent` before starting.
-
-### Q: How do I fix pg_ctl startup errors?
-
-A: Check `/var/log/bitagent/pg_ctl.log` for lockfile conflicts or insufficient `shared_buffers` before rebooting. Run `pg_ctlcluster 16 main restart` if systemd is involved, or remove `/var/lib/postgresql/data/PG_VERSION` if the cluster is corrupted. Ensure `postgresql.conf` matches your `shmmax` kernel parameter.
+A: BitAgent auto-migrates tables on first boot if the schema is missing. Point it at the database with `POSTGRES_HOST`, `POSTGRES_PORT` (`5432`), `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_NAME` (default `bitmagnet`, kept for compatibility with pre-rebrand deployments), or pass one `POSTGRES_DSN` instead. For external Postgres, create the database and user first and verify connectivity with `pg_isready -h <host> -U <user>` before starting.
 
 ### Q: How should persistent volumes be configured?
 
-A: Mount `/var/lib/bitagent/data` for the object store and `/var/lib/postgresql/data` for WAL files inside the compose file. Use `volumes: - ./data:/var/lib/bitagent/data` in `docker-compose.yml` with `chown 1000:1000`. Set `BITAGENT_DATA_DIR=/var/lib/bitagent/data` to avoid permission denied errors during classifying.
+A: Postgres is the store, so the volume that matters is the database's `/var/lib/postgresql/data`. The core itself keeps only optional small state under `/root/.config/bitmagnet` (a `config.yml`, if you use one) and `/root/.local/share/bitmagnet` (the optional log rotator), and the dashboard keeps its SQLite file under `/data`. The reference compose file mounts all four as named volumes; there is no data-directory environment variable to set.
 
 ### Q: What network mode is required for DHT?
 
-A: Use `network_mode: host` or map UDP 4413 explicitly to expose your DHT node to the public tracker network. BitAgent binds UDP to `0.0.0.0:4413` by default and will silently drop announcements if NAT traversal fails. Add `BITAGENT_DHT_BIND_ADDR=0.0.0.0:4413` and verify connectivity with `dig +short k.bittorrent.org`.
+A: None beyond outbound UDP. The DHT server binds UDP `3334` on all interfaces (`DHT_SERVER_PORT`); the reference compose file publishes `3334/tcp` and `3334/udp`. Traffic is outbound-dominant, so the crawler still works behind NAT without a port forward — throughput is just lower. `network_mode: host` is not required.
 
 ## Auth + security
 
@@ -52,7 +48,7 @@ A: Two surfaces, two answers. The core's HTTP API has no login of its own: `/tor
 
 ### Q: Why is apikey the default auth method?
 
-A: API keys provide stateless, low-overhead validation ideal for *arr indexer clients. They avoid session cookie parsing, reduce attack surface, and integrate natively with Sonarr/Radarr/Prowlarr indexer tokens. The key is validated via header on every Torznab request with constant-time compare.
+A: API keys provide stateless, low-overhead validation ideal for *arr indexer clients. They avoid session cookie parsing, reduce attack surface, and integrate natively with Sonarr/Radarr/Prowlarr indexer tokens. The key is validated on every Torznab request (`apikey=` query parameter or `X-Api-Key` header) with a constant-time compare.
 
 ### Q: What does the threat model cover?
 
@@ -78,11 +74,11 @@ A: BitAgent returns structured `<info>` attributes containing `resolution`, `hdr
 
 ### Q: How do I fix search timeouts in *arr?
 
-A: Increase `BITAGENT_SEARCH_TIMEOUT=15s` in your environment and ensure Postgres `statement_timeout` exceeds it. Add `BITAGENT_CACHING=true` to memoize frequent queries and reduce classifier execution time. Monitor `/api/v1/metrics` for `search_duration_seconds` spikes.
+A: There is no search-timeout setting in BitAgent; the ceiling is the *arr client's own indexer timeout and Postgres `statement_timeout`. The query cache is on by default (`GORM_CACHE_CACHE_ENABLED=true`, `GORM_CACHE_TTL` `10m`, `GORM_CACHE_MAX_KEYS` `1000`) so repeated searches are cheap; if searches are slow, look at `bitagent_postgres_*` on `/metrics` and tune Postgres (see [operations/performance.md](operations/performance.md)).
 
 ### Q: How do I set up the evidence webhook?
 
-A: Set `BITAGENT_EVIDENCE_WEBHOOK_URL=https://internal-collector:9200/batch` and `BITAGENT_EVIDENCE_BATCH_SIZE=250` to stream classified releases to your monitoring stack. BitAgent POSTs JSON payloads with `Content-Type: application/json` and retries up to 3 times on `5xx`.
+A: It is inbound, not outbound: BitAgent does not push releases anywhere. Set `EVIDENCE_WEBHOOK_SECRET`, then add a Connect → Webhook in each *arr pointing at `http://<bitagent>:3333/evidence/arr/<instance>` (for example `/evidence/arr/sonarr`) with the same value in an `X-Evidence-Token` custom header. Grab/import/failure events then feed the evidence pipeline; see [evidence.md](evidence.md).
 
 ### Q: Should BitAgent be primary or fallback?
 
@@ -100,15 +96,15 @@ A: RAM scales linearly at ~4MB per 10k entries for the in-memory LRU cache. Disk
 
 ### Q: When should I scale horizontally?
 
-A: Scale when DHT node count exceeds 15k or search latency breaches 15s. Run read replicas via `BITAGENT_DB_REPLICA_URL` and distribute traffic across instances. Do not split the write path; the classifier requires single-writer serialization.
+A: Prefer scaling vertically. There is no read-replica setting; every worker talks to the one Postgres, and the classifier assumes a single writer. If the HTTP surface is the bottleneck, run a second container with `worker run --keys http_server` against the same database and load-balance those.
 
 ### Q: What are slow-disk gotchas?
 
-A: HDDs cause WAL writer stalls, triggering DB lock-timeout errors during heavy classification. Disable `BITAGENT_WAL_SYNC=true` only if using ZFS with `logbias=throughput`. Monitor `pg_stat_io` for await times >10ms and switch to block-backed storage.
+A: HDDs cause WAL writer stalls, triggering DB lock-timeout errors during heavy classification. Monitor `pg_stat_io` for await times >10ms and switch to block-backed storage.
 
 ### Q: How do I monitor heap and GC?
 
-A: Enable `BITAGENT_METRICS_ADDR=:9100` and scrape `/metrics` with Prometheus. Watch `go_memstats_alloc_bytes` and `gc_pause_ns` for collection latency spikes. Alert when heap growth exceeds 200MB/hr or GC pauses breach 50ms.
+A: Scrape `/metrics` on the HTTP port (`HTTP_SERVER_LOCAL_ADDRESS`, default `:3333`) with Prometheus. Watch `go_memstats_alloc_bytes` and `gc_pause_ns` for collection latency spikes. Alert when heap growth exceeds 200MB/hr or GC pauses breach 50ms.
 
 ## Privacy
 
@@ -118,41 +114,53 @@ A: Yes. The DHT protocol requires your node to announce its IP via BEP-05 and BE
 
 ### Q: Are TMDB queries cached or leaked?
 
-A: BitAgent caches TMDB lookups in `poster_cache` (SQLite) for 7 days by default. Subsequent requests hit the local lookup table, not the external API. Clear the cache via the Settings tab to force fresh metadata fetches. Disable TMDB entirely by leaving `TMDB_API_KEY` empty.
+A: Two clients, two answers. The core's classifier (`queue_server` worker) calls `https://api.themoviedb.org/3` for every movie/TV lookup and stores the result in Postgres; there is no TMDB cache in the core, and `TMDB_ENABLED=false` is the only thing that stops the calls. Leaving `TMDB_API_KEY` empty does **not** disable it — the core falls back to bitmagnet's built-in shared key at 1 request/second and logs a warning. The dashboard (`ui` worker) has its own client that only runs when its `TMDB_API_KEY` is set; it caches posters and metadata in its SQLite file (`poster_cache`, `tmdb_meta_cache`, 7-day TTL), so repeat views do not hit TMDB.
 
 ### Q: What data leaves my host externally?
 
-A: Only DHT announce packets, peer handshake payloads, and explicit API calls (TMDB if configured) exit the host. All internal classification, deduplication, and storage remain local. Set `BITAGENT_TELEMETRY=false` (default) to disable any usage reports.
+A: There is no telemetry, usage reporting or update check anywhere in the binary. With the defaults (`worker run --all`) the core contacts:
+
+- **External-IP echo** — `GET https://api4.ipify.org`, `https://ipv4.icanhazip.com` and `https://ifconfig.me/ip` to derive a BEP-42 node ID when the DHT stack starts (the `dht_crawler` worker, or `evidence_liveness_revalidator` when `EVIDENCE_LIVENESS_ENABLED=true`), re-polled every 15 minutes (`DHT_EXTERNALIP_INTERVAL`). `DHT_EXTERNALIP_OVERRIDE=<your public IPv4>` replaces it with a static value and makes no HTTP call.
+- **DHT and peers** (`dht_crawler` worker) — UDP on `DHT_SERVER_PORT` (default `3334`) to the bootstrap routers (`router.bittorrent.com`, `router.utorrent.com`, `dht.transmissionbt.com`, `dht.aelitis.com`, `router.silotis.us`, `dht.libtorrent.org`; override `DHT_CRAWLER_BOOTSTRAP_NODES`) and to every peer it discovers, plus TCP to peers for BEP-9 metadata. Your IP and the info-hashes you query are visible to those peers.
+- **TMDB** — `https://api.themoviedb.org/3` (`TMDB_BASE_URL`) from the classifier for every movie/TV lookup, and a `/authentication` probe every 5 minutes while `http_server` runs. On by default with a built-in shared key; `TMDB_ENABLED=false` turns it off.
+
+Everything else is off until you opt in, and each has its own switch and endpoint:
+
+- **LLM stages** — four independent OpenAI-compatible clients that send torrent names and metadata to their endpoint: `CLASSIFIER_LLM_ENABLED` → `CLASSIFIER_LLM_ENDPOINT` (default `https://api.openai.com/v1/chat/completions`); `CONTENT_FILTER_LLM_ENABLED` → `CONTENT_FILTER_LLM_BASE_URL` (empty = `https://api.openai.com/v1`); `CLASSIFIER_LLM_MATCH_ENABLED` → `CLASSIFIER_LLM_MATCH_ENDPOINT` (default `http://127.0.0.1:11434/v1/chat/completions`, a local Ollama); `JUNKPURGE_ENABLED` → `JUNKPURGE_LLM_BASE_URL` (default `http://127.0.0.1:11434/v1`).
+- **Tracker scrape** (`seeds` worker, `SEEDS_ENABLED`; also `bitagent refresh-seeds`) — BEP-15 UDP scrapes of the public trackers in `SEEDS_TRACKER_URLS` (opentrackr, open.demonii, openbittorrent, …).
+- **Anime title refresh** (`anime-titles` worker, `ANIME_TITLES_ENABLED`; also `bitagent refresh-anime-titles`) — downloads `anime-list-full.xml` from `raw.githubusercontent.com/Anime-Lists` and `anime-titles.dat.gz` from `anidb.net`.
+- **CSAM blocklist** — feeds listed in `CSAM_BLOCKLIST_FEED_URLS` are fetched at start and every 6 hours; if `CSAM_BLOCKLIST_EXPORT_UPSTREAM_URL` is set, double-hashed observations are POSTed there. Both are empty by default.
+- **Your own *arr, qBittorrent and Prowlarr** — the evidence pollers, `wantbridge` and attribution call only the base URLs you configure (`EVIDENCE_SONARR_BASE_URL`, `WANTBRIDGE_SONARR_BASE_URL`, …).
 
 ### Q: How long are logs retained?
 
-A: Application logs rotate daily at `/var/log/bitagent/app.log` with `maxsize=100M` and `maxage=3d`. Postgres WAL files are archived until `BITAGENT_WAL_RETENTION=7d` expires. Purge manually via `logrotate -f /etc/bitagent/logrotate.conf`.
+A: As long as your container runtime keeps them. The binary writes every line to stdout (console format; `LOG_JSON=true` for JSON, `LOG_LEVEL` default `info`) and never rotates or deletes anything, so retention is the Docker log driver's job — set `logging: options: max-size / max-file` on the service (the reference compose file uses `max-size: 50m`, `max-file: 5`). If you want files from the binary itself, `LOG_FILE_ROTATOR_ENABLED=true` additionally writes JSON to `LOG_FILE_ROTATOR_PATH` (default `$XDG_DATA_HOME/bitmagnet/logs`) as `bitmagnet.<timestamp>.log`, starting a new file every `LOG_FILE_ROTATOR_MAX_AGE` (default 1h) or `LOG_FILE_ROTATOR_MAX_SIZE` (default 100 MB) and keeping `LOG_FILE_ROTATOR_MAX_BACKUPS` (default 5) older files. Postgres WAL retention is Postgres configuration, not BitAgent's.
 
 ### Q: How do I run in fully-offline mode?
 
-A: Set `BITAGENT_DHT_ENABLED=false` and leave `TMDB_API_KEY` empty. Point `BITAGENT_EVIDENCE_SOURCE` to a local CSV or SQLite dump. Start with `--offline` flag to skip network bindings. Querying remains functional using only persisted objects.
+A: There is no `--offline` flag; you choose which workers start. Run `bitagent worker run --keys http_server,queue_server` (omit `dht_crawler` — and `evidence_liveness_revalidator` if you set `EVIDENCE_LIVENESS_ENABLED=true` — the only workers that open the DHT socket, talk to peers and run the external-IP echo) and set `TMDB_ENABLED=false` (an empty `TMDB_API_KEY` is not enough — it falls back to the built-in key). If you do run `dht_crawler` on a box without egress, `DHT_EXTERNALIP_OVERRIDE=<a public IPv4>` replaces the external-IP echo. Leave the opt-in networked features off (`SEEDS_ENABLED`, `ANIME_TITLES_ENABLED`, the four `*_LLM_*` switches, `CSAM_BLOCKLIST_FEED_URLS`, `CSAM_BLOCKLIST_EXPORT_UPSTREAM_URL`, and any *arr/qBittorrent base URLs). Torznab and GraphQL keep serving whatever is already in Postgres; `bitagent worker list` prints every worker key.
 
 ## Troubleshooting
 
 ### Q: Why are search results empty?
 
-A: Verify DHT peers are populated and the classifier is enabled. Run `/api/v1/status` and confirm `dht.peers_active > 100`. If `evidence_count=0`, trigger a full rescan and monitor classifier logs. Low peer counts cause search starvation; verify UDP port forwarding.
+A: Verify the crawler is running and persisting: `curl -s http://localhost:3333/metrics | grep bitagent_dht_crawler_persisted_total` should climb over the first minutes, and the dashboard's DHT PEERS tile should be non-zero. If it stays at zero, check outbound UDP egress and see [troubleshooting.md](troubleshooting.md) → "DHT PEERS = 0". If torrents are persisted but unlabelled, the classifier (`queue_server` worker) is not running — check `worker list`.
 
 ### Q: Why is evidence missing classifier tags?
 
-A: The classifier may have skipped the record due to invalid UTF-8 in the announce string. Check classifier logs for `encoding_error` entries. Re-run with `BITAGENT_CLASSIFIER_STRIP_INVALID=true` to force normalization.
+A: No CEL rule matched (`ErrUnmatched`), so the torrent was persisted without a content-type label. Run with `LOG_LEVEL=debug` to see the classifier's decision per torrent, and `bitagent reprocess` to re-run classification over already-indexed torrents after a rule or model change. See [concepts/classification.md](concepts/classification.md).
 
 ### Q: How do I fix BEP-9 choking?
 
-A: Reduce `BITAGENT_DHT_PEER_LIMIT=48` and set `BITAGENT_DHT_KEEPALIVE=15s` to stabilize routing. Monitor `bitagent_dht_peers_choked_total` and reduce concurrency if spikes persist.
+A: Lower the crawler's footprint: `DHT_CRAWLER_SCALING_FACTOR` (default `10`) scales every internal concurrency and buffer, and `DHT_CRAWLER_METAINFO_CONCURRENCY` (default `0` = 40 × scaling factor) caps concurrent BEP-9 fetches directly. Outbound query rate per peer is bounded by `DHT_SERVER_QUERY_LIMITER_RATE_PER_SEC` (`1.0`) and `DHT_SERVER_QUERY_LIMITER_BURST` (`16`). Watch `bitagent_dht_*` on `/metrics` and reduce if error rates climb.
 
 ### Q: Why do *arr clients return 401/403?
 
-A: The indexer token does not match `TORZNAB_API_KEY` or the route is blocked. Verify the header matches `Authorization: Bearer <key>` exactly. Enable debug auth logging to inspect raw request validation.
+A: The indexer token does not match `TORZNAB_API_KEY` or the route is blocked. Verify the *arr indexer's API Key field matches exactly — BitAgent reads it from the `apikey=` query parameter or an `X-Api-Key` header. Run with `LOG_LEVEL=debug` to inspect request validation.
 
 ### Q: How do I recover from Postgres index corruption?
 
-A: Run `REINDEX INDEX CONCURRENTLY bitagent_release_idx;` while BitAgent is running. Set `BITAGENT_READ_ONLY=true` temporarily to prevent write conflicts. Verify integrity with `pg_verifycluster` and restore from `pg_basebackup` if corruption persists.
+A: Stop the writers first — restart with `worker run --keys http_server` so only reads continue — then `REINDEX` the affected indexes in Postgres. Restore from a backup if corruption persists; see [operations/backup-restore.md](operations/backup-restore.md).
 
 ## Performance tuning
 
@@ -162,15 +170,15 @@ A: Set `autovacuum_vacuum_scale_factor=0.05`, `autovacuum_analyze_scale_factor=0
 
 ### Q: What is the optimal classifier batch size?
 
-A: Set `BITAGENT_CLASSIFIER_BATCH=500` and `BITAGENT_CLASSIFIER_CONCURRENCY=16` to balance memory and latency. Larger batches improve throughput but increase GC pressure. Monitor `go_gc_duration_seconds` and reduce if pauses exceed 200ms.
+A: There is no batch-size setting; each `process_torrent` queue job carries whatever batch of info-hashes the crawler queued, and `CLASSIFIER_CONCURRENCY` (default `10`) is a semaphore on how many torrents classify in parallel. Higher values improve throughput but increase memory, Postgres connections and GC pressure. Monitor `go_gc_duration_seconds` and reduce if pauses exceed 200ms.
 
 ### Q: How does BEP-9 concurrency impact crawl speed?
 
-A: Higher concurrency (`BITAGENT_DHT_CONCURRENCY=192`) increases crawl speed but triggers throttling on strict trackers. Keep at `96–128` for stable operation. Use `BITAGENT_DHT_BACKOFF=2s` for exponential delay on choke responses.
+A: Concurrency follows `DHT_CRAWLER_SCALING_FACTOR` (default `10`): the metainfo fetcher runs 40 × that many BEP-9 requests unless `DHT_CRAWLER_METAINFO_CONCURRENCY` overrides it. Raising it increases crawl speed at the cost of CPU, RAM and Postgres write load; the per-peer query limiter (`DHT_SERVER_QUERY_LIMITER_RATE_PER_SEC`, `DHT_SERVER_QUERY_LIMITER_BURST`) keeps any single peer from being flooded regardless.
 
 ### Q: What retention policy prevents disk bloat?
 
-A: Set `BITAGENT_RETENTION_DAYS=90`, `BITAGENT_CLASSIFIER_TTL=60d`. Run `bitagent prune --dry-run` before applying. Archive old evidence to cold storage if needed.
+A: The `retention` worker, off by default. `RETENTION_ENABLED=true` is the dry run — it counts what it would delete (`bitagent_retention_would_purge_total`) and touches nothing; `RETENTION_ENABLE_PURGE=true` makes it real. A torrent is eligible when it is older than `RETENTION_MIN_AGE` (60d) and unseen for `RETENTION_MAX_LAST_SEEN` (180d). The `queueclean` worker (`QUEUECLEAN_ENABLED`, `QUEUECLEAN_ENABLE_PURGE`) does the same for finished queue jobs.
 
 ### Q: How do I tune Golang GOMAXPROCS?
 
@@ -178,25 +186,13 @@ A: Set `GOMAXPROCS=4` for 8-core hosts to avoid thread contention. Higher values
 
 ## Customization
 
-### Q: How do I write a CEL rule for filtering?
+### Q: How do I customise the CEL classifier rules?
 
-A: Create `$BITAGENT_DATA_DIR/config/rules.cel` with expressions like `release.source == "WEBRip" && release.confidence < 0.85` to suppress low-quality matches. Validate via `cel --expr-file rules.cel` and hot-reload with `bitagent reload rules`.
-
-### Q: Where do I place custom classifier extensions?
-
-A: Drop compiled Go plugins or WASM modules into `$BITAGENT_DATA_DIR/extensions/` and set `BITAGENT_EXTENSIONS_PATH=/var/lib/bitagent/extensions`. Load via `bitagent extensions load ./my_classifier.so`. Extensions implement the `Classifier` interface.
-
-### Q: How do I add custom tags to the schema?
-
-A: Extend `$BITAGENT_DATA_DIR/schema/tags.json` with `{"tag":"4K_DOLBY","weight":0.9,"match_regex":"(dolby\\s*vision|dovi)"}` and restart the classifier. Run `bitagent schema validate` to ensure regex compiles. Tags propagate to Torznab `<info>` attributes.
+A: The rules are bundled in the binary and are not editable at runtime — changes ship as merge requests. `bitagent classifier show --format yaml` prints the live workflow (CEL rules plus content-type mapping) and `bitagent classifier schema` prints its JSON Schema; after a rule change deploys, `bitagent reprocess` re-classifies already-indexed torrents. See [concepts/classification.md](concepts/classification.md).
 
 ### Q: SQLite vs Postgres for evidence storage?
 
 A: Postgres handles concurrent writes and large indexes efficiently for >50k entries. SQLite is acceptable for <20k caches but lacks connection pooling. Evidence always lives in Postgres; the only SQLite in BitAgent is the dashboard's own file at `/data/bitagent-ui.db` (settings overrides, audit log, hashed user keys).
-
-### Q: How do I override the Torznab response template?
-
-A: Copy `/opt/bitagent/templates/torznab.xml` to `$BITAGENT_DATA_DIR/templates/torznab-custom.xml` and set `BITAGENT_TORZNAB_TEMPLATE=...`. Validate XML structure with `xmllint --noout` before hot-reloading.
 
 ## Project + community
 
@@ -218,4 +214,4 @@ A: Use GitHub's [private vulnerability reporting](https://github.com/spencercnor
 
 ### Q: How is governance structured?
 
-A: A small core-maintainer council reviews proposals via RFC documents and quarterly release cadences. Roadmap items are tracked in `ROADMAP.md` and prioritized by operator feedback and stability requirements. Major architectural shifts require consensus among core contributors.
+A: A small core-maintainer group reviews proposals as merge requests; there is no separate roadmap file — open items live in the issue tracker and are prioritised by operator feedback and stability requirements. Major architectural shifts require consensus among core contributors.

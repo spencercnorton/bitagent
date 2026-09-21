@@ -63,7 +63,7 @@ type crawler struct {
 	// non-compliant nodes, so while this is true the outbound
 	// sample_infohashes worker sits idle to avoid spending
 	// bandwidth on queries that will be refused. Set once at boot
-	// from the dhtfx `dht_random_fallback` signal; the external-IP
+	// from the dhtfx node identity (lazy); the external-IP
 	// watcher's OnChange triggers a container restart when the
 	// crawler graduates to a compliant ID.
 	randomFallback bool

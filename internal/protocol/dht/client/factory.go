@@ -14,9 +14,9 @@ import (
 
 type Params struct {
 	fx.In
-	NodeID protocol.ID `name:"dht_node_id"`
-	Server lazy.Lazy[server.Server]
-	Logger *zap.SugaredLogger
+	Identity lazy.Lazy[protocol.NodeIdentity]
+	Server   lazy.Lazy[server.Server]
+	Logger   *zap.SugaredLogger
 }
 
 type Result struct {
@@ -47,9 +47,13 @@ func New(p Params) Result {
 			if err != nil {
 				return nil, err
 			}
+			identity, err := p.Identity.Get()
+			if err != nil {
+				return nil, err
+			}
 
 			adapter := serverAdapter{
-				nodeID: p.NodeID,
+				nodeID: identity.ID,
 				server: s,
 			}
 

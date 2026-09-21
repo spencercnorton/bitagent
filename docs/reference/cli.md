@@ -48,7 +48,7 @@ bitagent worker run --all
 bitagent worker run --keys dht_crawler
 
 # Subset
-bitagent worker run --keys dht_crawler,classifier,evidence_arr_poller
+bitagent worker run --keys dht_crawler,queue_server,evidence_arr_poller
 ```
 
 The command blocks. SIGINT/SIGTERM stops all workers cleanly.

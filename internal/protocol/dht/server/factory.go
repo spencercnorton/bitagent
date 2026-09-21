@@ -19,7 +19,7 @@ import (
 type Params struct {
 	fx.In
 	Config    Config
-	Responder responder.Responder
+	Responder lazy.Lazy[responder.Responder]
 	Logger    *zap.SugaredLogger
 }
 
@@ -44,6 +44,10 @@ func New(p Params) Result {
 	lastResponses := &concurrency.AtomicValue[LastResponses]{}
 	collector := newPrometheusCollector()
 	ls := lazy.New(func() (Server, error) {
+		r, err := p.Responder.Get()
+		if err != nil {
+			return nil, err
+		}
 		s := queryLimiter{
 			server: prometheusServerWrapper{
 				prometheusCollector: collector,
@@ -57,7 +61,7 @@ func New(p Params) Result {
 						socket:           NewSocket(),
 						queries:          make(map[string]chan dht.RecvMsg),
 						queryTimeout:     p.Config.QueryTimeout,
-						responder:        p.Responder,
+						responder:        r,
 						responderTimeout: time.Second * 5,
 						idIssuer:         &variantIDIssuer{},
 						logger:           p.Logger.Named(subsystem),
