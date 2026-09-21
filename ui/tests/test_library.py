@@ -10,7 +10,9 @@ faked so the suite stays hermetic.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -20,9 +22,26 @@ import graphql_client as gql
 import tmdb
 
 
+_DEMO_CORE_SPEC = importlib.util.spec_from_file_location(
+    "demo_core", Path(__file__).resolve().parents[1] / "tools" / "demo_core.py"
+)
+assert _DEMO_CORE_SPEC and _DEMO_CORE_SPEC.loader
+demo_core = importlib.util.module_from_spec(_DEMO_CORE_SPEC)
+_DEMO_CORE_SPEC.loader.exec_module(demo_core)
+
+
 @pytest.fixture(autouse=True)
 def _open_auth():
     config.settings.require_auth = False
+
+
+def test_demo_core_uses_real_tmdb_ids_for_poster_demo():
+    """The screenshot fixture must exercise the same IDs the poster proxy uses."""
+    for title, tmdb_id in demo_core.TMDB_IDS.items():
+        rows = [row for row in demo_core.CATALOG if row["title"] == title]
+        assert rows
+        assert {row["contentId"] for row in rows} == {tmdb_id}
+        assert all(row["content"]["externalLinks"][0]["url"].endswith(f"/{tmdb_id}") for row in rows)
 
 
 # ── /api/torrents order param (drives the home Popular / Recently-added rows) ─

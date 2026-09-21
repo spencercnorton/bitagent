@@ -26,6 +26,9 @@ RNG = random.Random(7)
 
 # Public-domain features (title, year, type, genre) — nothing here is a
 # current commercial release, so a poster grid looks real and stays clean.
+# Keep the identifiers real TMDB mappings rather than synthetic placeholders:
+# the UI's poster proxy uses contentId to demonstrate the same database match
+# that powers the library grouping.
 FILMS = [
     ("Metropolis", 1927, "movie", "Science Fiction"), ("Nosferatu", 1922, "movie", "Horror"),
     ("The General", 1926, "movie", "Comedy"), ("Sherlock Jr.", 1924, "movie", "Comedy"),
@@ -40,6 +43,20 @@ FILMS = [
     ("Dragnet", 1951, "tv_show", "Crime"), ("The Beverly Hillbillies", 1962, "tv_show", "Comedy"),
     ("Sea Hunt", 1958, "tv_show", "Adventure"), ("The Lucy Show", 1962, "tv_show", "Comedy"),
 ]
+TMDB_IDS = {
+    "Metropolis": "19",
+    "Nosferatu": "653",
+    "The General": "961",
+    "Sherlock Jr.": "992",
+    "The Cabinet of Dr. Caligari": "234",
+    "His Girl Friday": "3085",
+    "Night of the Living Dead": "10331",
+    "Charade": "4808",
+    "The Phantom of the Opera": "27191",
+    "Safety Last!": "22596",
+    "Battleship Potemkin": "643",
+    "A Trip to the Moon": "775",
+}
 GROUPS = ["ARCHIVE", "NITRATE", "REEL", "KINO", "SILENT", "TELECINE"]
 RES = ["1080p", "720p", "2160p", "480p"]
 SRC = ["BluRay", "WEB-DL", "DVDRip", "HDTV"]
@@ -61,15 +78,16 @@ def _catalog() -> list[dict]:
             season = f".S0{1 + n}" if kind == "tv_show" else ""
             name = f"{title.replace(' ', '.')}.{year}{season}.{res}.{src}.x264-{group}"
             created = START - 86400 * (i * 3 + n) - 3600 * n
+            tmdb_id = TMDB_IDS.get(title, str(10000 + i))
             items.append({
                 "infoHash": _hash(name), "title": title, "contentType": kind, "contentSource": "tmdb",
-                "contentId": str(10000 + i), "seeders": 4 + (i * 7 + n * 13) % 90, "leechers": (i + n) % 12,
+                "contentId": tmdb_id, "seeders": 4 + (i * 7 + n * 13) % 90, "leechers": (i + n) % 12,
                 "createdAt": _iso(created), "updatedAt": _iso(created + 7200), "languages": [{"id": "en"}],
                 "videoResolution": f"V{res}", "videoSource": src, "videoCodec": "x264", "releaseGroup": group,
                 "episodes": {"label": f"S0{1 + n}", "seasons": [{"season": 1 + n, "episodes": list(range(1, 9))}]} if kind == "tv_show" else None,
                 "content": {"title": title, "releaseYear": year, "originalTitle": title,
                             "originalLanguage": {"id": "en", "name": "English"},
-                            "externalLinks": [{"metadataSource": {"key": "tmdb"}, "url": f"https://www.themoviedb.org/{kind.replace('_show', '')}/{10000 + i}"}]},
+                            "externalLinks": [{"metadataSource": {"key": "tmdb"}, "url": f"https://www.themoviedb.org/{kind.replace('_show', '')}/{tmdb_id}"}]},
                 "torrent": {"name": name, "size": 700_000_000 + (i * 91 + n * 37) % 40 * 100_000_000,
                             "filesCount": 1 + n, "tagNames": [],
                             "files": [{"path": f"{name}.mkv", "size": 700_000_000}]},

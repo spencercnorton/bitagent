@@ -153,8 +153,8 @@ node --test tests/library_state.test.js
 ```
 
 No crawler at hand? `python tools/demo_core.py` serves the GraphQL documents and
-metric families the console reads from synthetic data (public-domain films,
-invented release groups), on `:3333` — the quick-start command above then runs
+metric families the console reads from synthetic data (public-domain films with
+real TMDB IDs for the poster-matching demo, invented release groups), on `:3333` — the quick-start command above then runs
 the whole console against it. The screenshots on this page were taken that way.
 
 The layout is flat — the Python modules live in this directory and the image
