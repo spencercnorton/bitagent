@@ -21,7 +21,21 @@ type keyedLimiter struct {
 	burst int
 }
 
+// defaultKeyedLimiterSize matches what every current caller passes; it exists
+// so a zero cannot silently mean "unbounded".
+const defaultKeyedLimiterSize = 1000
+
+// NewKeyedLimiter builds a per-key rate limiter backed by an expiring LRU.
+//
+// size is clamped: expirable.NewLRU treats 0 as UNBOUNDED. This limiter is
+// keyed on remote IP for the public DHT port, so an unbounded map here is a
+// memory-exhaustion vector driven by whoever is sending packets — every three
+// current call sites pass a literal 1000, but nothing in the signature said a
+// zero would be catastrophic rather than inert.
 func NewKeyedLimiter(rl rate.Limit, burst int, size int, ttl time.Duration) KeyedLimiter {
+	if size <= 0 {
+		size = defaultKeyedLimiterSize
+	}
 	i := &keyedLimiter{
 		lru:   lru.NewLRU[string, *rate.Limiter](size, nil, ttl),
 		rl:    rl,

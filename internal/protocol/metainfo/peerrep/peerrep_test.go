@@ -400,3 +400,27 @@ func TestNewDefaultConfig_SafeForShipping(t *testing.T) {
 		assert.NotEmpty(t, sched, "every error-class schedule must be non-empty")
 	}
 }
+
+// A zero MaxEntries must NOT produce an unbounded cache. expirable.NewLRU
+// treats size 0 as "no limit", so an unset or empty PEER_REP_MAX_ENTRIES
+// would otherwise turn this into a map that grows until the TTL evicts —
+// on a DHT crawler, millions of peers. Measured 2026-09-02: this LRU costs
+// ~345 bytes/entry, so unbounded growth is ~345 MB per million peers.
+func TestNewStore_ZeroMaxEntriesIsBoundedNotUnbounded(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.Enabled = true
+	cfg.MaxEntries = 0
+	cfg.TTL = 0
+
+	s := NewStore(cfg, nil)
+	for i := 0; i < defaultMaxEntries+5_000; i++ {
+		s.upsert(netip.AddrPortFrom(
+			netip.AddrFrom4([4]byte{byte(i >> 24), byte(i >> 16), byte(i >> 8), byte(i)}),
+			uint16(i%65535),
+		))
+	}
+
+	assert.Equal(t, defaultMaxEntries, s.Len(),
+		"zero MaxEntries must fall back to the default cap, not become unbounded")
+	assert.Equal(t, defaultTTL, s.cfg.TTL, "zero TTL must fall back to the default")
+}

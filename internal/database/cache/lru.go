@@ -21,10 +21,18 @@ type Result struct {
 }
 
 func NewInMemoryCacher(p Params) Result {
+	// expirable.NewLRU treats size 0 as UNBOUNDED rather than "cache
+	// nothing", so a MaxKeys of 0 — unset, empty env var, or a deliberate
+	// attempt to disable the cache — turns this into a query cache that
+	// grows without limit. Fall back to the NewDefaultConfig value.
+	maxKeys := int(p.Config.MaxKeys)
+	if maxKeys <= 0 {
+		maxKeys = defaultMaxKeys
+	}
 	return Result{
 		Cacher: &inMemoryCacher{
 			lru: expirable.NewLRU[string, *caches.Query](
-				int(p.Config.MaxKeys),
+				maxKeys,
 				nil,
 				p.Config.TTL,
 			),

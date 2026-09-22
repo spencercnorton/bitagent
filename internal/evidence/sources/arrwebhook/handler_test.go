@@ -138,3 +138,38 @@ func TestDecodeHex(t *testing.T) {
 		}
 	}
 }
+
+// TestAcceptedEventSetIsPinned is the *arr compatibility contract
+// (docs/concepts/compatibility.md). BitAgent consumes exactly the three
+// standard Connect → Webhook notification events below, for every supported
+// application, and ignores every other event upstream documents. It must
+// never depend on an event that only a patched *arr fork emits — the
+// download-decision hook that some projects built on does not exist in
+// upstream Sonarr/Radarr (Sonarr#8396). Adding an event here is a contract
+// change; update the doc in the same commit.
+func TestAcceptedEventSetIsPinned(t *testing.T) {
+	accepted := []string{"Grab", "Download", "DownloadFolderImported"}
+	// Every other event type the upstream webhook notification can emit.
+	ignored := []string{
+		"Test", "HealthIssue", "HealthRestored", "ApplicationUpdate",
+		"Rename", "SeriesAdd", "SeriesDelete", "EpisodeFileDelete",
+		"MovieAdded", "MovieDelete", "MovieFileDelete",
+		"ManualInteractionRequired", "ImportComplete", "Upgrade",
+		// Fork-only download-decision variants must stay ignored.
+		"DownloadDecision", "ReleaseDecision", "GrabDecision",
+	}
+	apps := []string{"sonarr", "radarr", "readarr", "lidarr"}
+
+	for _, app := range apps {
+		for _, ev := range accepted {
+			if _, _, _, _, ok := classifyEvent(app, ev); !ok {
+				t.Errorf("%s/%s: expected accepted", app, ev)
+			}
+		}
+		for _, ev := range ignored {
+			if _, _, _, _, ok := classifyEvent(app, ev); ok {
+				t.Errorf("%s/%s: expected ignored — the accepted set is pinned to %v", app, ev, accepted)
+			}
+		}
+	}
+}

@@ -80,7 +80,10 @@ type processor struct {
 	// banned-keyword matches or private torrents). Off by default, and
 	// self-limiting once on; see classifier.Config.DeleteAuditSample.
 	deleteAuditBudget *deleteAuditBudget
-	logger            *zap.SugaredLogger
+	// deleteMetrics counts every classifier-driven delete by pre-delete
+	// content type and rule path (nil-safe). See DeleteMetrics.
+	deleteMetrics *DeleteMetrics
+	logger        *zap.SugaredLogger
 }
 
 // deleteVerdict is a pending blacklisted-verdict write for one deleted
@@ -204,6 +207,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 			if classifyErr != nil {
 				if errors.Is(classifyErr, classification.ErrDeleteTorrent) {
 					infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
+					c.deleteMetrics.Observe(cl.ContentType, classifyErr)
 					// Hoisted above both hooks: the ledger's sampled name
 					// capture and the CSAM exporter run the same
 					// banned-keyword test over these paths, and must never

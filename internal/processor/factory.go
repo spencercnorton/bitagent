@@ -40,7 +40,9 @@ type Params struct {
 	// content_filter drops as blacklisted verdicts alongside the existing
 	// delete — recording only, log-and-continue.
 	Verdicts *verdicts.Store `optional:"true"`
-	Logger   *zap.SugaredLogger
+	// DeleteMetrics counts classifier-driven deletes (nil-safe optional).
+	DeleteMetrics *DeleteMetrics `optional:"true"`
+	Logger        *zap.SugaredLogger
 }
 
 type Result struct {
@@ -84,6 +86,7 @@ func New(p Params) Result {
 				contentFilterMetrics: p.ContentFilterMetrics,
 				privacy:              p.EvidenceStore,
 				verdicts:             p.Verdicts,
+				deleteMetrics:        p.DeleteMetrics,
 				logger:               p.Logger,
 			}, nil
 		}),

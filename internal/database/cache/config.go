@@ -2,6 +2,10 @@ package cache
 
 import "time"
 
+// defaultMaxKeys is the MaxKeys value NewDefaultConfig ships, named so
+// NewInMemoryCacher can fall back to it when handed a zero.
+const defaultMaxKeys = 1000
+
 type Config struct {
 	CacheEnabled bool
 	EaserEnabled bool
@@ -18,6 +22,6 @@ func NewDefaultConfig() Config {
 		// responsive to issues, hence why we use a forked version of this library...
 		EaserEnabled: false,
 		TTL:          time.Minute * 10,
-		MaxKeys:      1000,
+		MaxKeys:      defaultMaxKeys,
 	}
 }

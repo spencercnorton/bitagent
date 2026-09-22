@@ -1,7 +1,9 @@
 # BitAgent
 
 <p>
+  <a href="https://norvitech.com"><img alt="NorviTech Suite" src="https://img.shields.io/badge/NorviTech-Suite-FD8024.svg"></a>
   <a href="https://github.com/spencercnorton/bitagent/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/spencercnorton/bitagent/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/spencercnorton/bitagent/releases"><img alt="Latest release" src="https://img.shields.io/github/v/tag/spencercnorton/bitagent?label=release&sort=semver"></a>
   <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-blue.svg"></a>
   <a href="https://buy.stripe.com/8x26oH2U44f65TRe574wM04"><img alt="Donate" src="https://img.shields.io/badge/donate-Stripe-635bff.svg?logo=stripe&logoColor=white"></a>
 </p>
@@ -131,3 +133,17 @@ Licensed under the MIT licence, inherited from [`bitmagnet-io/bitmagnet`](https:
 BitAgent's baseline is upstream commit `2b9e8ea`, the head of upstream `main` from July 2025 until May 2026. The fork was cut in April 2026 and stopped tracking upstream on a schedule at the rebrand that month; the `upstream` remote stays configured for security-fix surveillance.
 
 The diagram and the recording on this page live in [`docs/assets/`](docs/assets/); the recording is an animated PNG captured from the quickstart stack on a laptop with a fresh database, and every number in it is what that instance reported.
+
+---
+
+<p align="center">
+  <a href="https://norvitech.com"><img alt="Part of the NorviTech Suite — open-source apps for the Linux desktop and the self-hosted stack" src="https://norvitech.com/assets/banner.svg" width="640"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/spencercnorton/helios">Helios</a> ·
+  <a href="https://github.com/spencercnorton/bitagent">BitAgent</a> ·
+  <a href="https://github.com/spencercnorton/xnote">XNote</a> ·
+  <a href="https://github.com/spencercnorton/xnote-placement">XNote Placement</a> ·
+  <a href="https://norvitech.com">norvitech.com</a>
+</p>
