@@ -72,7 +72,7 @@ func fuzzyFindBestMatch[T any](
 		return levenshteinFindBestMatch(target, items, getCandidates)
 	}
 
-	normTarget := normalizeTitleForMatch(target)
+	normTarget := normalizeTitleForMatch(foldTitlePunct(target))
 	threshold := fuzzyLevThreshold(normTarget)
 	targetFirstTok := firstToken(normTarget)
 
@@ -119,7 +119,7 @@ func fuzzyFindBestMatch[T any](
 				continue
 			}
 
-			normCand := normalizeTitleForMatch(raw)
+			normCand := normalizeTitleForMatch(foldTitlePunct(raw))
 
 			// Precision gate: first token must match (skipped for JP targets,
 			// whose transliteration has no reliable word spacing).

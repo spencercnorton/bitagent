@@ -14,7 +14,7 @@
   <img src="docs/assets/diagrams/pipeline.svg" alt="How BitAgent works: the DHT is crawled into a Postgres corpus, each torrent goes down a classification ladder (your own evidence, CEL rules, an optional LLM stage) and is served over Torznab, GraphQL and Prometheus; downloads that worked flow back in as evidence." width="100%">
 </p>
 
-BitAgent started in April 2026 as a fork of [`bitmagnet-io/bitmagnet`](https://github.com/bitmagnet-io/bitmagnet), which has been dormant since July 2025. The DHT crawler, metainfo fetcher, CEL classifier and the Postgres/GraphQL foundation are upstream's work and are credited [below](#lineage--licence). Almost everything else on this page is new — roughly 100K lines of non-test Go, 33 schema migrations and 16 new packages against the baseline. [Compare the baseline with `main`](https://github.com/spencercnorton/bitagent/compare/2b9e8eadd34c037830d1fa7470b5ef2746cd6388...main).
+BitAgent started in April 2026 as a fork of [`bitmagnet-io/bitmagnet`](https://github.com/bitmagnet-io/bitmagnet), whose `main` had then gone more than nine months without a commit. The DHT crawler, metainfo fetcher, CEL classifier and the Postgres/GraphQL foundation are upstream's work and are credited [below](#lineage--licence). Almost everything else on this page is new — roughly 100K lines of non-test Go, 33 schema migrations and 16 new packages against the baseline. [Compare the baseline with `main`](https://github.com/spencercnorton/bitagent/compare/2b9e8eadd34c037830d1fa7470b5ef2746cd6388...main).
 
 ## See it run
 
@@ -94,7 +94,8 @@ One app serves two hostnames. The **operator console** shows indexer win rate, m
 ## Documentation
 
 - [Docs index](docs/index.md) · [Quickstart](docs/quickstart.md) · [Configuration](docs/configuration.md) · [FAQ](docs/faq.md) · [Troubleshooting](docs/troubleshooting.md)
-- Concepts: [Architecture](docs/concepts/architecture.md) · [DHT crawler](docs/concepts/dht-crawler.md) · [Classification](docs/concepts/classification.md) · [Wantbridge](docs/concepts/wantbridge.md) · [Glossary](docs/concepts/glossary.md)
+- Core: [Evidence pipeline](docs/evidence.md) — how *arr grabs and imports become labels, priors and liveness
+- Concepts: [Architecture](docs/concepts/architecture.md) · [DHT crawler](docs/concepts/dht-crawler.md) · [Classification](docs/concepts/classification.md) · [Swarm health](docs/concepts/swarm-health.md) · [Compatibility contract](docs/concepts/compatibility.md) · [Wantbridge](docs/concepts/wantbridge.md) · [Glossary](docs/concepts/glossary.md)
 - Reference: [Torznab API](docs/reference/torznab-api.md) · [GraphQL API](docs/reference/graphql-api.md) · [Dashboard guide](docs/ui-guide.md) · [Dashboard module](ui/README.md) · [Metrics](docs/reference/metrics.md) · [CLI](docs/reference/cli.md)
 - Operations: [Security](docs/operations/security.md) · [Monitoring](docs/operations/monitoring.md) · [Private tracker mode](docs/integrations/private-tracker-mode.md) · [CSAM defence](docs/csam-defense.md)
 - Project: [Improvements over upstream](docs/project/improvements.md) · [Legal disclaimer](docs/legal/disclaimer.md)
@@ -145,5 +146,6 @@ The diagram and the recording on this page live in [`docs/assets/`](docs/assets/
   <a href="https://github.com/spencercnorton/bitagent">BitAgent</a> ·
   <a href="https://github.com/spencercnorton/xnote">XNote</a> ·
   <a href="https://github.com/spencercnorton/xnote-placement">XNote Placement</a> ·
+  <a href="https://github.com/spencercnorton/snipsnap">SnipSnap</a> ·
   <a href="https://norvitech.com">norvitech.com</a>
 </p>

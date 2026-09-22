@@ -13,7 +13,7 @@ BitAgent implements seven BEPs, each with a specific job in the discovery pipeli
 | BEP-5 | DHT Protocol | Mainline Kademlia routing table, RPC exchange, node discovery |
 | BEP-9 | Extension for Peers to Send Metadata Files | Pulls `.torrent` metadata over a peer connection (no tracker needed) |
 | BEP-10 | Extension Protocol | Negotiates BEP-9 + BEP-33 during the BitTorrent handshake |
-| BEP-33 | DHT Scrapes | Peer counts for an infohash without joining the swarm — keeps our IP off the swarm peer lists |
+| BEP-33 | DHT Scrapes | Approximate peer counts for an infohash without joining the swarm — keeps our IP off the swarm peer lists. Not authoritative; see [swarm health](swarm-health.md) |
 | BEP-42 | DHT Security Extension | Node ID derived from IP — anti-Sybil hardening |
 | BEP-43 | Read-only DHT Nodes | We participate in routing but explicitly don't claim to seed |
 | BEP-51 | DHT Infohash Indexing | The `sample_infohashes` RPC is the discovery fast path |

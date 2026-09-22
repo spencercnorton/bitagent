@@ -27,6 +27,10 @@ MIT-licensed. No telemetry. No accounts. Just an indexer you own.
 - **Evidence pipeline** --
   Webhook feedback from Sonarr, Radarr, and the rest of the *arr
   family becomes ground-truth, so the classifier improves over time
+- **Tracker-confirmed swarm health** --
+  A BEP-15 UDP tracker-scrape worker refreshes seeder and leecher
+  counts from public trackers, and keeps "dead" and "unknown" as
+  separate answers instead of collapsing both to zero
 - **Operator dashboard in the same image** --
   A supervised `ui` worker, off by default: eight tabs covering crawl
   health, the library, wants, evidence, the junk-purge quarantine, LLM
@@ -57,6 +61,16 @@ MIT-licensed. No telemetry. No accounts. Just an indexer you own.
 - [Architecture](concepts/architecture.md) --
   How the Go core, the `ui` worker, classifier, and evidence
   pipeline fit together in one image
+- [Evidence pipeline](evidence.md) --
+  What your *arrs send back, how it becomes a canonical label, a
+  success prior and a liveness state, and the one metric that says
+  the loop is paying for itself
+- [Compatibility contract](concepts/compatibility.md) --
+  The official *arr interfaces BitAgent uses, and the forked
+  download-decision hook it deliberately does not
+- [Swarm health](concepts/swarm-health.md) --
+  Where seeder counts come from, why a DHT zero is not a real zero,
+  and how to tune the tracker scrape
 - [FAQ](faq.md) --
   Common questions about crawling, legality, resource usage,
   and integration

@@ -15,6 +15,12 @@ BitTorrent Enhancement Proposal 5: the mainline DHT protocol. The Kademlia-style
 ### BEP-9
 BitTorrent Enhancement Proposal 9: extension for peers to send `.torrent` metadata files directly over a peer-to-peer connection. How BitAgent fetches metadata after discovering an infohash via the DHT.
 
+### BEP-15
+BitTorrent Enhancement Proposal 15: the UDP tracker protocol, including the `scrape` request. BitAgent's `seeds` worker uses it to pull peer counts from public trackers at ~70 infohashes per datagram — a measured count of peers announcing to that tracker, not of the global swarm. See [concepts/swarm-health.md](swarm-health.md).
+
+### BEP-33
+BitTorrent Enhancement Proposal 33: DHT scrapes. Returns a bloom-filter approximation of a swarm's peers from a single node — cheap, but biased low, quantized, and captured once at crawl time. Not a substitute for a tracker scrape.
+
 ### BEP-51
 BitTorrent Enhancement Proposal 51: DHT infohash indexing — the `sample_infohashes` RPC. The fast-path mechanism BitAgent uses to discover new infohashes from neighbouring DHT nodes.
 
@@ -102,6 +108,9 @@ Pipeline that periodically deletes torrents the predicate considers long-dead. T
 ### swarm
 The set of peers participating in distributing a specific torrent (i.e. announcing they have or want pieces of one infohash).
 
+### swarm health
+The seeder/leecher state of a torrent as BitAgent records it. Deliberately three-valued: *positive* (a tracker reports live peers), *known-zero* (a tracker that knows the hash reports no seeders) and *unknown* (no tracker in the pool knows it — not a zero). See [concepts/swarm-health.md](swarm-health.md).
+
 ## T
 
 ### TMDB
@@ -123,5 +132,6 @@ The titles the polled `*arr` applications are still missing; observed in the das
 - [Concepts / Architecture](architecture.md)
 - [Concepts / DHT crawler](dht-crawler.md)
 - [Concepts / Classification](classification.md)
+- [Concepts / Swarm health](swarm-health.md)
 - [Concepts / Wantbridge](wantbridge.md)
 - [CSAM defense](../csam-defense.md)

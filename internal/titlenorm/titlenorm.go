@@ -136,8 +136,10 @@ func isPureRoman(s string) bool {
 // FamilyKey reduces a title to its family-registry keying form: the
 // NormalizeTitleForMatch output with every token stripped to its letters and
 // digits (empty tokens dropped). NormalizeTitleForMatch deliberately keeps
-// mid-title punctuation ("dexter: new blood") because the fuzzy matcher
-// absorbs it in its distance metrics; family keying needs exact token
+// mid-title punctuation ("dexter: new blood"); the fuzzy matcher folds it
+// away itself before comparing (classifier.foldTitlePunct — until 2026-09-22
+// it did not, and its exact first-token gate rejected "dexter:" against
+// "dexter"). Family keying needs exact token
 // equality ("dexter" must be a token-prefix of "dexter new blood"), so the
 // punctuation goes. This is a derivation of the canonical normalizer, not a
 // competing one — every family lookup must key through this function.

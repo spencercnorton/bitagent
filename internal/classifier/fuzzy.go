@@ -3,6 +3,7 @@ package classifier
 import (
 	"math"
 	"strings"
+	"unicode"
 
 	"github.com/spencercnorton/bitagent/internal/titlenorm"
 )
@@ -21,6 +22,39 @@ func nativeMatchKey(s string) string { return titlenorm.NativeMatchKey(s) }
 // tokenSetRatio returns the Jaccard similarity (intersection/union) of the
 // word-token sets of normalised strings a and b, in [0, 1]. This is equivalent
 // to a Jaccard over type sets (duplicate tokens are deduplicated).
+// foldTitlePunct makes the fuzzy scorer punctuation-insensitive — which
+// titlenorm.FamilyKey's comment has long assumed it was. NormalizeTitleForMatch
+// keeps mid-title punctuation, but fuzzyFindBestMatch compares tokens by exact
+// equality in its first-token precision gate and in tokenSetRatio, and it runs
+// the gate BEFORE the Levenshtein distance that would have absorbed a comma.
+// So "Diners, Drive-Ins and Dives" normalised to first token "diners," and was
+// discarded against a release's "diners"; the 2026-09-22 benchmark measured
+// 322 of 3,344 gold rows lost this way (docs/project/benchmarks.md).
+//
+// Apostrophes are deleted ("Grey's" -> "Greys", "'97" -> "97"); every other
+// punctuation or symbol rune becomes a word break ("Drive-Ins" -> "Drive Ins",
+// "Dexter:" -> "Dexter"). '&' is left for NormalizeTitleForMatch to expand to
+// "and". Folding runs on the raw string BEFORE normalisation, so both sides of
+// a comparison get identical article and roman-numeral handling: "X-Men" and
+// "X Men" now normalise alike instead of to "x-men" and "10 men".
+func foldTitlePunct(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\'' || r == '\u2019' || r == '\u2018' || r == '`':
+			// dropped: an apostrophe joins, it does not separate
+		case r == '&':
+			b.WriteRune(r)
+		case unicode.IsPunct(r) || unicode.IsSymbol(r):
+			b.WriteByte(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 func tokenSetRatio(a, b string) float64 {
 	aToks := tokenSet(a)
 	bToks := tokenSet(b)

@@ -321,3 +321,73 @@ func TestYearFromDateString(t *testing.T) {
 		})
 	}
 }
+
+// TestFuzzyFindBestMatch_PunctuatedCanonicalTitles pins the 2026-09-22
+// benchmark regression: with fuzzy on, a catalogue title carrying punctuation
+// was discarded by the first-token gate ("diners," != "diners") before the
+// Levenshtein distance that would have absorbed it. Every query below is the
+// base title the production parser extracts from a real release name in the
+// bench-2026-09 gold segment; every candidate is the TMDB title the *arr
+// grabbed it as. All of them matched with fuzzy OFF and were lost with it ON.
+func TestFuzzyFindBestMatch_PunctuatedCanonicalTitles(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ query, tmdb string }{
+		{"Diners Drive Ins And Dives", "Diners, Drive-Ins and Dives"}, // 221 gold rows
+		{"Spider Noir", "Spider-Noir"},
+		{"Dexter Resurrection", "Dexter: Resurrection"},
+		{"Sabrina The Teenage Witch", "Sabrina, the Teenage Witch"},
+		{"X Men 97", "X-Men '97"}, // was "10 men 97" vs "x-men '97"
+		{"The Ultimatum Marry or Move On", "The Ultimatum: Marry or Move On"},
+		{"Jesus His Life", "Jesus: His Life"},
+		{"Jackass Best and Last", "Jackass: Best and Last"},
+		{"9 1 1", "9-1-1"},
+		{"Berserk The Golden Age Arc Memorial Edition", "Berserk: The Golden Age Arc – Memorial Edition"},
+		{"Mr Robot", "Mr. Robot"},
+		{"Jimmy Kimmel Live", "Jimmy Kimmel Live!"},
+		{"Lee Cronins The Mummy", "Lee Cronin's The Mummy"},
+		{"Greys Anatomy", "Grey's Anatomy"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tmdb, func(t *testing.T) {
+			items := []matchItem{{titles: []string{tc.tmdb}}}
+			_, ok := runFuzzyMatch(t, tc.query, 0, items, true)
+			assert.True(t, ok, "fuzzy ON must match %q -> %q", tc.query, tc.tmdb)
+			_, ok = runFuzzyMatch(t, tc.query, 0, items, false)
+			assert.True(t, ok, "fuzzy OFF matched %q -> %q before the fix; keep it that way", tc.query, tc.tmdb)
+		})
+	}
+}
+
+// Folding punctuation must not loosen the precision gate: a different first
+// word is still a different title, with or without punctuation around it.
+func TestFuzzyFindBestMatch_PunctuationDoesNotLoosenGate(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct{ query, other string }{
+		{"The Batman", "Batman: Begins"},
+		{"Dexter New Blood", "Dexter's Laboratory"},
+		{"Spider Man", "Spider-Noir"},
+		{"Love Island", "Love Is Blind"},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			_, ok := runFuzzyMatch(t, tc.query, 0, []matchItem{{titles: []string{tc.other}}}, true)
+			assert.False(t, ok, "%q must not match %q", tc.query, tc.other)
+		})
+	}
+}
+
+func TestFoldTitlePunct(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{
+		"Diners, Drive-Ins and Dives": "Diners  Drive Ins and Dives",
+		"Grey's Anatomy":              "Greys Anatomy",
+		"X-Men '97":                   "X Men 97",
+		"Fast & Furious":              "Fast & Furious", // '&' left for NormalizeTitleForMatch
+		"Berserk – Memorial":          "Berserk   Memorial",
+		"進撃の巨人":                       "進撃の巨人", // letters untouched
+	} {
+		assert.Equal(t, want, foldTitlePunct(in), in)
+	}
+}
