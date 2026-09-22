@@ -34,6 +34,9 @@ func TestNoiseV2SitePrefixes(t *testing.T) {
 		{"www.1TamilMV.rsvp - Gandhi Talks (2026) 1080p WEB-DL", "Gandhi Talks", 2026},
 		// NEW: non-www on an extended TLD.
 		{"tamilblasters.la - Vettaiyan (2024) 1080p HQ", "Vettaiyan", 2024},
+		// www host, no dash, a run of spaces — real gold-segment names.
+		{"www.Torrenting.org       For All Mankind S01E09 MULTi 1080p WEB H264-CiELOS", "For All Mankind", 0},
+		{"www.Torrenting.org       Ancient Aliens S14E10 1080p WEB h264-NiXON", "Ancient Aliens", 0},
 	}
 
 	for _, tc := range cases {
@@ -119,5 +122,18 @@ func TestNoiseV2DoesNotDisturbCleanNames(t *testing.T) {
 		v2, v2Err := parseV2(t, name, true)
 		require.Equal(t, legacyErr, v2Err, name)
 		require.Equal(t, legacy, v2, name)
+	}
+}
+
+// A www host needs a dash or a run of spaces after it. One space or a dot is
+// not enough evidence of a site tag, and the name is left as it was.
+func TestNoiseV2WWWPrefixNeedsASeparator(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"www.Example.com Great Movie 2020 1080p WEB",
+		"www.Example.com.Great.Movie.2020.1080p.WEB",
+	} {
+		require.Equal(t, name, stripSiteNoisePrefixV2(name), name)
 	}
 }

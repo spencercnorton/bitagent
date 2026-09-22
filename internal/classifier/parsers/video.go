@@ -56,12 +56,16 @@ type ParseOptions struct {
 var cjkSpanRegex = regexp.MustCompile(`【[^】]*】`)
 
 // siteNoisePrefixV2WWWRegex extends prefix stripping to www.-prefixed hosts on
-// ANY TLD — "www." followed by a dotted host and the mandatory dash separator
-// is unambiguously a site tag regardless of TLD ("www.1TamilMV.rsvp - ...").
-// The dash requirement keeps a dashless name untouched, mirroring the v1
+// ANY TLD — "www." followed by a dotted host and a separator is unambiguously a
+// site tag regardless of TLD ("www.1TamilMV.rsvp - ..."). The separator is a
+// dash, or a run of two or more spaces: "www.Torrenting.org       For All
+// Mankind S01E09" carries no dash, and left unstripped it poisoned the base
+// title of every such release (8 gold rows across 6 shows on the 2026-09-22
+// benchmark). A single space or a dot is still not enough — "www.Example.com
+// Title" and "www.Site.org.Title" are left untouched, preserving the v1
 // regex's precision argument.
 var siteNoisePrefixV2WWWRegex = regexp.MustCompile(
-	`(?i)^\s*www\.[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z]{2,10}\b[\s._]*-+[\s._]*`,
+	`(?i)^\s*www\.[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z]{2,10}\b(?:[\s._]*-+[\s._]*|\s{2,})`,
 )
 
 // siteNoisePrefixV2TLDsRegex covers non-www prefixes on TLDs observed in the
