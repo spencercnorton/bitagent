@@ -121,8 +121,8 @@ and hold at least two thirds of the votes, it hints that identity to the
 matcher.
 
 This fixes the one kind of error a matcher cannot fix by itself: several
-catalogue entries with the same name. *Married at First Sight* US and AU,
-*iCarly* 2007 and its 2021 revival, *Kitchen Nightmares* UK and US look
+catalogue entries with the same name. A format's US and Australian versions,
+a series and its revival a decade later, a UK original and its US remake look
 identical to title matching. Your \*arr already chose one of them — it is the
 series you monitor — and Sonarr searches Torznab by that series' id, so a
 release attached to its namesake is a release Sonarr never sees.

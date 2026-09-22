@@ -324,11 +324,11 @@ func TestYearFromDateString(t *testing.T) {
 
 // TestFuzzyFindBestMatch_PunctuatedCanonicalTitles pins the 2026-09-22
 // benchmark regression: with fuzzy on, a catalogue title carrying punctuation
-// was discarded by the first-token gate ("diners," != "diners") before the
+// was discarded by the first-token gate ("planes," != "planes") before the
 // Levenshtein distance that would have absorbed it. Every query below is the
-// base title the production parser extracts from a real release name in the
-// bench-2026-09 gold segment; every candidate is the TMDB title the *arr
-// grabbed it as. All of them matched with fuzzy OFF and were lost with it ON.
+// base title the production parser extracts from a real-world release name;
+// every candidate is the catalogue title it belongs to. All of them matched
+// with fuzzy OFF and were lost with it ON.
 func TestFuzzyFindBestMatch_PunctuatedCanonicalTitles(t *testing.T) {
 	t.Parallel()
 

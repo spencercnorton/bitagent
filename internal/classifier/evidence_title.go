@@ -25,9 +25,9 @@ type TitleLabelSource interface {
 // It is the canonical preempt generalised from one infohash to a title.
 //
 // It exists for the one class of error a deterministic ladder cannot fix.
-// Several catalogue entries share a name — Married at First Sight US and AU,
-// iCarly 2007 and 2021, Kitchen Nightmares UK and the US revival — and title
-// similarity alone cannot choose between them. The *arrs already chose: every
+// Several catalogue entries share a name — a format's US and Australian
+// versions, a series and its revival, a UK original and its US remake — and
+// title similarity alone cannot choose between them. The *arrs already chose: every
 // grab records the series the operator actually monitors. Sonarr then searches
 // Torznab by that id, so a release attached to the wrong same-name entry is
 // invisible to it.

@@ -82,6 +82,9 @@ MIT-licensed. No telemetry. No accounts. Just an indexer you own.
   settings and auth tiers are in [ui/README.md](../ui/README.md)
 - [Improvements over upstream](project/improvements.md) --
   What BitAgent adds to bitmagnet, with the design notes behind each
+- [Benchmarks](project/benchmarks.md) --
+  Measured matching accuracy against your \*arrs' own labels: method,
+  results with confidence intervals, ablations, and how to reproduce them
 
 ---
 

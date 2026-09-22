@@ -111,6 +111,7 @@ type evalRecord struct {
 	MatchedID    int64   `json:"matched_tmdb_id"`
 	MatchedTitle string  `json:"matched_title"`
 	Confidence   float64 `json:"confidence"`
+	GateReason   string  `json:"gate_reason,omitempty"`
 	Err          string  `json:"error,omitempty"`
 }
 
@@ -204,6 +205,7 @@ func (p Params) action(ctx *cli.Context) error {
 			MatchedID:    dec.MatchedID,
 			MatchedTitle: dec.MatchedTitle,
 			Confidence:   dec.Confidence,
+			GateReason:   dec.GateReason,
 		}
 		if decErr != nil {
 			rec.Err = decErr.Error()

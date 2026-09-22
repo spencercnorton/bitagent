@@ -27,9 +27,10 @@ func nativeMatchKey(s string) string { return titlenorm.NativeMatchKey(s) }
 // keeps mid-title punctuation, but fuzzyFindBestMatch compares tokens by exact
 // equality in its first-token precision gate and in tokenSetRatio, and it runs
 // the gate BEFORE the Levenshtein distance that would have absorbed a comma.
-// So "Diners, Drive-Ins and Dives" normalised to first token "diners," and was
-// discarded against a release's "diners"; the 2026-09-22 benchmark measured
-// 322 of 3,344 gold rows lost this way (docs/project/benchmarks.md).
+// So a title like "Planes, Trains and Automobiles" normalised to first token
+// "planes," and was discarded against a release's "planes"; the 2026-09-22
+// benchmark measured 322 of 3,344 gold rows lost this way
+// (docs/project/benchmarks.md).
 //
 // Apostrophes are deleted ("Grey's" -> "Greys", "'97" -> "97"); every other
 // punctuation or symbol rune becomes a word break ("Drive-Ins" -> "Drive Ins",
