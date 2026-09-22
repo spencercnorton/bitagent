@@ -160,3 +160,23 @@ func TestMatcherEmptyChoicesIsCountedAsResponseError(t *testing.T) {
 	require.Equal(t, float64(1), testutil.ToFloat64(c.metrics.callErrors.WithLabelValues("extract", "decode")))
 	require.Equal(t, float64(0), testutil.ToFloat64(c.metrics.usageMissing.WithLabelValues(c.cfg.Model, "extract")))
 }
+
+// matcher-eval must neither be throttled by nor draw down the crawler's shared
+// ledger: an isolated allowance admits exactly its own calls, whatever the
+// configured limits say, and never touches the injected budget.
+func TestIsolateBudgetAdmitsExactlyItsOwnCalls(t *testing.T) {
+	srv, calls := chatServer(t, `{}`)
+	c := testClient(srv.URL)
+	c.budget = failingBudget{} // the shared ledger: any use of it fails the call
+	c.cfg.DailyCallLimit = 0   // and the configured limit would admit nothing
+	c.IsolateBudget(2)
+	for i := range 3 {
+		_, err := c.call(context.Background(), "extract", "system", "user", 120)
+		if i < 2 {
+			require.NoError(t, err)
+		} else {
+			require.ErrorIs(t, err, ErrCallBudget)
+		}
+	}
+	require.Equal(t, int32(2), atomic.LoadInt32(calls))
+}

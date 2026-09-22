@@ -16,6 +16,9 @@
 // decide path (local-mirror-first candidates, pack/adult/anime gates, rerank),
 // so the measurement reflects what live matching would do. CLASSIFIER_LLM_MATCH_
 // ENABLED must be true; ENABLE_LIVE is irrelevant here (nothing is attached).
+// It spends its own allowance — three provider calls per sampled torrent
+// (extract, local rerank, API rerank) — never the crawler's shared daily and
+// monthly call ledger.
 package matcherevalcmd
 
 import (
@@ -164,6 +167,8 @@ func (p Params) action(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+
+	p.LLMMatch.IsolateBudget(3 * len(rows))
 
 	model := p.LLMMatch.Model()
 	label := ctx.String("label")

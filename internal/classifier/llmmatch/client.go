@@ -80,6 +80,17 @@ func NewClientWithBudget(cfg Config, privacy PrivacyStore, metrics *Metrics,
 	}
 }
 
+// IsolateBudget swaps the shared call ledger for a private allowance of n
+// provider calls in this process. For measurement commands only: matcher-eval
+// at the production limits (15/day, 450/month, one ledger shared with the
+// crawler) either stalls after a handful of rows or spends the crawler's month.
+// Never call it from a worker.
+func (c *Client) IsolateBudget(n int) {
+	b := &capBudget{}
+	b.left.Store(int64(n))
+	c.budget = b
+}
+
 func (c *Client) Enabled() bool            { return c != nil && c.cfg.Enabled }
 func (c *Client) Live() bool               { return c != nil && c.cfg.EnableLive }
 func (c *Client) Model() string            { return c.cfg.Model }

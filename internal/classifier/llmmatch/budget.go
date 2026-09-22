@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -48,6 +49,18 @@ func (b *memoryCallBudget) Reserve(ctx context.Context, daily, monthly int) (boo
 	b.daily++
 	b.monthly++
 	return true, nil
+}
+
+// capBudget admits exactly the calls it was given, for the life of one process,
+// and ignores the configured daily/monthly limits. It is a measurement
+// command's own allowance (see Client.IsolateBudget).
+type capBudget struct{ left atomic.Int64 }
+
+func (b *capBudget) Reserve(ctx context.Context, _, _ int) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return b.left.Add(-1) >= 0, nil
 }
 
 type PostgresCallBudget struct {
