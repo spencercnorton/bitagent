@@ -32,14 +32,30 @@ type CanonicalStore interface {
 // If the canonical lookup fails (context cancelled, DB unreachable)
 // the decorator falls through to inner. Availability of classification
 // dominates; a canonical-label miss is not a reason to fail the torrent.
-func NewCanonicalRunner(inner Runner, store CanonicalStore, metrics *PreemptMetrics) Runner {
-	return &canonicalRunner{inner: inner, store: store, metrics: metrics}
+func NewCanonicalRunner(inner Runner, store CanonicalStore, metrics *PreemptMetrics, opts ...CanonicalOption) Runner {
+	r := &canonicalRunner{inner: inner, store: store, metrics: metrics}
+	for _, opt := range opts {
+		opt(r)
+	}
+
+	return r
+}
+
+// CanonicalOption configures optional canonical-runner behaviour.
+type CanonicalOption func(*canonicalRunner)
+
+// WithTitleEvidence lets *arr labels on other torrents with the same parsed
+// title choose the identity of a torrent that has no label of its own
+// (CLASSIFIER_EVIDENCE_TITLE_IDENTITY). Nil leaves the runner unchanged.
+func WithTitleEvidence(e *TitleEvidence) CanonicalOption {
+	return func(r *canonicalRunner) { r.titles = e }
 }
 
 type canonicalRunner struct {
 	inner   Runner
 	store   CanonicalStore
 	metrics *PreemptMetrics
+	titles  *TitleEvidence // nil unless CLASSIFIER_EVIDENCE_TITLE_IDENTITY
 }
 
 func (r *canonicalRunner) Run(
@@ -49,7 +65,10 @@ func (r *canonicalRunner) Run(
 	t model.Torrent,
 ) (classification.Result, error) {
 	if evaltrace.SkipPreempt(ctx) {
-		return r.inner.Run(ctx, workflow, flags, t)
+		// Replay skips the exact-infohash preempt because a torrent's own label
+		// would copy the answer back. Title evidence never counts a torrent's own
+		// label, so it runs — and the benchmark can measure it.
+		return r.inner.Run(ctx, workflow, flags, r.withTitleEvidence(ctx, t))
 	}
 
 	label, err := r.store.CanonicalForInfoHash(ctx, t.InfoHash.Bytes())
@@ -78,7 +97,28 @@ func (r *canonicalRunner) Run(
 	default:
 		r.metrics.missesTotal.Inc()
 	}
-	return r.inner.Run(ctx, workflow, flags, t)
+	return r.inner.Run(ctx, workflow, flags, r.withTitleEvidence(ctx, t))
+}
+
+// withTitleEvidence hints the identity the *arrs agree on for this torrent's
+// title, through the same hint the canonical constrain path uses, so the
+// workflow's attach-by-id actions resolve it (tvdb: included).
+func (r *canonicalRunner) withTitleEvidence(ctx context.Context, t model.Torrent) model.Torrent {
+	if r.titles == nil {
+		return t
+	}
+	label, outcome := r.titles.Preferred(ctx, t)
+	r.metrics.evidenceTitle.WithLabelValues(string(outcome)).Inc()
+	if outcome != titleApplied {
+		return t
+	}
+	contentType, ok := canonicalToContentType(label.MediaType)
+	if !ok {
+		return t
+	}
+	evaltrace.Record(ctx, "evidence_title")
+
+	return applyCanonicalHint(t, label, contentType)
 }
 
 func canonicalNeedsIdentityEnrichment(contentType model.ContentType) bool {
@@ -224,6 +264,7 @@ type PreemptMetrics struct {
 	missesTotal      *dualemit.Counter
 	lookupErrors     *dualemit.Counter
 	unknownMediaType *dualemit.CounterVec
+	evidenceTitle    *dualemit.CounterVec
 }
 
 // NewPreemptMetrics constructs the metric set.
@@ -258,6 +299,12 @@ func NewPreemptMetrics() *PreemptMetrics {
 			Namespace: namespace, Subsystem: subsystem, Name: "unknown_media_type_total",
 			Help: "Canonical labels found but with a media_type the classifier cannot short-circuit; classifier still runs.",
 		}, []string{"source"}),
+		evidenceTitle: dualemit.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace, Subsystem: subsystem, Name: "evidence_title_total",
+			Help: "Title-level *arr evidence for torrents with no label of their own: " +
+				"applied (identity hinted) | weak (under 2 votes or no 2/3 majority) | " +
+				"no_preference | no_key | no_index.",
+		}, []string{"outcome"}),
 	}
 }
 
@@ -270,5 +317,6 @@ func (m *PreemptMetrics) Collectors() []prometheus.Collector {
 		m.missesTotal,
 		m.lookupErrors,
 		m.unknownMediaType,
+		m.evidenceTitle,
 	}
 }

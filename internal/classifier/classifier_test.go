@@ -2,6 +2,7 @@ package classifier
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -292,4 +293,38 @@ func newTestClassifierMocks(t *testing.T) testClassifierMocks {
 		search:     search,
 		tmdbClient: tmdbClient,
 	}
+}
+
+// A delete must carry the content type it fired on. The action-sequence runner
+// returns an empty Result with every error, so before this the processor's
+// bitagent_classifier_deleted_total reported every delete as "unknown" — seen
+// live on the first v2.9.2 deploy. Runs the real core `default` workflow.
+func TestDeleteCarriesContentType(t *testing.T) {
+	t.Parallel()
+
+	mocks := newTestClassifierMocks(t)
+	source, err := yamlSourceProvider{rawSourceProvider: coreSourceProvider{}}.source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := mocks.compiler.Compile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	torrent := model.Torrent{
+		Name:        "Some Artist - Some Album (2020) [FLAC]",
+		FilesStatus: model.FilesStatusSingle,
+		Extension:   model.NewNullString("flac"),
+		Size:        300_000_000,
+	}
+	_, runErr := workflow.Run(context.Background(), "default",
+		Flags{"delete_content_types": []any{"music"}}, torrent) // []any, as source_provider builds it
+
+	var re classification.RuntimeError
+	if !errors.As(runErr, &re) || !errors.Is(runErr, classification.ErrDeleteTorrent) {
+		t.Fatalf("expected a delete, got %v", runErr)
+	}
+	assert.True(t, re.ContentType.Valid, "the delete must carry its content type")
+	assert.Equal(t, model.ContentTypeMusic, re.ContentType.ContentType)
 }

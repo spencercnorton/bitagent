@@ -6,4 +6,4 @@ metadata, the running app, and the git tag never drift. Bump this on release
 and tag the merge commit `vX.Y.Z` to match.
 """
 
-__version__ = "2.9.2"
+__version__ = "2.10.0"

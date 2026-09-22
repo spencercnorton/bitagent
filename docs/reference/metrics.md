@@ -79,9 +79,12 @@ Scrape-driven, 5-second per-scrape timeout.
 
 | Metric | Type | Labels | Purpose |
 |---|---|---|---|
-| `bitagent_classifier_preempt_lookup_total` | counter | `result` | Lookups against the canonical-label cache. `result` ∈ {`hit`, `miss`, `error`}. |
-| `bitagent_classifier_preempt_apply_total` | counter | — | Cumulative preempt applications (CEL chain skipped). |
-| `bitagent_classifier_preempt_lookup_duration_seconds` | histogram | — | Lookup latency. |
+| `bitagent_classifier_preempt_preempted_total` | counter | `source`, `media_type` | Runs skipped outright because the torrent's own \*arr label decided it (non-video types). |
+| `bitagent_classifier_preempt_constrained_total` | counter | `source`, `media_type` | Movie/TV runs whose type and identity hint were fixed by the torrent's own label before normal enrichment. |
+| `bitagent_classifier_preempt_misses_total` | counter | — | Runs with no label of their own. The expected steady state for freshly crawled torrents. |
+| `bitagent_classifier_preempt_lookup_errors_total` | counter | — | Label lookups that failed; the classifier ran without evidence. |
+| `bitagent_classifier_preempt_unknown_media_type_total` | counter | `source` | Labels whose media type cannot short-circuit anything; the classifier ran. |
+| `bitagent_classifier_preempt_evidence_title_total` | counter | `outcome` | Title-level \*arr evidence for torrents with no label of their own (`CLASSIFIER_EVIDENCE_TITLE_IDENTITY`). `applied`: the identity the \*arrs agree on for this title was hinted. `weak`: fewer than 2 other labels, or no ⅔ majority. `no_preference`: no other torrent with this title is labelled. `no_key`: the name did not parse to a title. `no_index`: labels could not be loaded. Absent while the flag is off. |
 
 ## `bitagent_classifier_llm_*` — LLM rerank stage (optional)
 

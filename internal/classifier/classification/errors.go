@@ -3,6 +3,8 @@ package classification
 import (
 	"fmt"
 	"strings"
+
+	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 type Error interface {
@@ -38,6 +40,11 @@ var ErrDeleteTorrent = WorkflowError{
 type RuntimeError struct {
 	Path  []string
 	Cause error
+	// ContentType is the type the workflow had assigned when the error was
+	// raised. The action-sequence runner returns an empty Result alongside any
+	// error, so a delete's content type survives only here — it is what
+	// bitagent_classifier_deleted_total{content_type} reports.
+	ContentType model.NullContentType
 }
 
 func (e RuntimeError) Error() string {

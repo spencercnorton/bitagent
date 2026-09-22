@@ -21,6 +21,14 @@ type Config struct {
 	// not just Title/OriginalTitle. Off by default until precision is
 	// measured (env CLASSIFIER_ALT_TITLE_MATCH).
 	AltTitleMatch bool
+	// EvidenceTitleIdentity lets *arr canonical labels on OTHER torrents with the
+	// same parsed title choose the catalogue identity of a torrent that has no
+	// label of its own — the canonical preempt generalised from one infohash to
+	// a title. It needs 2 agreeing labels holding 2/3 of the votes, never counts
+	// the torrent's own label, and only hints: the workflow still resolves and
+	// attaches. Measured +141 of 3,344 gold rows over v2.9.2, 0 broken, leave-one-out
+	// (docs/project/benchmarks.md). Env CLASSIFIER_EVIDENCE_TITLE_IDENTITY.
+	EvidenceTitleIdentity bool
 	// FuzzyMatchEnabled activates the deterministic fuzzy-matching overhaul:
 	//   (A) title normalisation (roman→arabic, article stripping, &→and, punct),
 	//   (B) token-set-ratio ≥ 0.90 OR length-scaled Levenshtein with a

@@ -68,7 +68,11 @@ func provideRunner(
 	metrics *classifier.PreemptMetrics,
 ) classifier.Result {
 	res := classifier.New(params)
-	res.Runner = WrapRunnerWithCanonical(res.Runner, store, metrics)
+	var opts []classifier.CanonicalOption
+	if params.Config.EvidenceTitleIdentity {
+		opts = append(opts, classifier.WithTitleEvidence(classifier.NewTitleEvidence(store)))
+	}
+	res.Runner = WrapRunnerWithCanonical(res.Runner, store, metrics, opts...)
 	return res
 }
 
@@ -83,12 +87,13 @@ func WrapRunnerWithCanonical(
 	inner lazy.Lazy[classifier.Runner],
 	store classifier.CanonicalStore,
 	metrics *classifier.PreemptMetrics,
+	opts ...classifier.CanonicalOption,
 ) lazy.Lazy[classifier.Runner] {
 	return lazy.New(func() (classifier.Runner, error) {
 		r, err := inner.Get()
 		if err != nil {
 			return nil, err
 		}
-		return classifier.NewCanonicalRunner(r, store, metrics), nil
+		return classifier.NewCanonicalRunner(r, store, metrics, opts...), nil
 	})
 }

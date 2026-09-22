@@ -24,6 +24,12 @@ func TestDeleteLabels(t *testing.T) {
 		{"untyped banned-keyword delete", model.NullContentType{}, pathErr, "unknown", "workflows.default.actions.3"},
 		{"no runtime error wrapper", typed, classification.ErrDeleteTorrent, "music", "unknown"},
 		{"wrapped runtime error", typed, errors.Join(errors.New("ctx"), pathErr), "music", "workflows.default.actions.3"},
+		// The production shape: the workflow empties the Result on error, so the
+		// type arrives only on the RuntimeError.
+		{"type on the error, empty result", model.NullContentType{}, classification.RuntimeError{
+			Path:  []string{"workflows", "default", "[7]", "if_else", "if_action", "delete"},
+			Cause: classification.ErrDeleteTorrent, ContentType: typed,
+		}, "music", "workflows.default.[7].if_else.if_action.delete"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -199,6 +199,49 @@ where info_hash = $1`
 	return &lbl, nil
 }
 
+// TitleLabel is one *arr identity label with the name of the torrent it was
+// grabbed under — the raw material for title-level identity evidence.
+type TitleLabel struct {
+	InfoHash  []byte
+	Name      string
+	MediaType MediaType
+	MediaID   string
+}
+
+// CanonicalTitleLabels returns every canonical label carrying a catalogue
+// identity, joined to its torrent's name. One row per torrent an *arr has
+// grabbed, so callers load it whole.
+func (s *Store) CanonicalTitleLabels(ctx context.Context) ([]TitleLabel, error) {
+	pool, err := s.pool.Get()
+	if err != nil {
+		return nil, fmt.Errorf("evidence: acquire pool: %w", err)
+	}
+	const q = `
+select tcl.info_hash, t.name, coalesce(tcl.media_type, ''), tcl.media_id
+from torrent_canonical_labels tcl
+join torrents t on t.info_hash = tcl.info_hash
+where tcl.media_id is not null and tcl.media_id <> ''`
+	rows, err := pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("evidence: title labels: %w", err)
+	}
+	defer rows.Close()
+	var out []TitleLabel
+	for rows.Next() {
+		var (
+			l  TitleLabel
+			mt string
+		)
+		if err := rows.Scan(&l.InfoHash, &l.Name, &mt, &l.MediaID); err != nil {
+			return nil, fmt.Errorf("evidence: title labels scan: %w", err)
+		}
+		l.MediaType = MediaType(mt)
+		out = append(out, l)
+	}
+
+	return out, rows.Err()
+}
+
 // ListRecent returns up to limit evidence rows starting at offset,
 // ordered by observed_at desc, plus the table's total row count.
 // The total is computed via a single COUNT(*) — bounded by the

@@ -18,9 +18,12 @@ import (
 // catalogue and nothing reported the rate.
 //
 // Labels: content_type is the type the classifier had assigned before the
-// delete fired ("unknown" when none — the banned-keyword rule runs before
-// parsing); rule is the dotted policy path of the rule that fired, so a
-// CSAM-keyword delete and a delete_content_types delete are separable.
+// delete fired, read from the RuntimeError ("unknown" when none — the
+// banned-keyword rule runs before any type is set); rule is the dotted policy
+// path of the rule that fired, so a CSAM-keyword delete and a
+// delete_content_types delete are separable. v2.9.2 read the type from the
+// returned Result, which the workflow empties on error, so every delete
+// reported "unknown".
 type DeleteMetrics struct {
 	deleted *dualemit.CounterVec
 }
@@ -50,12 +53,19 @@ func (m *DeleteMetrics) Observe(ct model.NullContentType, classifyErr error) {
 
 func deleteLabels(ct model.NullContentType, classifyErr error) (contentType, rule string) {
 	contentType, rule = "unknown", "unknown"
+	var re classification.RuntimeError
+	if errors.As(classifyErr, &re) {
+		if len(re.Path) > 0 {
+			rule = strings.Join(re.Path, ".")
+		}
+		// The workflow returns an empty Result with any error, so the type
+		// normally arrives on the error, not on ct.
+		if re.ContentType.Valid {
+			ct = re.ContentType
+		}
+	}
 	if ct.Valid {
 		contentType = ct.ContentType.String()
-	}
-	var re classification.RuntimeError
-	if errors.As(classifyErr, &re) && len(re.Path) > 0 {
-		rule = strings.Join(re.Path, ".")
 	}
 	return contentType, rule
 }

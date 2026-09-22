@@ -3,10 +3,12 @@
 Evidence is what makes BitAgent more than a Torznab front-end on a DHT crawl.
 Every time one of your \*arrs grabs a release from BitAgent and every time it
 imports one, that fact comes back as a webhook and is recorded. From those
-records BitAgent derives three things: an authoritative label for the torrent
-that short-circuits classification, a per-feature success prior that re-ranks
-future search results toward what has actually worked for you, and a liveness
-state that keeps dead swarms out of your \*arr's view.
+records BitAgent derives four things: an authoritative label for the torrent
+that short-circuits classification; the right identity for *other* torrents
+of the same title, so same-name shows stop being confused; a per-feature
+success prior that re-ranks future search results toward what has actually
+worked for you; and a liveness state that keeps dead swarms out of your
+\*arr's view.
 
 Nothing here is learned by a model. The loop is explicit, inspectable, and
 every step has a metric.
@@ -108,7 +110,40 @@ Grabs from a private-tracker category are excluded from α by default
 (`EVIDENCE_OUTCOME_PRIORS_EXCLUDE_PRIVATE_TRACKER_GRABS`): a private import
 proves nothing about what the public swarm can serve.
 
-### 3. Liveness
+### 3. Identity for torrents your \*arrs have not grabbed yet
+
+A canonical label decides only the torrent it belongs to. With
+`CLASSIFIER_EVIDENCE_TITLE_IDENTITY=true`, the labels also decide **other**
+torrents released under the same title: when BitAgent classifies a torrent that
+has no label of its own, it asks which catalogue identity the \*arrs gave the
+torrents they *did* grab under that title — and, when at least two of them agree
+and hold at least two thirds of the votes, it hints that identity to the
+matcher.
+
+This fixes the one kind of error a matcher cannot fix by itself: several
+catalogue entries with the same name. *Married at First Sight* US and AU,
+*iCarly* 2007 and its 2021 revival, *Kitchen Nightmares* UK and US look
+identical to title matching. Your \*arr already chose one of them — it is the
+series you monitor — and Sonarr searches Torznab by that series' id, so a
+release attached to its namesake is a release Sonarr never sees.
+
+The rules keep it conservative:
+
+- **A torrent is never its own evidence.** Its own label, if any, is handled by
+  the exact preempt above; the title vote only counts other torrents.
+- **The release's shape is part of the title.** Episode-shaped names vote only
+  with episode-shaped names; a movie keeps its year, so a *Dune (2021)* grab
+  never steers a *Dune (1984)* torrent.
+- **It only hints.** The workflow still resolves the identity against the
+  catalogue and attaches it; `tvdb:` identities from Sonarr resolve through
+  TMDB's external ids exactly as they do for the preempt.
+
+On the 2026-09-22 benchmark it would have corrected 141 of 3,344 gold rows
+that the deployed matcher gets wrong, without breaking one (93.7% → 97.9%) ([`docs/project/benchmarks.md`](project/benchmarks.md)).
+Off by default; `bitagent_classifier_preempt_evidence_title_total{outcome}`
+reports what it did.
+
+### 4. Liveness
 
 The liveness ladder derives `alive`, `suspect` or `dead` per infohash. An \*arr
 import is the strongest alive signal there is — bytes reached disk. qBittorrent
