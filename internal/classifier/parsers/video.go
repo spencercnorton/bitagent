@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/hedhyw/rex/pkg/dialect"
 	"github.com/hedhyw/rex/pkg/rex"
@@ -74,6 +75,73 @@ var siteNoisePrefixV2WWWRegex = regexp.MustCompile(
 var siteNoisePrefixV2TLDsRegex = regexp.MustCompile(
 	`(?i)^\s*[a-z0-9][a-z0-9-]*\.(?:rsvp|pics|la|pl|vip|red|win|pro|site|live|online|top|fun|icu|cyou|ws|ru|in|ph|ai|gg|cx|sh|st|mov|fyi|lol|day|wtf|autos|skin)\b[\s._]*-+[\s._]*`,
 )
+
+// absoluteEpisodeRegex (v2) finds an EP-numbered episode — "One.Piece.EP1168.…",
+// "Some.Drama.2024.EP12.…": "EP" joined to 2-4 digits after a title. The shape is
+// episodic by construction but carries no SxxExx, so the cascade either leaves it
+// untyped or types it a movie on its year. The digits must touch "EP": a spaced
+// "EP 2019" is how a music EP and its year are written.
+// leadingBracketTagRegex matches the "[Group] " a release name opens with.
+var leadingBracketTagRegex = regexp.MustCompile(`^\s*\[[^\]]*\]\s*`)
+
+var absoluteEpisodeRegex = regexp.MustCompile(`(?i)^(.*?[\p{L}\p{N}])[\s._-]+EP(\d{2,4})(?:v\d)?(?:[\s._\-\[(]|$)`)
+
+// latinTitleAfterCJK (v2) keeps the English half of a bilingual title. CJK-market
+// releases name a work "<中文片名>.<English.Title>.<year>" ("范海辛.Van.Helsing",
+// "南方公园.South.Park"), and the whole string reaches BaseTitle, where it equals
+// neither the catalogue title nor any stored alias. Only a title that STARTS in CJK
+// and ends in at least two words, one of them Latin, after its last CJK character
+// is rewritten; a sequel number glued to the Chinese title ("美国队长3 Captain
+// America") stays behind with it. A Latin run that opens with a square bracket is a tag
+// ("[MP3 320K]", "[4KHDR.CN]"), not a title. CJK-only and Latin-first titles are
+// returned unchanged.
+func latinTitleAfterCJK(title string) string {
+	runes := []rune(title)
+	cut := -1
+	firstLetterIsCJK, sawLetter := false, false
+	for i, r := range runes {
+		cjk := unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul)
+		if !sawLetter && unicode.IsLetter(r) {
+			sawLetter, firstLetterIsCJK = true, cjk
+		}
+		if cjk {
+			cut = i + 1
+			for cut < len(runes) && unicode.IsDigit(runes[cut]) {
+				cut++ // a sequel number glued to the CJK title belongs to it
+			}
+		}
+	}
+	if !firstLetterIsCJK || cut < 0 {
+		return title
+	}
+	rest := strings.TrimLeftFunc(string(runes[cut:]), unicode.IsSpace)
+	if strings.HasPrefix(rest, "[") {
+		return title
+	}
+	tail := strings.TrimFunc(rest, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	words := strings.Fields(tail)
+	latinWords := 0
+	for _, w := range words {
+		hasLatin := false
+		for _, r := range w {
+			if !unicode.In(r, unicode.Latin) && !unicode.IsNumber(r) && !strings.ContainsRune("'’&:!,.-", r) {
+				return title
+			}
+			hasLatin = hasLatin || unicode.In(r, unicode.Latin)
+		}
+		if hasLatin {
+			latinWords++
+		}
+	}
+	// Two words, at least one of them Latin: "2 Guns" and "Crime 101" are
+	// titles; a digits-only run ("中文 13 14") is not.
+	if len(words) < 2 || latinWords == 0 {
+		return title
+	}
+	return tail
+}
 
 func stripSiteNoisePrefixV2(name string) string {
 	name = strings.TrimSpace(cjkSpanRegex.ReplaceAllString(name, " "))
@@ -416,6 +484,28 @@ func ParseVideoContentWithOptions(
 		year = 0
 	}
 
+	// v2: an EP-numbered episode is TV; its title is what precedes the EP token,
+	// with any year split off. The number is absolute, so Episodes stays empty —
+	// as for fansub absolute numbering below.
+	epNumbered := false
+	if opts.NoiseV2 && len(episodes) == 0 &&
+		(!result.ContentType.Valid || result.ContentType.ContentType == model.ContentTypeTvShow) {
+		// An EP inside a bracketed tag ("[1920x1080p.EP001-151.END]") is not an
+		// episode marker for the title before it.
+		if m := absoluteEpisodeRegex.FindStringSubmatch(name); m != nil &&
+			strings.Count(m[1], "[") == strings.Count(m[1], "]") {
+			before := strings.TrimSpace(leadingBracketTagRegex.ReplaceAllString(m[1], ""))
+			if t, y, _, yerr := parseTitleYear(before + " "); yerr == nil {
+				title, year = t, y
+			} else {
+				title = cleanTitle(before)
+			}
+			if title != "" {
+				epNumbered, rest = true, name[len(m[1]):]
+			}
+		}
+	}
+
 	// Anime released by a KNOWN fansub group is video by construction, but its
 	// canonical shape ("[Group] Title - NNN [tags].mkv") carries no SxxExx, no
 	// full date and no year — so the three cases below all miss and the switch
@@ -474,6 +564,8 @@ func ParseVideoContentWithOptions(
 			ct = model.NullContentType{Valid: true, ContentType: model.ContentTypeTvShow}
 			animeAmbiguous = true
 		}
+	case epNumbered:
+		ct = model.NullContentType{Valid: true, ContentType: model.ContentTypeTvShow}
 	case !year.IsNil():
 		ct = model.NullContentType{Valid: true, ContentType: model.ContentTypeMovie}
 	}
@@ -513,6 +605,10 @@ func ParseVideoContentWithOptions(
 		} else {
 			title = anime.CleanTitle(name, animeSignals)
 		}
+	}
+
+	if opts.NoiseV2 {
+		title = latinTitleAfterCJK(title)
 	}
 
 	attrs := classification.ContentAttributes{

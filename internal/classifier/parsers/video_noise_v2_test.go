@@ -137,3 +137,59 @@ func TestNoiseV2WWWPrefixNeedsASeparator(t *testing.T) {
 		require.Equal(t, name, stripSiteNoisePrefixV2(name), name)
 	}
 }
+
+// An EP-numbered episode is TV, titled by what precedes the EP token. The
+// digits must touch "EP", and an EP inside a bracketed tag is not an episode.
+func TestNoiseV2AbsoluteEpisode(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, title string
+		year        int
+	}{
+		{"Some.Anime.EP1168.Episode.1168.1080p.CR.WEB-DL.JPN.AAC2.0.H.264-GRP.mkv", "Some Anime", 0},
+		{"Some.Drama.2024.EP12.1080p.WEB-DL.x264-GRP", "Some Drama", 2024},
+		{"[Group] Some Show EP07 [WEBDL] [1080p]", "Some Show", 0},
+	} {
+		attrs, err := ParseVideoContentWithOptions(model.Torrent{Name: tc.name}, classification.Result{}, ParseOptions{NoiseV2: true})
+		require.NoError(t, err, tc.name)
+		require.Equal(t, model.ContentTypeTvShow, attrs.ContentType.ContentType, tc.name)
+		require.Equal(t, tc.title, attrs.BaseTitle.String, tc.name)
+		require.Equal(t, model.Year(tc.year), attrs.Date.Year, tc.name)
+		require.Empty(t, attrs.Episodes, tc.name) // absolute numbering has no season
+	}
+
+	for _, name := range []string{
+		"Some Artist - Great Songs EP 2019",                 // a music EP and its year
+		"Some Show Special [1920x1080p.EP001-151.END.hevc]", // EP inside a tag
+	} {
+		attrs, _ := ParseVideoContentWithOptions(model.Torrent{Name: name}, classification.Result{}, ParseOptions{NoiseV2: true})
+		require.NotEqual(t, model.ContentTypeTvShow, attrs.ContentType.ContentType, name)
+	}
+}
+
+func TestLatinTitleAfterCJK(t *testing.T) {
+	t.Parallel()
+
+	for in, want := range map[string]string{
+		"范海辛 Van Helsing":                             "Van Helsing",
+		"南方公园 South Park":                             "South Park",
+		"美国队长3 Captain America Civil War":             "Captain America Civil War", // sequel digit stays with the CJK title
+		"黑炮事件 [国语音轨 +简英字幕 ]The Black Cannon Incident": "The Black Cannon Incident",
+		"国语中字La fille de d'Artagnan":                  "La fille de d'Artagnan", // Latin glued to CJK starts the title
+		"노랑 머리 (Yellow Hair)":                         "Yellow Hair",
+		// unchanged
+		"进击的巨人":                           "进击的巨人",                           // CJK only
+		"Plastic Tree スロウ (Nihon Ongaku)": "Plastic Tree スロウ (Nihon Ongaku)", // Latin first
+		"临床13区 [4KHDR CN ]":               "临床13区 [4KHDR CN ]",               // bracketed tag, not a title
+		"本命年 Snow":                        "本命年 Snow",                        // one Latin word is not enough
+		"中文 13 14":                        "中文 13 14",                        // digits alone are not a title
+		"双龙出手 2 Guns":                     "2 Guns",                          // one Latin word plus a number is
+	} {
+		require.Equal(t, want, latinTitleAfterCJK(in), in)
+	}
+
+	attrs, err := ParseVideoContentWithOptions(model.Torrent{Name: "南方公园.South.Park.S22E06.中英字幕.HDTVrip.720p"}, classification.Result{}, ParseOptions{NoiseV2: true})
+	require.NoError(t, err)
+	require.Equal(t, "South Park", attrs.BaseTitle.String)
+}

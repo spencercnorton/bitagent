@@ -15,7 +15,7 @@ which of BitAgent's matching features move that number?
 **83.3%** of gold rows; three matching features switched off did better
 (**91.6%**); the whole difference traced to **one bug** in one of them; with it
 fixed and deployed the ladder agrees on **93.7%**; title-level \*arr evidence and
-a site-prefix parser fix, measured on the production crawler, take it to **97.8%**
+three parser fixes, measured on the production crawler, take it to **98.1%**
 with 99.3% precision and zero regressions. On what the deterministic pipeline
 still cannot match, the LLM matcher's answer is the \*arr's identity 83% of the
 time, and its identity gate has attached nothing wrong.
@@ -298,16 +298,50 @@ production also requires the chosen entry to agree with a title parsed
 independently of the model (`CLASSIFIER_LLM_MATCH_REQUIRE_SOURCE_TITLE`), and on
 names like these that parse is empty (`<Title>.EP1168 …`) or carries the prefix
 (`<中文片名> <English Title>`). Since v2.10.4 `matcher-eval` records which check
-declined each row (`gate_reason`). Loosening the gate where the model's own
-extraction and the candidate agree exactly is the next measurable lever: up to +9
-rows here, with the three wrong picks (a film matched to a same-name film, a
-franchise film matched to an earlier entry, an anime arc filed under a different
-TMDB entry) as the precision test. That is a gate change
-measured on this segment, not a new model or an embeddings stage.
+declined each row (`gate_reason`), and it answered the question: on this segment
+the withheld right answers were declined by the **source-title** check (the parser's
+title) or as **ambiguous** among same-titled TV entries — never on the model's own
+extraction. The gate's own documentation explains why it must not be loosened
+(containment cannot tell a same-work alias from a different work), so the lever
+is the parser's title — see the next section.
 
 **Limits.** 22 rows is a small sample — the 95% interval on 15/18 correct answers
 is 61–94%. The residual is by construction the hardest slice of a clean corpus.
 One model, one prompt version (`v4-2026-07-19-dual-audio-english`).
+
+### Fixing the title, not the gate — v2.10.7
+
+Two shapes the parser could not title, found on the residual above:
+
+- **EP-numbered episodes** (`<Title>.EP1168.…`, `<Title>.2024.EP12.…`) — episodic by
+  construction, but with no `SxxExx` the release was left **untyped**, so neither
+  title-level evidence nor the LLM matcher ever saw it. Now TV, titled by what precedes
+  the token; the absolute number stays out of the season/episode map.
+- **Bilingual CJK titles** (`<中文片名> <English Title>`) — the whole string reached the
+  title, equal to neither the catalogue title nor any alias. A title that starts in CJK
+  and ends in at least two words, one of them Latin, now keeps the Latin part; a sequel
+  number glued to the CJK title stays with it, and a bracketed Latin run is a tag.
+
+**Measured before shipping,** by running names through the real `default` workflow
+(search off) and diffing against the previous build: 14 of the 4,070 benchmark names
+changed, all correct; 158 of 20,000 recent production names changed (20 re-typed, 138
+re-titled), every one reviewed — two review rounds removed four defects and two
+over-corrections before merge.
+
+**Measured after deploy** (production crawler, same segment, 2026-09-22 23:58Z):
+
+| | Rows agree (n = 3,344) | Titles agree (n = 262) | No match at all | Precision of attached |
+|---|---|---|---|---|
+| v2.10.2 | 97.8% | 93.1% | 51 | 99.3% |
+| **v2.10.7** | **98.1%** [97.6, 98.5] | **93.9%** | **40** | **99.3%** |
+
+**11 rows fixed, 0 broken**, all through the deterministic parse-and-search path; three
+more changed rows are now matched to the right series but carry no scorable expected id.
+On the LLM residual the gate now accepts **8** right answers (was 6), still **0** wrong;
+the right answers it withholds split between the source-title check (5 — shapes the
+parser still mis-titles: a Spanish title with the English one in parentheses, an unknown
+release group's bracket, a `Part 1` suffix, a broadcaster prefix) and same-titled TV
+entries (5), which the ladder's own title evidence now resolves for the EP-numbered rows.
 
 ### Limits
 

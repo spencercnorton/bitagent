@@ -58,9 +58,10 @@ Every torrent your \*arrs grab and report back comes with a free answer key: the
 | v2.8.1 | 83.3% | 85.5% | 94.9% |
 | v2.9.2 — fuzzy matcher stops dropping punctuated titles | 93.7% | 90.8% | 95.5% |
 | v2.10.0 — + title-level \*arr evidence | 97.5% | 93.1% | 99.3% |
-| **v2.10.2 — + site-prefix parser fix (current)** | **97.8%** | **93.1%** | **99.3%** |
+| v2.10.2 — + site-prefix parser fix | 97.8% | 93.1% | 99.3% |
+| **v2.10.7 — + EP-numbered and bilingual titles (current)** | **98.1%** | **93.9%** | **99.3%** |
 
-On the rows the whole deterministic pipeline still cannot match — live TMDB search included — the LLM matcher's answer was the \*arr's identity on 15 of the 18 it answered. Its identity gate accepted only the ones it could corroborate and attached nothing wrong, which makes the gate, not the model, the next thing to tune.
+On the rows the whole deterministic pipeline still cannot match — live TMDB search included — the LLM matcher's answer was the \*arr's identity on 15 of the 18 it answered. Its identity gate accepted only the ones it could corroborate against an independently parsed title, and attached nothing wrong — so where it withheld a right answer, the parser's title was the problem, not the model; v2.10.7 fixed two such shapes.
 
 The benchmark found its own regressions: the first run showed three matching features scoring *below* the same pipeline with them switched off, and single-flag ablations traced the whole gap to one gate in the fuzzy matcher. The method, 95% intervals, ablations, root causes, limits and the commands to run it on your own instance are in [`docs/project/benchmarks.md`](docs/project/benchmarks.md).
 
