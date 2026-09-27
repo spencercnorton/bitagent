@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.10.9 — 2026-09-27
 
 - Establish GitHub pull requests as the development workflow, with privacy checks.
 - Add deployment, configuration, security, upgrade and recovery documentation.
