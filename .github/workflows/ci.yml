@@ -2,6 +2,7 @@
 # Read-only tokens, disposable databases and commit-pinned GitHub actions.
 name: CI
 on:
+  workflow_call:
   pull_request:
   push:
     branches: [main]
