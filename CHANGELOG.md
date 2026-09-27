@@ -7,3 +7,5 @@
 - Remove the inherited shared metadata key and automatic fallback; enrichment
   requires the operator's own TMDB_API_KEY.
 
+- Fail closed when retained content-filter evidence loses its privacy, expiry
+  or source-identity admission, with PostgreSQL regression coverage.
