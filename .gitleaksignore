@@ -1,0 +1,7 @@
+# Exact findings inherited from the public upstream baseline.
+# These exclusions do not apply to new commits or current source.
+4a45981b5bc23502169ffc5314ce517409c023e3:internal/tmdb/config.go:generic-api-key:24
+ec95f7cc3ad6dc93e3aee7869fa5cac4c0b27f0f:observability/grafana-dashboards/bitmagnet.json:generic-api-key:111
+ec95f7cc3ad6dc93e3aee7869fa5cac4c0b27f0f:observability/grafana-dashboards/bitmagnet.json:generic-api-key:341
+ec95f7cc3ad6dc93e3aee7869fa5cac4c0b27f0f:observability/grafana-dashboards/bitmagnet.json:generic-api-key:1197
+e7327343f0b064ff16c7c990b38dd14f8fd533d3:internal/classifier/video/tmdb/config.go:generic-api-key:22

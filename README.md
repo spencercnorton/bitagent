@@ -109,6 +109,9 @@ One app serves two hostnames. The **operator console** shows indexer win rate, m
 
 ## Documentation
 
+- [Deployment and operations guide](docs/OPERATIONS.md) — setup, configuration, verification, upgrades, recovery and troubleshooting.
+- [Releasing](docs/RELEASING.md) — public builds, release checks and private deployment boundaries.
+
 - [Docs index](docs/index.md) · [Quickstart](docs/quickstart.md) · [Configuration](docs/configuration.md) · [FAQ](docs/faq.md) · [Troubleshooting](docs/troubleshooting.md)
 - Core: [Evidence pipeline](docs/evidence.md) — how *arr grabs and imports become labels, priors and liveness
 - Concepts: [Architecture](docs/concepts/architecture.md) · [DHT crawler](docs/concepts/dht-crawler.md) · [Classification](docs/concepts/classification.md) · [Swarm health](docs/concepts/swarm-health.md) · [Compatibility contract](docs/concepts/compatibility.md) · [Wantbridge](docs/concepts/wantbridge.md) · [Glossary](docs/concepts/glossary.md)

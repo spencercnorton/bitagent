@@ -13,14 +13,13 @@ channel for those.
 
 ## How changes land
 
-This GitHub repository is a **release mirror**: every commit on `main` is
-a tagged release built from the maintainer's development tree, and `main`
-only ever moves forward by a release. Pull requests are reviewed **here**
-but not merged here: an accepted change is applied to the development
-tree and ships in the next tagged release, after which the pull request is
-closed with a reference to that release and you keep the credit in the
-release notes. Please branch from `main` and do not rebase onto anything
-else.
+GitHub is the development home. Branch from `main` and open a pull request
+into `main`. Build, test and privacy checks must pass before merge. Changes
+ship in tagged releases; see [the release guide](docs/RELEASING.md).
+
+Use a GitHub noreply address for commit authorship if you prefer to keep
+your personal address private. Review your diff and commit messages before
+pushing: public history, logs and uploaded screenshots are public data.
 
 ## Local development
 

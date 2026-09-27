@@ -14,14 +14,13 @@ func NewDefaultConfig() Config {
 	return Config{
 		Enabled:        true,
 		BaseURL:        "https://api.themoviedb.org/3",
-		APIKey:         defaultTmdbAPIKey,
+		APIKey:         "",
 		RateLimit:      defaultRateLimit,
 		RateLimitBurst: defaultRateLimitBurst,
 	}
 }
 
 const (
-	defaultTmdbAPIKey     = "9c6689fa83ae6814fbfb200d70bba3a8"
 	defaultRateLimit      = time.Second / 20
 	defaultRateLimitBurst = 5
 )

@@ -3,11 +3,8 @@ package llmcapture
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 func (s *PostgresStore) FindContentFilterReplay(
@@ -21,24 +18,34 @@ func (s *PostgresStore) FindContentFilterReplay(
 	if err != nil {
 		return ContentFilterReplay{}, err
 	}
-	var hasResult bool
+	var knownCapture, admitted, hasResult bool
 	var responseSHA []byte
 	var statusCode int
 	var errorClass, decisionJSON string
-	err = pool.QueryRow(ctx, `SELECT r.capture_key IS NOT NULL,
+	err = pool.QueryRow(ctx, `SELECT known.known_capture,
+       admitted.capture_key IS NOT NULL, r.capture_key IS NOT NULL,
        COALESCE(r.response_sha256, decode('', 'hex')),
        COALESCE(r.http_status, 0), COALESCE(r.error_class, ''),
        COALESCE(r.decision::text, '')
-FROM (`+resultPublicAdmissionSQL+`
+FROM (SELECT EXISTS (
+  SELECT 1 FROM llm_evaluation_captures WHERE capture_key = $1
+)) known(known_capture)
+LEFT JOIN (`+resultPublicAdmissionSQL+`
   AND c.task = 'contentfilter' AND a.info_hash = $2
-) admitted
+) admitted ON true
 LEFT JOIN llm_evaluation_capture_results r USING (capture_key)`, captureKey, infoHash).
-		Scan(&hasResult, &responseSHA, &statusCode, &errorClass, &decisionJSON)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ContentFilterReplay{}, nil
-	}
+		Scan(&knownCapture, &admitted, &hasResult, &responseSHA, &statusCode, &errorClass, &decisionJSON)
 	if err != nil {
 		return ContentFilterReplay{}, err
+	}
+	// A never-captured request is a cache miss. A retained request that fails
+	// its live privacy, expiry or source-identity admission is a terminal error,
+	// not permission to treat private evidence as a new request.
+	if !knownCapture {
+		return ContentFilterReplay{}, nil
+	}
+	if !admitted {
+		return ContentFilterReplay{}, fmt.Errorf("retained contentfilter capture is no longer admitted")
 	}
 	replay := ContentFilterReplay{Found: true}
 	if hasResult {
