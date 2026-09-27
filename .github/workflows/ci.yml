@@ -1,8 +1,5 @@
-# go vet + the unit suite, and the ui/ suite (hash-locked deps, ruff, pytest
-# with warnings as errors, shipped-script syntax) on every pull request and on
-# main. Tests that need Postgres skip when it is absent; the maintainer's
-# pipeline runs the race and integration suites. No secrets, read-only token,
-# GitHub-owned actions pinned.
+# Public Go race tests, PostgreSQL integration, operator UI checks and image build.
+# Read-only tokens, disposable databases and commit-pinned GitHub actions.
 name: CI
 on:
   pull_request:
@@ -16,11 +13,13 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - run: go vet ./...
-      - run: go test -count=1 ./...
+      - run: go test -race -count=1 -timeout=10m ./...
   ui-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -29,6 +28,8 @@ jobs:
         working-directory: ui
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -43,3 +44,35 @@ jobs:
           node-version: "22"
       - run: for f in static/js/*.js; do node --check "$f"; done
       - run: node --test tests/library_state.test.js
+
+  integration:
+    name: PostgreSQL integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: bitagent_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      BITAGENT_TEST_POSTGRES_DSN: postgres://postgres:test-only@127.0.0.1:5432/bitagent_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - run: go test -race -p 1 -count=1 -timeout=15m ./internal/junkpurge ./internal/llmmatcher ./internal/swarmhealth
+  image:
+    name: Public container build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: docker build --tag bitagent:ci .

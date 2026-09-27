@@ -45,3 +45,30 @@ func TestRequesterNeverLogsAPIKey(t *testing.T) {
 		assert.NotContains(t, line, "secret123")
 	}
 }
+
+func TestDefaultConfigHasNoSharedCredential(t *testing.T) {
+	require.Empty(t, NewDefaultConfig().APIKey)
+}
+
+func TestMissingKeyDoesNotContactProvider(t *testing.T) {
+	config := NewDefaultConfig()
+	config.BaseURL = "http://127.0.0.1:1"
+	_, err := newRequester(context.Background(), config, zap.NewNop().Sugar())
+	require.ErrorContains(t, err, "TMDB_API_KEY must be configured")
+}
+
+func TestUnauthorizedKeyDoesNotFallBack(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		require.Equal(t, "example-key", r.URL.Query().Get("api_key"))
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	config := NewDefaultConfig()
+	config.APIKey = "example-key"
+	config.BaseURL = server.URL
+	_, err := newRequester(context.Background(), config, zap.NewNop().Sugar())
+	require.ErrorIs(t, err, ErrUnauthorized)
+	require.Equal(t, 1, calls)
+}

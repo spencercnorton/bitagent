@@ -76,7 +76,7 @@ var siteNoisePrefixV2TLDsRegex = regexp.MustCompile(
 	`(?i)^\s*[a-z0-9][a-z0-9-]*\.(?:rsvp|pics|la|pl|vip|red|win|pro|site|live|online|top|fun|icu|cyou|ws|ru|in|ph|ai|gg|cx|sh|st|mov|fyi|lol|day|wtf|autos|skin)\b[\s._]*-+[\s._]*`,
 )
 
-// absoluteEpisodeRegex (v2) finds an EP-numbered episode — "One.Piece.EP1168.…",
+// absoluteEpisodeRegex (v2) finds an EP-numbered episode — "<Title>.EP1168.…",
 // "Some.Drama.2024.EP12.…": "EP" joined to 2-4 digits after a title. The shape is
 // episodic by construction but carries no SxxExx, so the cascade either leaves it
 // untyped or types it a movie on its year. The digits must touch "EP": a spaced
