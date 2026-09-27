@@ -36,6 +36,8 @@ jobs:
         run: |
           printf '%s\n' "$RELEASE_TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           git merge-base --is-ancestor HEAD origin/main
+          VERSION=$(sed -n 's/^__version__ = "\([^"]*\)"/\1/p' ui/version.py)
+          test "$RELEASE_TAG" = "v$VERSION"
       - name: Create release asset directory
         run: mkdir -p release-assets
       - name: Build and publish tagged container
