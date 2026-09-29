@@ -31,4 +31,4 @@ jobs:
       - name: Acknowledge a pull request
         if: github.event_name == 'pull_request_target'
         run: |
-          gh pr comment "$NUMBER" --repo "$REPO" --body "Thanks for the contribution. CI runs go vet and the test suite on your branch; a maintainer reviews here. This repository is a release mirror, so accepted changes are applied to the development tree and ship in the next tagged release — this pull request is then closed with a reference to that release (see CONTRIBUTING.md)."
+          gh pr comment "$NUMBER" --repo "$REPO" --body "Thanks for the contribution. CI runs go vet and the test suite on your branch; a maintainer reviews here. An accepted pull request is merged into main and ships in the next tagged release (see CONTRIBUTING.md)."
