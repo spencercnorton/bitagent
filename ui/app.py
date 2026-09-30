@@ -13,6 +13,7 @@ import secrets
 import socket
 import time
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote as _urlquote, urlparse as _urlparse_url
 from contextlib import asynccontextmanager
 
@@ -20,7 +21,7 @@ from fastapi import FastAPI, Request, Depends, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictInt
 
 import httpx
 from version import __version__
@@ -37,6 +38,8 @@ from database import (
 )
 import graphql_client as gql
 import tmdb
+import discovery
+from account_usage import get_account_usage, record_magnet_grab
 from prom_metrics import (
     _parse_prometheus_snapshot,
     _nonnegative_int,
@@ -78,6 +81,7 @@ async def lifespan(app: FastAPI):
     _reset_stats_snapshot_cache()
     _reset_library_stats_cache()
     _reset_indexer_stats_cache()
+    discovery.reset_cache()
     # Infisical, when configured, is the authoritative source for secrets
     # (e.g. TMDB_API_KEY). Hydrate before serving so a stale/typo'd deployment
     # env literal can't silently break poster fetches. No-op + fail-open when
@@ -91,6 +95,7 @@ async def lifespan(app: FastAPI):
     _reset_stats_snapshot_cache()
     _reset_library_stats_cache()
     _reset_indexer_stats_cache()
+    discovery.reset_cache()
     await close_all()
 
 
@@ -100,6 +105,7 @@ app = FastAPI(title="BitAgent Console", version=__version__, lifespan=lifespan)
 
 # Torznab proxy lives in its own module (ba_-key auth, not the SSO gate).
 app.include_router(torznab_router)
+app.include_router(discovery.router)
 
 # CSRF is otherwise mitigated only by our routes being JSON-only (a simple
 # cross-site form can't set Content-Type: application/json). Sec-Fetch-Site adds
@@ -246,8 +252,9 @@ def _compute_asset_version() -> str:
     and identical content stays cached.
     """
     h = hashlib.sha256()
-    for rel in ("css/tokens.css", "css/app.css", "css/library.css",
-                "js/torrent-kind.js", "js/norm-title.js", "js/app.js", "js/library.js"):
+    for rel in ("css/tokens.css", "css/app.css", "css/library.css", "css/library-next.css",
+                "js/torrent-kind.js", "js/norm-title.js", "js/app.js", "js/library.js",
+                "js/library-tools.js", "js/library-next.js", "js/library-discovery.js"):
         try:
             h.update((BASE / "static" / rel).read_bytes())
         except OSError:
@@ -316,6 +323,11 @@ class AccountApiKeyRequest(BaseModel):
     name: str = "default"
 
 
+class AccountGrabRequest(BaseModel):
+    count: StrictInt = Field(ge=1, le=1000)
+    action: Literal["copy", "open", "export"]
+
+
 def _account_user_id(identity: dict) -> str:
     return str(identity.get("id") or identity.get("username") or identity.get("email") or "anonymous")
 
@@ -380,7 +392,14 @@ def _account_payload(
 @app.get("/api/account")
 async def api_account(request: Request, identity: dict = Depends(require_auth)):
     row = await get_user_api_key(_account_user_id(identity))
-    return _account_payload(request, identity, row)
+    payload = _account_payload(request, identity, row)
+    payload["usage"] = await get_account_usage(_account_user_id(identity))
+    return payload
+
+
+@app.post("/api/account/usage/grab")
+async def api_account_grab(body: AccountGrabRequest, identity: dict = Depends(require_auth)):
+    return await record_magnet_grab(_account_user_id(identity), body.count, body.action)
 
 
 @app.post("/api/account/api-key")
@@ -2984,25 +3003,24 @@ async def api_title_releases(
     content_type: str = "",
     content_source: str = "",
     content_id: str = "",
+    limit: int = Query(500, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=100_000),
     identity: dict = Depends(require_auth),
 ):
-    """Every torrent release for a single library title.
-
-    The library grid groups torrents client-side over a capped 500-item batch,
-    so a poster's detail view only ever saw the releases that happened to be
-    co-loaded in that page — usually one. This endpoint re-queries the backend
-    for *all* releases of one title so the detail view can present the full set
-    of editions / seasons / episodes.
+    """A bounded page of available releases for a single library title.
 
     Match strategy:
       - mapped titles (content_source + content_id present): search by the title
         queryString + contentType facet, then keep items whose
         (contentSource, contentId) equal the requested identity. This captures
-        every edition, season and episode of that exact title.
+        editions, seasons and episodes of that exact title in the search window.
       - unmapped titles: keep items whose normalised name matches the request.
 
-    Results are ordered by seeders desc so, if the 500-item cap is hit on a huge
-    title, the best-seeded releases are the ones retained.
+    The core has no content-identity search facet, so limit/offset address RAW
+    search rows before identity/block-phrase filtering. A page can be empty and
+    still have a next page. Follow nextOffset and hasNextPage, never the number
+    of surviving releases. Results are ordered by seeders desc. totalCount is
+    exact only when a first window exhausts the search; otherwise it is unknown.
     """
     q = (title or "").strip()
     if not q:
@@ -3010,15 +3028,24 @@ async def api_title_releases(
 
     search_input: dict = {
         "queryString": q,
-        "limit": 500,
-        "offset": 0,
+        "limit": limit,
+        "offset": offset,
         "totalCount": False,
+        "hasNextPage": True,
         "orderBy": [{"field": "seeders", "descending": True}],
     }
     if content_type:
         search_input["facets"] = {"contentType": {"filter": [content_type]}}
     result = await gql.query(gql.SEARCH_TORRENTS, {"input": search_input})
+    if result.get("errors"):
+        raise HTTPException(502, "Could not load title releases")
     block = ((result.get("data") or {}).get("torrentContent") or {}).get("search") or {}
+    if not isinstance(block.get("items"), list):
+        raise HTTPException(502, "Could not load title releases")
+    raw_items = block["items"]
+    # Older cores may omit the flag. A full raw window cannot prove exhaustion.
+    upstream_has_next = block.get("hasNextPage")
+    has_next = upstream_has_next if isinstance(upstream_has_next, bool) else len(raw_items) >= limit
 
     want_id = str(content_id or "").strip()
     want_source = (content_source or "").strip()
@@ -3029,7 +3056,7 @@ async def api_title_releases(
     items: list[dict] = []
     seen: set[str] = set()
     hit_counter: Counter = Counter()
-    for it in block.get("items") or []:
+    for it in raw_items:
         torrent = it.get("torrent") or {}
         info_hash = it.get("infoHash")
         if not info_hash or info_hash in seen:
@@ -3048,6 +3075,10 @@ async def api_title_releases(
 
         it_source = it.get("contentSource") or ""
         it_id = str(it.get("contentId") or "")
+        # IDs are namespaced by type: movie 99 and tv_show 99 are different
+        # titles even when an older backend ignores its contentType facet.
+        if content_type and it.get("contentType") != content_type:
+            continue
         if mapped_match:
             if not (it_source == want_source and it_id == want_id):
                 continue
@@ -3082,7 +3113,15 @@ async def api_title_releases(
         })
 
     await bump_block_phrase_hits(hit_counter)
-    return {"totalCount": len(items), "items": items}
+    return {
+        "totalCount": len(items) if offset == 0 and not has_next else -1,
+        "items": items,
+        "scannedCount": len(raw_items),
+        "offset": offset,
+        "nextOffset": offset + limit if has_next else None,
+        "hasNextPage": has_next,
+        "truncated": has_next,
+    }
 
 
 # ── API: Evidence ─────────────────────────────────────────────────────
@@ -3812,5 +3851,5 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "app:app", host=settings.host, port=settings.port,
-        reload=True, proxy_headers=False,
+        reload=True, proxy_headers=False, access_log=False,
     )

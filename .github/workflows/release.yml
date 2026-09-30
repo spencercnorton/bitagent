@@ -46,9 +46,20 @@ jobs:
         run: |
           printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           IMAGE="ghcr.io/$RELEASE_REPOSITORY"
-          docker build --build-arg VERSION="$RELEASE_TAG" \
-            --build-arg COMMIT="$GITHUB_SHA" --build-arg BUILD_DATE="$(git show -s --format=%cI HEAD)" \
-            --tag "$IMAGE:$RELEASE_TAG" .
+          BUILD_DATE=$(git show -s --format=%cI HEAD)
+          BUILD_SOURCE="https://github.com/$RELEASE_REPOSITORY"
+          docker build --platform linux/amd64 --build-arg VERSION="$RELEASE_TAG" \
+            --build-arg COMMIT="$GITHUB_SHA" --build-arg BUILD_DATE="$BUILD_DATE" \
+            --build-arg SOURCE="$BUILD_SOURCE" --tag "$IMAGE:$RELEASE_TAG" .
+          test "$(docker image inspect "$IMAGE:$RELEASE_TAG" --format '{{.Os}}/{{.Architecture}}')" = 'linux/amd64'
+          test "$(docker image inspect "$IMAGE:$RELEASE_TAG" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$RELEASE_TAG"
+          test "$(docker image inspect "$IMAGE:$RELEASE_TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
+          test "$(docker image inspect "$IMAGE:$RELEASE_TAG" --format '{{index .Config.Labels "org.opencontainers.image.created"}}')" = "$BUILD_DATE"
+          test "$(docker image inspect "$IMAGE:$RELEASE_TAG" --format '{{index .Config.Labels "org.opencontainers.image.source"}}')" = "$BUILD_SOURCE"
+          docker run --rm --network none --read-only --tmpfs /data:uid=10001,gid=10001 \
+            --user 10001:10001 --entrypoint python3 --workdir /app/ui \
+            --env EXPECTED_VERSION="${RELEASE_TAG#v}" "$IMAGE:$RELEASE_TAG" \
+            -c 'import os; import app, account_usage, discovery; from version import __version__; assert __version__ == os.environ["EXPECTED_VERSION"]'
           docker push "$IMAGE:$RELEASE_TAG"
           docker image inspect "$IMAGE:$RELEASE_TAG" --format '{{index .RepoDigests 0}}' > release-assets/IMAGE_DIGEST.txt
           docker logout ghcr.io
@@ -56,7 +67,7 @@ jobs:
         run: |
           git archive --format=tar.gz --prefix=source/ HEAD > release-assets/source.tar.gz
           cd release-assets
-          sha256sum * > SHA256SUMS.txt
+          sha256sum -- * > SHA256SUMS.txt
       - name: Publish immutable release artifacts
         run: |
           gh release create "$RELEASE_TAG" release-assets/* \

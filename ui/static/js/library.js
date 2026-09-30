@@ -166,11 +166,11 @@ function _applyModalInert() {
   const anyOpen = _modalStack.length > 0;
   [document.querySelector('.lib-topbar'), document.getElementById('libBrowse')]
     .forEach(el => { if (el) el.toggleAttribute('inert', anyOpen); });
-  const detailEl = document.getElementById('libDetail');
-  if (detailEl) {
-    const idx = _modalStack.findIndex(m => m.panel === detailEl);
-    detailEl.toggleAttribute('inert', idx !== -1 && idx < _modalStack.length - 1);
-  }
+  document.querySelector('.lib-skiplink')?.toggleAttribute('inert', anyOpen);
+  const topPanel = anyOpen ? _modalStack[_modalStack.length - 1].panel : null;
+  document.querySelectorAll('.lib-app > [role="dialog"]').forEach(panel => {
+    panel.toggleAttribute('inert', !panel.classList.contains('open') || panel !== topPanel);
+  });
 }
 function openModal(panel) {
   _modalStack.push({ panel, ret: document.activeElement });
@@ -345,7 +345,7 @@ function posterImgSrc(id, source, ct) {
 
 /* ── Browse state ───────────────────────────────────────────────────────── */
 const state = {
-  q: '', type: '', sort: 'seeders',
+  q: '', type: '', sort: 'seeders', provider: '', region: 'US',
   genres: new Set(), qualities: new Set(), sources: new Set(), features: new Set(),
   yearMin: '', yearMax: '',
   facets: {}, facetsKey: '',
@@ -374,6 +374,7 @@ function browseParamsFor(browseState) {
   const p = new URLSearchParams();
   if (browseState.q) p.set('q', browseState.q);
   if (browseState.type) p.set('type', browseState.type);
+  if (browseState.provider) { p.set('provider', browseState.provider); p.set('region', browseState.region || 'US'); }
   if (browseState.sort && browseState.sort !== 'seeders') p.set('sort', browseState.sort);
   if (browseState.genres.size) p.set('genres', [...browseState.genres].join(','));
   if (browseState.qualities.size) p.set('qualities', [...browseState.qualities].join(','));
@@ -430,6 +431,8 @@ function parseBrowseState(search) {
   return {
     q: p.get('q') || '',
     type: p.get('type') || '',
+    provider: /^\d{1,8}$/.test(p.get('provider') || '') ? p.get('provider') : '',
+    region: /^[A-Z]{2}$/.test(p.get('region') || '') ? p.get('region') : 'US',
     sort: p.get('sort') || 'seeders',
     genres: toSet('genres'),
     qualities: toSet('qualities'),
@@ -566,6 +569,7 @@ function setFacet(which, value) {
 }
 function clearFacets() {
   state.type = '';
+  state.provider = '';
   state.genres.clear(); state.qualities.clear(); state.sources.clear(); state.features.clear();
   state.yearMin = ''; state.yearMax = '';
   state.hideForeign = false; state.hideUnmatched = true; state._preAnimeHideUnmatched = null;
@@ -594,7 +598,7 @@ function hasAdvancedFiltersFor(browseState) {
 }
 function hasAdvancedFilters() { return hasAdvancedFiltersFor(state); }
 function isHomeFor(browseState) {
-  return !browseState.q && browseState.type === '' && !hasAdvancedFiltersFor(browseState) &&
+  return !browseState.provider && !browseState.q && browseState.type === '' && !hasAdvancedFiltersFor(browseState) &&
     browseState.sort === 'seeders' && !browseState.hideForeign && browseState.hideUnmatched;
 }
 // Every visible non-default browse control leaves the curated landing page.
@@ -825,6 +829,10 @@ async function loadLibrary(opts) {
     syncUrl(historyModeFor(opts.push ? 'search' : 'filter'));
   }
   renderTypePills(); renderFacetControls(); syncControls();
+  if (state.provider && typeof loadProviderLibrary === 'function') {
+    showHome(false);
+    return loadProviderLibrary(nav.seq, nav.signal);
+  }
   if (isHome()) {
     showHome(true);
     if (state.facetsKey !== facetKeyFor(state)) loadFacetOptions(nav.seq, nav.signal);
@@ -1030,6 +1038,14 @@ async function loadGrid(navSeq, signal) {
 
 function libPage(dir) {
   if (_gridLoading) return;
+  if (state.provider) {
+    if ((dir > 0 && !state.hasNext) || (dir < 0 && state.page === 0)) return;
+    state.page += dir;
+    if (!_modalStack.length) syncUrl(historyModeFor('page'));
+    loadLibrary({fromPop:true, keepPage:true});
+    document.getElementById('libResults').scrollIntoView({behavior:_scrollBehavior(), block:'start'});
+    return;
+  }
   if (serverGrouped()) {
     // Server paging: each page is a fresh fetch; bounds come from hasNext.
     if (dir > 0 && !state.hasNext) return;
@@ -1189,7 +1205,10 @@ function rowScroll(btn, dir) {
 /* ── Detail view ────────────────────────────────────────────────────────── */
 const detail = { group: null, ct: '', title: '', tmdbId: null, meta: null,
   releases: [], activeSeason: null, quality: 'all', source: 'all', edition: 'all',
-  seasonCache: new Map() };
+  seasonCache: new Map(), loading: false, truncated: false, loadError: false, bulkMode: 'best' };
+let _detailAbortController = null;
+const magnetSelection = new Map();
+const MAGNET_SELECTION_LIMIT = 1000;
 
 function _star(rating) {
   return `<span class="lib-rating"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>${(rating || 0).toFixed(1)}</span>`;
@@ -1206,6 +1225,10 @@ async function openDetail(key) {
   detail.group = g; detail.ct = ct; detail.title = displayTitle(t.name);
   detail.tmdbId = (t.contentSource === 'tmdb' && t.contentId) ? String(t.contentId) : null;
   detail.meta = null; detail.releases = g.items.slice();
+  if (_detailAbortController) _detailAbortController.abort();
+  _detailAbortController = new AbortController();
+  const signal = _detailAbortController.signal;
+  detail.loading = true; detail.truncated = false; detail.loadError = false;
   detail.activeSeason = null; detail.quality = 'all'; detail.source = 'all'; detail.edition = 'all'; detail.seasonCache = new Map();
 
   const view = document.getElementById('libDetail');
@@ -1221,21 +1244,53 @@ async function openDetail(key) {
   document.getElementById('libDetailScroll').scrollTop = 0;
 
   renderDetailShell();  // instant paint from cached data
+  renderDetailBody();
 
   // Fetch full release set + enriched metadata in parallel.
-  const params = new URLSearchParams({
+  const identity = {
     title: detail.title, content_type: ct,
     content_source: g.contentSource || '', content_id: g.contentId || '',
+  };
+  const current = () => !signal.aborted && detail.group === g;
+  // Optional metadata must never hold usable magnet links behind a slow
+  // provider. Publish each result as soon as its own request finishes.
+  const releaseRequest = BitAgentLibraryTools.collectTitleReleases(identity,
+    { request: api, signal, maxPages: 12, maxItems: 3000 }).then(result => {
+    if (!current()) return;
+    detail.loading = false;
+    detail.releases = result.items; detail.truncated = result.truncated;
+    refreshDetailContent(false);
+  }).catch(() => {
+    if (!current()) return;
+    detail.loading = false; detail.loadError = true;
+    refreshDetailContent(false);
   });
-  const [releases, meta] = await Promise.all([
-    api(`/api/titles/releases?${params}`),
-    detail.tmdbId ? api(`/api/meta/${mediaTypeFor(ct)}/${encodeURIComponent(detail.tmdbId)}`) : Promise.resolve(null),
-  ]);
-  if (detail.group !== g) return;  // a newer openDetail superseded this fetch
-  if (releases && releases.items) detail.releases = releases.items;
-  detail.meta = meta;
-  renderDetailShell();
+  const metadataRequest = (detail.tmdbId
+    ? api(`/api/meta/${mediaTypeFor(ct)}/${encodeURIComponent(detail.tmdbId)}`, { signal })
+    : Promise.resolve(null)).then(meta => {
+    if (!current() || !meta) return;
+    detail.meta = meta;
+    refreshDetailContent(true);
+  });
+  await Promise.allSettled([releaseRequest, metadataRequest]);
+}
+
+function refreshDetailContent(shell) {
+  const view = document.getElementById('libDetail');
+  const active = document.activeElement;
+  const label = active && view.contains(active) ? active.getAttribute('aria-label') : null;
+  const opened = [...view.querySelectorAll('.lib-disclosure.open, .lib-episode.open')].map(el => el.id);
+  if (shell) renderDetailShell();
   renderDetailBody();
+  opened.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || el.classList.contains('open')) return;
+    if (el.classList.contains('lib-episode')) toggleEpisode(id); else toggleDisclosure(id);
+  });
+  if (label) {
+    const next = [...view.querySelectorAll('[aria-label]')].find(el => el.getAttribute('aria-label') === label);
+    if (next && next.getClientRects().length && !next.closest('[inert]')) next.focus({ preventScroll: true });
+  }
 }
 
 function closeDetail(fromPop) {
@@ -1245,6 +1300,7 @@ function closeDetail(fromPop) {
   // do the visual close, so exactly one overlay closes per Back.
   if (!fromPop && history.state && history.state.lib === 'detail') { history.back(); return; }
   view.classList.remove('open');
+  if (_detailAbortController) _detailAbortController.abort();
   view.setAttribute('aria-hidden', 'true');
   closeModal(view);
 }
@@ -1320,7 +1376,111 @@ function renderDetailBody() {
           ${c.character ? `<div class="lib-cast-role">${escHtml(c.character)}</div>` : ''}
         </div>`).join('')}</div></div>`;
   }
-  body.innerHTML = html;
+  body.innerHTML = magnetGroupToolbar() + html;
+  updateMagnetSelection();
+}
+
+/* A collection contains explicit releases; bulk shortcuts never start clients. */
+function magnetGroupToolbar() {
+  const status = detail.loading ? 'Loading indexed releases…'
+    : detail.loadError ? 'Releases could not be refreshed. Showing cached releases; retry by reopening the title.'
+      : detail.truncated ? 'Showing a bounded set of indexed releases. More may be available; this selection is partial.'
+        : `${fmtNum(detail.releases.length)} indexed releases available. Quality and source filters apply to selection.`;
+  const disabled = detail.loading ? 'disabled' : '';
+  return `<section class="lib-magnet-actions" aria-label="Copy title magnet links">
+    <p class="lib-magnet-status" role="status">${escHtml(status)}</p>
+    <div class="lib-bulk-actions">
+      <label class="lib-bulk-mode">Versions <select id="libBulkMode" onchange="setMagnetMode(this.value)"><option value="best" ${detail.bulkMode === 'best' ? 'selected' : ''}>Recommended (packs + seed counts)</option><option value="all" ${detail.bulkMode === 'all' ? 'selected' : ''}>All matching versions</option></select></label>
+      <button class="lib-btn primary" ${disabled} onclick="copyMagnetGroup('${detail.ct === 'tv_show' ? 'show' : 'title'}')">Copy ${detail.ct === 'tv_show' ? 'show' : 'title'} magnets</button>
+      ${detail.ct === 'tv_show' ? `<button class="lib-btn" ${detail.loading || !Number.isInteger(detail.activeSeason) ? 'disabled' : ''} onclick="copyMagnetGroup('season')">Copy season magnets</button>` : ''}
+    </div>
+  </section>`;
+}
+
+function copyMagnetGroup(scope) {
+  if (detail.loading || (scope === 'season' && !Number.isInteger(detail.activeSeason))) return;
+  const releases = BitAgentLibraryTools.selectReleaseGroup(filteredReleases(), { scope, season: detail.activeSeason, mode: detail.bulkMode });
+  const links = releases.slice(0, MAGNET_SELECTION_LIMIT).map(BitAgentLibraryTools.magnetFor).filter(Boolean);
+  if (!links.length) { toast('No matching magnet links available'); return; }
+  const partial = releases.length > MAGNET_SELECTION_LIMIT || detail.truncated;
+  copyText(links.join('\n'), `${links.length} magnet links copied${partial ? ' · partial selection' : ''}`, () => recordLibraryGrab(links.length, 'copy'));
+}
+
+function toggleMagnetSelection(infoHash) {
+  const hash = BitAgentLibraryTools.normalizeInfoHash(infoHash);
+  if (!hash) return;
+  if (magnetSelection.has(hash)) magnetSelection.delete(hash);
+  else {
+    const release = detail.releases.find(t => BitAgentLibraryTools.normalizeInfoHash(t.infoHash) === hash);
+    if (!release || !BitAgentLibraryTools.magnetFor(release)) return;
+    if (magnetSelection.size >= MAGNET_SELECTION_LIMIT) { toast('Collection limit reached. Copy or save your current links first.'); return; }
+    magnetSelection.set(hash, release);
+  }
+  updateMagnetSelection();
+}
+
+function selectMagnetGroup(scope) {
+  if (detail.loading) return;
+  if (scope === 'season' && !Number.isInteger(detail.activeSeason)) { toast('Choose a season with indexed releases first'); return; }
+  const mode = detail.bulkMode;
+  const releases = BitAgentLibraryTools.selectReleaseGroup(filteredReleases(), { scope, season: detail.activeSeason, mode });
+  let added = 0, limited = false;
+  for (const release of releases) {
+    const hash = BitAgentLibraryTools.normalizeInfoHash(release.infoHash);
+    if (!hash || !BitAgentLibraryTools.magnetFor(release) || magnetSelection.has(hash)) continue;
+    if (magnetSelection.size >= MAGNET_SELECTION_LIMIT) { limited = true; break; }
+    magnetSelection.set(hash, release); added++;
+  }
+  updateMagnetSelection();
+  toast(limited ? 'Collection limit reached; review the selected links.' : added ? `${added} magnet${added === 1 ? '' : 's'} added` : 'No additional matching releases to select');
+}
+function setMagnetMode(mode) { if (mode === 'best' || mode === 'all') detail.bulkMode = mode; }
+
+function updateMagnetSelection() {
+  document.querySelectorAll('[data-magnet-count]').forEach(el => { el.textContent = String(magnetSelection.size); });
+  document.querySelectorAll('[data-magnet-select]').forEach(el => { el.checked = magnetSelection.has(el.dataset.magnetSelect); });
+  const panel = document.getElementById('libCollection');
+  if (!panel || !panel.classList.contains('open')) return;
+  const list = document.getElementById('libCollectionList');
+  list.innerHTML = [...magnetSelection.entries()].map(([hash, t]) => `<li><span>${escHtml(_rname(t))}</span><button class="lib-iconbtn" onclick="removeCollectedMagnet('${hash}')" aria-label="${escAttr('Remove ' + _rname(t))}">×</button></li>`).join('') || '<li class="lib-rel-empty">Your collection is empty. Select a release, season, or show to get started.</li>';
+  document.getElementById('libCollectionText').value = collectionText();
+  panel.querySelectorAll('[data-needs-magnets]').forEach(el => { el.disabled = !magnetSelection.size; });
+}
+
+function removeCollectedMagnet(hash) { magnetSelection.delete(hash); updateMagnetSelection(); }
+function clearMagnetCollection() { magnetSelection.clear(); updateMagnetSelection(); }
+function collectionText() { return [...magnetSelection.values()].map(BitAgentLibraryTools.magnetFor).filter(Boolean).join('\n'); }
+function copyMagnetCollection() { const text = collectionText(), count = magnetSelection.size; if (text) copyText(text, `${count} magnet links copied`, () => recordLibraryGrab(count, 'copy')); }
+function saveMagnetCollection() {
+  const text = collectionText();
+  if (!text) return;
+  const url = URL.createObjectURL(new Blob([text + '\n'], { type: 'text/plain;charset=utf-8' }));
+  const link = document.createElement('a'); link.href = url; link.download = 'bitagent-magnets.txt';
+  document.body.appendChild(link); link.click(); link.remove();
+  recordLibraryGrab(magnetSelection.size, 'export');
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function openMagnetCollection(fromPop = false) {
+  let panel = document.getElementById('libCollection');
+  if (!panel) {
+    panel = document.createElement('section'); panel.id = 'libCollection'; panel.className = 'lib-collection';
+    panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-labelledby', 'libCollectionTitle');
+    panel.innerHTML = `<div class="lib-collection-head"><div><span class="lib-drawer-eyebrow">Your selection</span><h2 id="libCollectionTitle">Magnet collection · <span data-magnet-count>0</span></h2></div><button class="lib-iconbtn" onclick="closeMagnetCollection()" aria-label="Close magnet collection">×</button></div>
+      <p>Each link is a separate release. Copy the list or save it for your torrent client. Your collection stays in this tab until you refresh.</p>
+      <ul id="libCollectionList"></ul><div class="lib-collection-actions"><button class="lib-btn primary" data-needs-magnets onclick="copyMagnetCollection()">Copy magnets</button><button class="lib-btn" data-needs-magnets onclick="saveMagnetCollection()">Save .txt</button><button class="lib-btn" data-needs-magnets onclick="clearMagnetCollection()">Clear collection</button></div>
+      <details class="lib-collection-raw"><summary>View magnet links</summary><label class="lib-sr-only" for="libCollectionText">Selected magnet links</label><textarea id="libCollectionText" readonly rows="4" spellcheck="false" onclick="this.select()"></textarea></details>`;
+    document.querySelector('.lib-app').appendChild(panel);
+  }
+  if (panel.classList.contains('open')) return;
+  panel.classList.add('open'); panel.setAttribute('aria-hidden', 'false');
+  if (!fromPop) history.pushState({ lib: 'collection' }, '', window.location.href);
+  openModal(panel); updateMagnetSelection();
+}
+function closeMagnetCollection(fromPop) {
+  const panel = document.getElementById('libCollection');
+  if (!panel || !panel.classList.contains('open')) return;
+  if (!fromPop && history.state && history.state.lib === 'collection') { history.back(); return; }
+  panel.classList.remove('open'); panel.setAttribute('aria-hidden', 'true'); closeModal(panel);
 }
 
 /* Release filters shared by movie + TV */
@@ -1362,7 +1522,7 @@ function relRow(t) {
   const res = resOf(t), flags = flagsOf(t), src = srcOf(t);
   const langs = (t.languages || []).filter(l => l && l !== 'en');
   const rn = _rname(t);
-  const magnet = `magnet:?xt=urn:btih:${t.infoHash}&dn=${encodeURIComponent(rn)}`;
+  const magnet = BitAgentLibraryTools.magnetFor(t);
   const tags = [];
   if (res) tags.push(`<span class="lib-tag res">${escHtml(res)}</span>`);
   flags.forEach(f => tags.push(`<span class="lib-tag ${f === 'HDR' ? 'hdr' : 'flag-' + f.toLowerCase()}">${f}</span>`));
@@ -1370,19 +1530,22 @@ function relRow(t) {
   if (t.releaseGroup) tags.push(`<span class="lib-tag grp">${escHtml(t.releaseGroup)}</span>`);
   if (langs.length) tags.push(`<span class="lib-tag lang">${escHtml(langs.slice(0, 2).join(', '))}</span>`);
   const ih = escAttr(jsStringArg(t.infoHash));
-  return `<div class="lib-rel" role="button" tabindex="0" aria-label="${escAttr('Open details for ' + rn)}"
+  return `<div class="lib-rel" role="group" aria-label="${escAttr(rn)}">
+    <label class="lib-release-select"><input type="checkbox" data-magnet-select="${escAttr(BitAgentLibraryTools.normalizeInfoHash(t.infoHash) || '')}" ${magnetSelection.has(BitAgentLibraryTools.normalizeInfoHash(t.infoHash)) ? 'checked' : ''} ${magnet ? '' : 'disabled'} onchange="toggleMagnetSelection('${ih}')" aria-label="${escAttr('Select ' + rn)}"></label>
+    <button class="lib-rel-main" aria-label="${escAttr('Open details for ' + rn)}"
     onclick="openTorrentDrawer('${ih}')"
-    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTorrentDrawer('${ih}')}">
-    <div class="lib-rel-main">
+    type="button">
       <div class="lib-rel-name">${escHtml(rn)}</div>
       <div class="lib-rel-tags">${tags.join('')}</div>
-    </div>
+    </button>
     <div class="lib-rel-meta">
       <span class="lib-rel-size">${fmtBytes(t.size)}</span>
       <span class="lib-rel-seed" title="${t.seeders || 0} seeders / ${t.leechers || 0} leechers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="18 15 12 9 6 15"/></svg>${fmtNum(t.seeders || 0)}</span>
-      <button class="lib-copybtn" title="Copy magnet link" onclick="event.stopPropagation();copyMagnet('${escAttr(jsStringArg(magnet))}')">
+      <button class="lib-copybtn" ${magnet ? '' : 'disabled'} title="Copy magnet link" aria-label="${escAttr('Copy magnet for ' + rn)}" onclick="copyMagnet('${escAttr(jsStringArg(magnet))}')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        <span>Copy</span>
       </button>
+      ${magnet ? `<a class="lib-openmagnet" href="${escAttr(magnet)}" onclick="recordLibraryGrab(1,'open')" aria-label="${escAttr('Open magnet for ' + rn)}">Open ↗</a>` : ''}
     </div>
   </div>`;
 }
@@ -1578,7 +1741,12 @@ async function maybeLoadSeasonMeta() {
   const s = detail.activeSeason;
   if (s == null || !detail.tmdbId) return;
   if (detail.seasonCache.has(String(s))) return;
-  const data = await api(`/api/meta/tv/${encodeURIComponent(detail.tmdbId)}/season/${s}`);
+  const group = detail.group, tmdbId = detail.tmdbId, cache = detail.seasonCache;
+  const signal = _detailAbortController ? _detailAbortController.signal : undefined;
+  // Deduplicate in-flight catalog requests for the same title and season.
+  cache.set(String(s), { episodes: [] });
+  const data = await api(`/api/meta/tv/${encodeURIComponent(tmdbId)}/season/${s}`, { signal });
+  if ((signal && signal.aborted) || group !== detail.group || cache !== detail.seasonCache) return;
   detail.seasonCache.set(String(s), data || { episodes: [] });
   if (String(detail.activeSeason) !== String(s)) return; // user moved on
   const block = document.getElementById('libSeasonBlock');
@@ -1590,7 +1758,7 @@ async function maybeLoadSeasonMeta() {
 
 /* ── Torrent drawer ─────────────────────────────────────────────────────── */
 let _drawerSeq = 0;
-async function openTorrentDrawer(infoHash) {
+async function openTorrentDrawer(infoHash, fromPop = false) {
   const drawer = document.getElementById('libDrawer');
   const scrim = document.getElementById('libDrawerScrim');
   const bodyEl = document.getElementById('libDrawerBody');
@@ -1598,7 +1766,7 @@ async function openTorrentDrawer(infoHash) {
   drawer.setAttribute('aria-hidden', 'false');
   openModal(drawer);
   // Own history entry (over the detail entry) so Back closes just the drawer.
-  history.pushState({ lib: 'drawer', infoHash }, '');
+  if (!fromPop) history.pushState({ lib: 'drawer', infoHash }, '');
   const seq = ++_drawerSeq;
   bodyEl.innerHTML = `<div class="lib-rel-empty">Loading…</div>`;
 
@@ -1638,14 +1806,14 @@ async function openTorrentDrawer(infoHash) {
     ${files.length > 100 ? `<div class="lib-file"><span class="lib-file-path">+${fmtNum(files.length - 100)} more…</span></div>` : ''}
   </div>` : '';
 
-  const magnet = d.magnetUri || `magnet:?xt=urn:btih:${d.infoHash}`;
+  const magnet = BitAgentLibraryTools.magnetFor(d);
   bodyEl.innerHTML = `
     <div class="lib-drawer-title">${escHtml(d.name)}</div>
     ${tags.length ? `<div class="lib-drawer-tags">${tags.join('')}</div>` : ''}
     <dl class="lib-kv">${kv.join('')}</dl>
     <div class="lib-drawer-actions">
-      <a class="lib-btn primary" href="${escAttr(magnet)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v6a6 6 0 006 6 6 6 0 006-6V3"/><line x1="6" y1="3" x2="2" y2="3"/><line x1="22" y1="3" x2="18" y2="3"/></svg>Open magnet</a>
-      <button class="lib-btn" onclick="copyMagnet('${escAttr(jsStringArg(magnet))}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>Copy</button>
+      ${magnet ? `<a class="lib-btn primary" href="${escAttr(magnet)}" onclick="recordLibraryGrab(1,'open')">Open magnet ↗</a>` : ''}
+      <button class="lib-btn" ${magnet ? '' : 'disabled'} onclick="copyMagnet('${escAttr(jsStringArg(magnet))}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>Copy</button>
     </div>
     ${filesHtml}`;
 }
@@ -1669,29 +1837,33 @@ function toast(msg) {
   _toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
 function copyMagnet(magnet) {
-  const done = () => toast('Magnet link copied');
+  if (magnet) copyText(magnet, 'Magnet link copied', () => recordLibraryGrab(1, 'copy'));
+}
+function copyText(text, message, onSuccess) {
+  const done = () => { toast(message); if (onSuccess) onSuccess(); };
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(magnet).then(done).catch(() => fallbackCopy(magnet, done));
-  } else fallbackCopy(magnet, done);
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else fallbackCopy(text, done);
 }
 function fallbackCopy(text, done) {
   const ta = document.createElement('textarea');
   ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
   document.body.appendChild(ta); ta.select();
-  try { document.execCommand('copy'); done(); } catch (_) { toast('Copy failed'); }
+  try { if (document.execCommand('copy')) done(); else toast('Copy failed. Use Save .txt from your magnet collection.'); } catch (_) { toast('Copy failed'); }
   document.body.removeChild(ta);
 }
 
 /* ── Account / API key panel ───────────────────────────────────────────── */
 let accountState = null;
-function openAccount() {
+let _accountUsageSnapshot = null;
+function openAccount(fromPop = false) {
   const panel = document.getElementById('libAccount');
   const scrim = document.getElementById('libAccountScrim');
   panel.classList.add('open'); scrim.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
   openModal(panel);
   // Own history entry so Back closes the account panel (was previously orphaned).
-  history.pushState({ lib: 'account' }, '');
+  if (!fromPop) history.pushState({ lib: 'account' }, '');
   loadAccount();
 }
 function closeAccount(fromPop) {
@@ -1705,11 +1877,13 @@ function closeAccount(fromPop) {
 }
 async function loadAccount() {
   const data = await api('/api/account');
-  if (!data) { toast('Account unavailable'); return; }
+  if (!data) { renderAccountUsage(null); toast('Account unavailable'); return; }
   renderAccount(data);
 }
 function renderAccount(data) {
+  if (accountState && (accountState.identity || {}).id !== (data.identity || {}).id) _accountUsageSnapshot = null;
   accountState = data;
+  if (data.usage) renderAccountUsage(data.usage);
   const ident = data.identity || {};
   const name = ident.display || ident.username || ident.email || ident.id || 'Account';
   const sub = [ident.email || ident.username || ident.id, ident.method].filter(Boolean).join(' · ');
@@ -1748,6 +1922,31 @@ function renderAccount(data) {
     secretWrap.style.display = 'none';
   }
 }
+function accountUsageViewFor(usage) {
+  if (!usage || !Number.isSafeInteger(usage.grabs) || usage.grabs < 0 || !Number.isSafeInteger(usage.apiSearches) || usage.apiSearches < 0) return null;
+  const bytes = value => Number.isSafeInteger(value) && value >= 0 ? (value === 0 ? '0 B' : fmtBytes(value)) : 'Not reported';
+  return { downloaded: bytes(usage.downloadedBytes), uploaded: bytes(usage.uploadedBytes), grabs: fmtNum(usage.grabs),
+    searches: fmtNum(usage.apiSearches), hitAndRuns: Number.isSafeInteger(usage.hitAndRuns) && usage.hitAndRuns >= 0 ? fmtNum(usage.hitAndRuns) : 'Not reported',
+    ratio: Number.isSafeInteger(usage.uploadedBytes) && usage.uploadedBytes >= 0 && Number.isSafeInteger(usage.downloadedBytes) && usage.downloadedBytes > 0 ? (usage.uploadedBytes / usage.downloadedBytes).toFixed(2) : '—',
+    hint: `Grabs count magnet links copied, opened, or exported. Transfer and seeding stats need client reporting.${usage.trackingSince ? ' Activity tracked since ' + fmtDate(usage.trackingSince) + '.' : ''}` };
+}
+function renderAccountUsage(usage) {
+  if (usage && accountUsageViewFor(usage)) {
+    if (_accountUsageSnapshot && _accountUsageSnapshot.trackingSince === usage.trackingSince) {
+      usage = Object.assign({}, usage, {grabs:Math.max(usage.grabs, _accountUsageSnapshot.grabs), apiSearches:Math.max(usage.apiSearches, _accountUsageSnapshot.apiSearches)});
+    }
+    _accountUsageSnapshot = usage;
+  }
+  const view = accountUsageViewFor(usage);
+  const ids = {acctDownloaded:'downloaded', acctUploaded:'uploaded', acctGrabs:'grabs', acctHitAndRuns:'hitAndRuns', acctApiSearches:'searches', acctRatio:'ratio'};
+  for (const [id, key] of Object.entries(ids)) { const el = document.getElementById(id); if (el) el.textContent = view ? view[key] : '—'; }
+  const hint = document.getElementById('acctUsageHint'); if (hint) hint.textContent = view ? view.hint : 'Activity is temporarily unavailable.';
+  const grid = document.getElementById('acctUsage'); if (grid) grid.setAttribute('aria-busy', 'false');
+}
+async function recordLibraryGrab(count, action) {
+  const usage = await api('/api/account/usage/grab', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({count,action}) });
+  if (usage) renderAccountUsage(usage);
+}
 async function generateAccountKey() {
   const btn = document.getElementById('acctGenerateBtn');
   btn.disabled = true;
@@ -1780,7 +1979,16 @@ function copyAccountField(id) {
 /* ── Global keys + history ──────────────────────────────────────────────── */
 if (typeof document !== 'undefined') {
   document.addEventListener('keydown', e => {
+    if (e.key === 'Tab' && _modalStack.length) {
+      const panel = _modalStack[_modalStack.length - 1].panel;
+      const focusable = [...panel.querySelectorAll('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')]
+        .filter(el => el.getClientRects().length && !el.closest('[inert]'));
+      if (focusable.length && ((e.shiftKey && document.activeElement === focusable[0]) || (!e.shiftKey && document.activeElement === focusable[focusable.length - 1]))) {
+        e.preventDefault(); (e.shiftKey ? focusable[focusable.length - 1] : focusable[0]).focus();
+      }
+    }
     if (e.key === 'Escape') {
+      if (document.getElementById('libCollection')?.classList.contains('open')) { closeMagnetCollection(); return; }
       if (document.getElementById('libAccount').classList.contains('open')) { closeAccount(); return; }
       if (document.getElementById('libDrawer').classList.contains('open')) { closeTorrentDrawer(); return; }
       if (document.getElementById('libDetail').classList.contains('open')) { closeDetail(); return; }
@@ -1790,15 +1998,28 @@ if (typeof document !== 'undefined') {
       e.preventDefault(); document.getElementById('libSearch').focus();
     }
   });
-  window.addEventListener('popstate', () => {
-    // Close only the topmost open overlay (each pushed exactly one entry).
-    if (document.getElementById('libAccount').classList.contains('open')) { closeAccount(true); return; }
-    if (document.getElementById('libDrawer').classList.contains('open')) { closeTorrentDrawer(true); return; }
-    if (document.getElementById('libDetail').classList.contains('open')) { closeDetail(true); return; }
-    // No overlay open → a browse-history navigation; re-hydrate and reload.
-    applyStateFromUrl();
-    loadLibrary({ fromPop: true });
-  });
+  window.addEventListener('popstate', event => restoreLibraryHistory(event.state));
+}
+
+function restoreLibraryHistory(destination) {
+  const target = destination && destination.lib;
+  const isOpen = id => document.getElementById(id)?.classList.contains('open');
+  if (target !== 'collection') closeMagnetCollection(true);
+  if (target !== 'account') closeAccount(true);
+  if (target !== 'drawer') closeTorrentDrawer(true);
+  if (target === 'collection') { if (!isOpen('libCollection')) openMagnetCollection(true); return; }
+  if (target === 'account') { if (!isOpen('libAccount')) openAccount(true); return; }
+  if (target === 'drawer') { if (!isOpen('libDrawer')) openTorrentDrawer(destination.infoHash, true); return; }
+  if (target === 'detail') {
+    if (detail.group && detail.group.key === destination.key && isOpen('libDetail')) return;
+    closeDetail(true);
+    if (groupCache.has(destination.key)) openDetail(destination.key);
+    else { const permalink = _readPermalink(); if (permalink) resolvePermalink(permalink); }
+    return;
+  }
+  closeDetail(true);
+  applyStateFromUrl();
+  loadLibrary({ fromPop: true });
 }
 
 /* When the active season changes we also want its TMDB episode catalog. The
@@ -1808,6 +2029,7 @@ renderDetailBody = function () { _origRenderDetailBody(); if (detail.ct === 'tv_
 
 /* ── Boot ───────────────────────────────────────────────────────────────── */
 if (typeof document !== 'undefined') {
+  _applyModalInert();
   applyStateFromUrl();
   const _bootPermalink = _readPermalink();
   // Establish a clean browse entry as the history base (strips any title params),
@@ -1842,5 +2064,6 @@ if (typeof module !== 'undefined' && module.exports) {
     rawResultNoteFor,
     normalizeLibraryStats,
     libraryStatsViewFor,
+    accountUsageViewFor,
   };
 }

@@ -131,7 +131,8 @@ func (w *uiWorker) runOnce(ctx context.Context) error {
 	host, port, _ := net.SplitHostPort(w.cfg.ListenAddress)
 	// --no-proxy-headers is load-bearing: the UI's proxy-tier auth trusts the
 	// transport peer address (see ui/auth.py), which X-Forwarded-For must not replace.
-	cmd := exec.CommandContext(ctx, w.cfg.Python, "-m", "uvicorn", "app:app", "--no-proxy-headers", "--host", host, "--port", port)
+	// Torznab credentials are query parameters; raw access logs would retain them.
+	cmd := exec.CommandContext(ctx, w.cfg.Python, "-m", "uvicorn", "app:app", "--no-proxy-headers", "--no-access-log", "--host", host, "--port", port)
 	cmd.Dir = w.cfg.Dir
 	cmd.Env = os.Environ()
 	for _, kv := range [][2]string{{"BITAGENT_GRAPHQL_URL", w.coreURL + "/graphql"}, {"BITAGENT_METRICS_URL", w.coreURL + "/metrics"}} {
