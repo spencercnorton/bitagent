@@ -552,11 +552,15 @@ async def _tracker_key(key_row: dict) -> str:
     rows = await db.execute_fetchall("SELECT key_hash FROM user_api_keys WHERE id=? AND revoked_at IS NULL", (key_row["id"],))
     if not rows or not await member_active(str(key_row["user_id"])):
         raise HTTPException(403, "Approved membership required")
-    token = "bt_" + hmac.new(settings.private_indexer_secret.encode(),
-        f"tracker-v1:{key_row['id']}:{rows[0]['key_hash']}".encode(), hashlib.sha256).hexdigest()
+    token = _derive_tracker_key(key_row["id"], rows[0]["key_hash"])
     async with private_write() as db:
-        await db.execute("INSERT OR IGNORE INTO private_tracker_keys VALUES (?,?)", (_hash_user_api_key(token), key_row["id"]))
+        await db.execute("INSERT INTO private_tracker_keys VALUES (?,?) ON CONFLICT(api_key_id) DO UPDATE SET key_hash=excluded.key_hash", (_hash_user_api_key(token), key_row["id"]))
     return token
+
+
+def _derive_tracker_key(key_id: int, source_key_hash: str) -> str:
+    return "bt_" + hmac.new(settings.private_indexer_secret.encode(),
+        f"tracker-v1:{key_id}:{source_key_hash}".encode(), hashlib.sha256).hexdigest()
 
 
 async def _download_release(release_id: str, row: dict, *, seeding=False) -> dict:
@@ -700,12 +704,14 @@ async def announce(passkey: str, request: Request):
         if not re.fullmatch(r"bt_[0-9a-f]{64}", passkey):
             raise ValueError("Invalid tracker credential")
         db = await get_db()
-        rows = await db.execute_fetchall("""SELECT k.id,k.user_id FROM private_tracker_keys t
+        rows = await db.execute_fetchall("""SELECT k.id,k.user_id,k.key_hash AS source_key_hash FROM private_tracker_keys t
             JOIN user_api_keys k ON t.api_key_id=k.id AND k.revoked_at IS NULL
             JOIN private_members m ON m.user_id=k.user_id AND m.active=1 WHERE t.key_hash=?""", (_hash_user_api_key(passkey),))
         if not rows:
             raise ValueError("Invalid tracker credential")
         row = dict(rows[0])
+        if not hmac.compare_digest(passkey, _derive_tracker_key(row["id"], row["source_key_hash"])):
+            raise ValueError("Retired tracker credential")
         info_hash, peer_id, counters, event, numwant = _announce_params(request)
         ip = _peer_ip(request)
         releases = await db.execute_fetchall("SELECT id,size FROM private_releases WHERE info_hash=? AND ready=1 AND withdrawn=0 AND verified_at>?", (info_hash, _ready_cutoff()))

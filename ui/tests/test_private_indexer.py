@@ -341,3 +341,15 @@ def test_operator_can_bootstrap_seed_before_advertising_to_members(client):
     assert client.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 404
     assert client.get("/api/library/private", headers=identity()).json()["total"] == 0
     assert client.get("/api/account/private/metrics", headers=identity()).json()["items"] == []
+
+
+def test_signing_secret_rotation_retires_old_tokens_and_issues_working_new_tokens(client):
+    key, release_id = setup_release(client)
+    old = download(client, key, release_id)
+    assert b"failure reason" not in announce(client, old)
+    config.settings.private_indexer_secret = "new-signing-secret-material-for-synthetic-test-123"
+    assert b"failure reason" in announce(client, old)
+    new = download(client, key, release_id)
+    assert old != new
+    assert b"failure reason" not in announce(client, new)
+    assert b"failure reason" in announce(client, old)
