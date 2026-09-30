@@ -178,6 +178,8 @@ async function loadSpotlight() {
   if (!discoveryState.slides.length) {
     const hero = document.getElementById('libSpotlight'); hero.classList.remove('is-loading', 'has-image'); hero.classList.add('is-empty');
     document.getElementById('libSpotlightTitle').textContent = 'Movies & series, in focus.';
+    document.getElementById('libSpotlightLabel').textContent = 'IN THE SPOTLIGHT';
+    document.getElementById('libSpotlightMeta').textContent = '';
     document.getElementById('libSpotlightOverview').textContent = 'Spotlight artwork is temporarily unavailable. Explore indexed releases below.';
     document.getElementById('libSpotlightImage').hidden = true; document.getElementById('libSpotlightOpen').hidden = true; document.getElementById('libSpotlightControls').hidden = true;
     return;
