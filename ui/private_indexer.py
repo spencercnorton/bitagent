@@ -800,11 +800,15 @@ async def announce(passkey: str, request: Request):
             if not previous and active[0]["n"] >= 10:
                 raise ValueError("Peer limit exceeded")
             prior = dict(previous[0]) if previous else None
-            # First observation/session restart establishes a baseline. Never
-            # credit lifetime client counters, negative resets, or seed handoffs.
-            continuing = bool(prior and prior["api_key_id"] == row["id"] and prior["updated_at"] > now-_PEER_TTL and event != "started")
-            uploaded = max(0, counters["uploaded"]-prior["uploaded"]) if continuing else 0
-            downloaded = max(0, counters["downloaded"]-prior["downloaded"]) if continuing else 0
+            # First/new-key/expired observations establish a baseline. The same
+            # active peer keeps a high-water mark even for repeated started
+            # events: a delayed report cannot lower it and re-credit old bytes.
+            # A stop, new peer ID/key, or expiry opens a new counter epoch.
+            continuing = bool(prior and prior["api_key_id"] == row["id"] and prior["updated_at"] > now-_PEER_TTL)
+            high_uploaded = max(counters["uploaded"], prior["uploaded"]) if continuing else counters["uploaded"]
+            high_downloaded = max(counters["downloaded"], prior["downloaded"]) if continuing else counters["downloaded"]
+            uploaded = high_uploaded-prior["uploaded"] if continuing else 0
+            downloaded = high_downloaded-prior["downloaded"] if continuing else 0
             completed = int(bool(continuing and event == "completed" and prior["remaining"] > 0 and not prior["completed"]))
             privatebindings.require_match(ip, row["user_id"])
             await db.execute("""INSERT INTO private_transfer_totals(user_id,release_id,uploaded,downloaded,completed)
@@ -816,7 +820,7 @@ async def announce(passkey: str, request: Request):
                 await db.execute("DELETE FROM private_peers WHERE release_id=? AND user_id=? AND peer_id=?", (release_id, row["user_id"], peer_id))
             else:
                 await db.execute("""INSERT OR REPLACE INTO private_peers VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                    (release_id,row["user_id"],row["id"],peer_id,ip,counters["port"],counters["uploaded"],counters["downloaded"],counters["left"],
+                    (release_id,row["user_id"],row["id"],peer_id,ip,counters["port"],high_uploaded,high_downloaded,counters["left"],
                      int(completed or (continuing and prior["completed"])), now))
             await db.execute("DELETE FROM private_peers WHERE updated_at<?", (now-_PEER_TTL,))
             peers = await db.execute_fetchall("""SELECT p.* FROM private_peers p
@@ -844,18 +848,56 @@ async def announce(passkey: str, request: Request):
     return Response(bencode(result), media_type="text/plain", headers={"Cache-Control": "no-store"})
 
 
+async def _transfer_summary(db, where, args):
+    fields = ("uploaded", "downloaded", "completed", "issued")
+    aggregates = ",".join(f"coalesce(sum({name}),0) AS {name}" for name in fields)
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT count(*) AS total_items," + aggregates + " FROM private_transfer_totals t" + where, args,
+        )
+        return dict(rows[0])
+    except aiosqlite.OperationalError as error:
+        if str(error) != "integer overflow":
+            raise
+    # Individual stored counters fit SQLite integers, but their account sum
+    # may not. Preserve exact bytes with Python integers and bounded batches.
+    totals = {name: 0 for name in (*fields, "total_items")}
+    async with db.execute("SELECT " + ",".join(fields) + " FROM private_transfer_totals t" + where, args) as cursor:
+        while batch := await cursor.fetchmany(1000):
+            totals["total_items"] += len(batch)
+            for row in batch:
+                for name in fields:
+                    totals[name] += row[name]
+    return totals
+
+
 async def _metrics(user_id: str | None):
     args = () if user_id is None else (user_id,)
     where = "" if user_id is None else " WHERE t.user_id=?"
-    rows = await (await get_db()).execute_fetchall("""SELECT t.*,r.title,r.info_hash FROM private_transfer_totals t
-        JOIN private_releases r ON r.id=t.release_id""" + where + " ORDER BY t.user_id,r.title LIMIT 1000", args)
+    # Initialize the schema/WAL first. A dedicated read transaction pins both
+    # queries (including aggregate overflow fallback) to the same snapshot,
+    # without placing BEGIN on the app's shared writer connection.
+    await get_db()
+    async with aiosqlite.connect(settings.db_path, timeout=5) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA query_only=ON")
+        await db.execute("BEGIN")
+        try:
+            summary = await _transfer_summary(db, where, args)
+            rows = await db.execute_fetchall("""SELECT t.*,r.title,r.info_hash FROM private_transfer_totals t
+                JOIN private_releases r ON r.id=t.release_id""" + where + " ORDER BY t.user_id,r.title LIMIT 1000", args)
+        finally:
+            await db.rollback()
     items = []
     for row in rows:
         item = dict(row)
         item["ratio"] = row["uploaded"] / row["downloaded"] if row["downloaded"] else None
         items.append(item)
+    total_items = summary.pop("total_items")
+    summary["ratio"] = summary["uploaded"] / summary["downloaded"] if summary["downloaded"] else None
     return {"source": "client-reported tracker observations", "issuedMeaning": "credentialed torrent/magnet requests, not completed downloads",
-            "items": items, "limit": 1000}
+            "items": items, "limit": 1000, "totals": summary, "totalItems": total_items,
+            "itemsTruncated": total_items > len(items)}
 
 
 @router.get("/api/account/private/metrics")

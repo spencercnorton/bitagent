@@ -467,9 +467,170 @@ def test_tracker_delta_accounting_baselines_and_self_only_metrics(client):
     assert client.put("/api/private/members/other", json={"active": True}, headers=identity("owner", "OWNER")).status_code == 200
     assert client.get("/api/account/private/metrics", headers=identity("other")).json()["items"] == []
     assert client.get("/api/private/metrics", headers=identity("owner", "OWNER")).json()["items"][0]["user_id"] == "member"
-    # A counter reset or new session does not credit the earlier lifetime count.
+    # Repeated started reports cannot lower an active peer's high-water mark.
     announce(client, path, event="started", uploaded=0, downloaded=0)
     assert client.get("/api/account/private/metrics", headers=identity()).json()["items"][0]["uploaded"] == 20
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_tracker_out_of_order_duplicate_and_started_reports_keep_independent_high_water(client, strict):
+    key, release_id = setup_release(client)
+    path = download(client, key, release_id)
+    if strict:
+        bind_peers({"192.0.2.1": "member"})
+    for uploaded, downloaded, event in (
+        (100, 200, "started"), (110, 220, ""), (105, 215, ""),
+        (110, 220, ""), (100, 200, "started"), (110, 220, ""),
+        (115, 210, ""), (110, 225, ""), (115, 225, ""),
+    ):
+        assert b"failure reason" not in announce(client, path, uploaded=uploaded, downloaded=downloaded, event=event)
+    peers, totals = peer_observations()
+    assert (peers[0]["uploaded"], peers[0]["downloaded"]) == (115, 225)
+    assert (totals[0]["uploaded"], totals[0]["downloaded"]) == (15, 25)
+    summary = client.get("/api/account/private/metrics", headers=identity()).json()["totals"]
+    assert (summary["uploaded"], summary["downloaded"], summary["ratio"]) == (15, 25, 15/25)
+
+
+@pytest.mark.parametrize("boundary", ["stopped", "expired", "peer-id", "key"])
+def test_tracker_observable_session_boundaries_accept_new_baselines_and_count_new_bytes(client, boundary):
+    key, release_id = setup_release(client)
+    path = download(client, key, release_id)
+    bind_peers({"192.0.2.1": "member"})
+    assert b"failure reason" not in announce(client, path, uploaded=100, downloaded=200)
+    assert b"failure reason" not in announce(client, path, event="", uploaded=110, downloaded=220)
+    peer_id = b"-TEST01-abcdefghijkl"
+    expected = (10, 20)
+    if boundary == "stopped":
+        for _ in range(2):
+            assert b"failure reason" not in announce(client, path, event="stopped", uploaded=115, downloaded=225)
+        assert peer_observations()[0] == []
+        expected = (15, 25)
+    elif boundary == "expired":
+        async def expire():
+            db = await database.get_db()
+            await db.execute("UPDATE private_peers SET updated_at=?", (time.time()-private._PEER_TTL-1,))
+            await db.commit()
+        asyncio.run(expire())
+    elif boundary == "peer-id":
+        peer_id = b"-TEST02-abcdefghijkl"
+    else:
+        replacement = client.post("/api/account/api-key", headers=identity()).json()["apiKeySecret"]
+        path = download(client, replacement, release_id)
+    assert b"failure reason" not in announce(client, path, peer_id=peer_id, uploaded=7, downloaded=9)
+    assert b"failure reason" not in announce(client, path, peer_id=peer_id, event="", uploaded=10, downloaded=14)
+    # A retry of the new epoch's initial started must not re-credit its bytes.
+    assert b"failure reason" not in announce(client, path, peer_id=peer_id, uploaded=7, downloaded=9)
+    assert b"failure reason" not in announce(client, path, peer_id=peer_id, event="", uploaded=10, downloaded=14)
+    totals = peer_observations()[1][0]
+    assert (totals["uploaded"], totals["downloaded"]) == (expected[0]+3, expected[1]+5)
+
+
+def seed_metric_rows(release_id, values):
+    async def seed():
+        db = await database.get_db()
+        ids = [release_id] + [f"synthetic:metrics:{i}" for i in range(1, len(values))]
+        await db.executemany("""INSERT INTO private_releases
+            (id,source_id,title,kind,info_hash,size,metadata,metainfo,ready,verified_at,created_at,withdrawn)
+            SELECT ?,?,?,kind,?,size,metadata,metainfo,ready,verified_at,created_at,withdrawn
+            FROM private_releases WHERE id=?""",
+            [(rid, rid, f"Synthetic metrics {i:04d}", hashlib.sha1(rid.encode()).hexdigest(), release_id)
+             for i, rid in enumerate(ids[1:], 1)])
+        await db.executemany("""INSERT INTO private_transfer_totals
+            (user_id,release_id,uploaded,downloaded,completed,issued) VALUES (?,?,?,?,?,?)""",
+            [("member", rid, *counts) for rid, counts in zip(ids, values, strict=True)])
+        await db.commit()
+    asyncio.run(seed())
+
+
+def test_metrics_totals_cover_every_release_beyond_display_limit_and_isolate_members(client):
+    _, release_id = setup_release(client)
+    count = 1003
+    seed_metric_rows(release_id, [(i, i*2, i % 2, 1) for i in range(1, count+1)])
+    assert client.put("/api/private/members/other", json={"active": True}, headers=identity("owner", "OWNER")).status_code == 200
+    async def other():
+        db = await database.get_db()
+        await db.execute("INSERT INTO private_transfer_totals VALUES (?,?,?,?,?,?)", ("other", release_id, 9999, 1111, 7, 9))
+        await db.commit()
+    asyncio.run(other())
+    own = client.get("/api/account/private/metrics", headers=identity()).json()
+    total = count*(count+1)//2
+    assert len(own["items"]) == own["limit"] == 1000
+    assert own["totalItems"] == count and own["itemsTruncated"] is True
+    assert own["totals"] == {"uploaded": total, "downloaded": total*2, "completed": (count+1)//2, "issued": count, "ratio": .5}
+    assert sum(row["uploaded"] for row in own["items"]) < own["totals"]["uploaded"]
+    other = client.get("/api/account/private/metrics", headers=identity("other")).json()
+    assert other["totalItems"] == 1 and other["itemsTruncated"] is False
+    assert other["totals"] == {"uploaded": 9999, "downloaded": 1111, "completed": 7, "issued": 9, "ratio": 9}
+    all_members = client.get("/api/private/metrics", headers=identity("owner", "OWNER")).json()
+    assert all_members["totalItems"] == count+1 and all_members["itemsTruncated"] is True
+    assert all_members["totals"]["uploaded"] == total+9999
+    assert all_members["totals"]["downloaded"] == total*2+1111
+
+
+def test_metrics_account_aggregate_preserves_exact_integers_beyond_sqlite_sum_range(client):
+    _, release_id = setup_release(client)
+    maximum = 2**63-1
+    seed_metric_rows(release_id, [(maximum, maximum, 1, 1)]*2)
+    result = client.get("/api/account/private/metrics", headers=identity()).json()
+    assert result["totals"] == {"uploaded": maximum*2, "downloaded": maximum*2, "completed": 2, "issued": 2, "ratio": 1}
+    assert result["totalItems"] == 2 and result["itemsTruncated"] is False
+
+
+@pytest.mark.parametrize("overflow", [False, True])
+def test_metrics_snapshot_survives_wal_writer_commit_between_summary_and_items(client, monkeypatch, overflow):
+    _, release_id = setup_release(client)
+    initial = 2**63-1 if overflow else 10
+    seed_metric_rows(release_id, [(initial, initial, 1, 1)]*2)
+    original_summary = private._transfer_summary
+    catalog = client.get("/api/private/catalog", headers=identity("owner", "OWNER")).json()
+    original_title = next(row["title"] for row in catalog if row["id"] == release_id)
+
+    async def commit_new_observation():
+        async with private.private_write() as writer:
+            await writer.execute("UPDATE private_transfer_totals SET uploaded=7,downloaded=14 WHERE user_id=? AND release_id=?",
+                                 ("member", release_id))
+            await writer.execute("UPDATE private_releases SET title=? WHERE id=?", ("Updated synthetic title", release_id))
+            await writer.execute("""INSERT INTO private_releases
+                (id,source_id,title,kind,info_hash,size,metadata,metainfo,ready,verified_at,created_at,withdrawn)
+                SELECT ?,?,?,kind,?,size,metadata,metainfo,ready,verified_at,created_at,withdrawn
+                FROM private_releases WHERE id=?""",
+                ("synthetic:concurrent", "synthetic:concurrent", "Concurrent synthetic title", "c"*40, release_id))
+            await writer.executemany("INSERT INTO private_transfer_totals VALUES (?,?,?,?,?,?)",
+                                     [("member", "synthetic:concurrent", 3, 6, 0, 1),
+                                      ("other", "synthetic:concurrent", 999, 999, 9, 9)])
+
+    async def summary_then_write(reader, where, args):
+        assert reader is not await database.get_db()
+        assert (await reader.execute_fetchall("PRAGMA query_only"))[0][0] == 1
+        assert (await reader.execute_fetchall("PRAGMA journal_mode"))[0][0] == "wal"
+        result = await original_summary(reader, where, args)
+        # The separate writer must commit while the metrics read snapshot is
+        # open, proving WAL permits progress without mixing response versions.
+        await asyncio.wait_for(asyncio.create_task(commit_new_observation()), timeout=2)
+        return result
+
+    monkeypatch.setattr(private, "_transfer_summary", summary_then_write)
+    result = client.get("/api/account/private/metrics", headers=identity()).json()
+    assert result["totalItems"] == len(result["items"]) == 2
+    assert result["itemsTruncated"] is False
+    assert result["totals"] == {"uploaded": initial*2, "downloaded": initial*2, "completed": 2, "issued": 2, "ratio": 1}
+    assert all(row["user_id"] == "member" and row["uploaded"] == initial for row in result["items"])
+    assert next(row for row in result["items"] if row["release_id"] == release_id)["title"] == original_title
+
+    monkeypatch.setattr(private, "_transfer_summary", original_summary)
+    current = client.get("/api/account/private/metrics", headers=identity()).json()
+    assert current["totalItems"] == len(current["items"]) == 3
+    assert current["totals"]["uploaded"] == initial+10
+    assert current["totals"]["downloaded"] == initial+20
+    assert next(row for row in current["items"] if row["release_id"] == release_id)["title"] == "Updated synthetic title"
+    assert all(row["user_id"] == "member" for row in current["items"])
+
+
+def test_metrics_empty_account_has_complete_zero_totals_and_no_ratio(client):
+    setup_release(client)
+    result = client.get("/api/account/private/metrics", headers=identity()).json()
+    assert result["items"] == [] and result["totalItems"] == 0 and result["itemsTruncated"] is False
+    assert result["totals"] == {"uploaded": 0, "downloaded": 0, "completed": 0, "issued": 0, "ratio": None}
 
 
 def test_announce_binary_validation_and_no_peer_address_spoof(client):

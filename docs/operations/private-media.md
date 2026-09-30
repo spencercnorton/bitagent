@@ -232,8 +232,21 @@ Public DHT clients should remain separate. An application CIDR check cannot
 replace the seed client's firewall or prevent an approved member forwarding files.
 
 Metrics distinguish issued links from client-reported uploaded/downloaded byte
-deltas and completion events. First observations establish a baseline; resets,
-restarts and duplicate completion events do not inflate totals. Ratios are
+deltas and completion events. First observations establish a baseline. Each
+active peer and key retains its highest upload and download counters; lower,
+duplicate or repeated `started` reports cannot lower that baseline. A `stopped`
+event removes the peer. A later observation after a stop, peer expiry, a new
+peer ID or a key change establishes a new baseline without crediting lifetime
+bytes. Clients resetting counters with the same still-active peer ID should
+stop first or use a new peer ID. A reset without an observable session boundary
+can miss bytes until counters exceed the previous high-water mark; the tracker
+cannot distinguish it from a delayed report. Duplicate completion events in
+an active session do not increase its completion count.
+
+The metrics API's `totals` covers all stored rows for the authorized account
+(all accounts for an operator). `items` retains the 1,000-row display limit;
+`totalItems` and `itemsTruncated` disclose that list's completeness. Account
+totals must come from `totals`, rather than summing the display list. Ratios are
 null until downloaded bytes are observed. These are operational observations,
 not independently verified delivery or billing measurements. Public DHT swarm
 transfers are outside this tracker and cannot be attributed to website members.
