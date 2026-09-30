@@ -345,7 +345,7 @@ function posterImgSrc(id, source, ct) {
 
 /* ── Browse state ───────────────────────────────────────────────────────── */
 const state = {
-  q: '', type: '', sort: 'seeders',
+  q: '', type: '', sort: 'seeders', provider: '', region: 'US',
   genres: new Set(), qualities: new Set(), sources: new Set(), features: new Set(),
   yearMin: '', yearMax: '',
   facets: {}, facetsKey: '',
@@ -374,6 +374,7 @@ function browseParamsFor(browseState) {
   const p = new URLSearchParams();
   if (browseState.q) p.set('q', browseState.q);
   if (browseState.type) p.set('type', browseState.type);
+  if (browseState.provider) { p.set('provider', browseState.provider); p.set('region', browseState.region || 'US'); }
   if (browseState.sort && browseState.sort !== 'seeders') p.set('sort', browseState.sort);
   if (browseState.genres.size) p.set('genres', [...browseState.genres].join(','));
   if (browseState.qualities.size) p.set('qualities', [...browseState.qualities].join(','));
@@ -430,6 +431,8 @@ function parseBrowseState(search) {
   return {
     q: p.get('q') || '',
     type: p.get('type') || '',
+    provider: /^\d{1,8}$/.test(p.get('provider') || '') ? p.get('provider') : '',
+    region: /^[A-Z]{2}$/.test(p.get('region') || '') ? p.get('region') : 'US',
     sort: p.get('sort') || 'seeders',
     genres: toSet('genres'),
     qualities: toSet('qualities'),
@@ -566,6 +569,7 @@ function setFacet(which, value) {
 }
 function clearFacets() {
   state.type = '';
+  state.provider = '';
   state.genres.clear(); state.qualities.clear(); state.sources.clear(); state.features.clear();
   state.yearMin = ''; state.yearMax = '';
   state.hideForeign = false; state.hideUnmatched = true; state._preAnimeHideUnmatched = null;
@@ -594,7 +598,7 @@ function hasAdvancedFiltersFor(browseState) {
 }
 function hasAdvancedFilters() { return hasAdvancedFiltersFor(state); }
 function isHomeFor(browseState) {
-  return !browseState.q && browseState.type === '' && !hasAdvancedFiltersFor(browseState) &&
+  return !browseState.provider && !browseState.q && browseState.type === '' && !hasAdvancedFiltersFor(browseState) &&
     browseState.sort === 'seeders' && !browseState.hideForeign && browseState.hideUnmatched;
 }
 // Every visible non-default browse control leaves the curated landing page.
@@ -825,6 +829,10 @@ async function loadLibrary(opts) {
     syncUrl(historyModeFor(opts.push ? 'search' : 'filter'));
   }
   renderTypePills(); renderFacetControls(); syncControls();
+  if (state.provider && typeof loadProviderLibrary === 'function') {
+    showHome(false);
+    return loadProviderLibrary(nav.seq, nav.signal);
+  }
   if (isHome()) {
     showHome(true);
     if (state.facetsKey !== facetKeyFor(state)) loadFacetOptions(nav.seq, nav.signal);
@@ -1030,6 +1038,14 @@ async function loadGrid(navSeq, signal) {
 
 function libPage(dir) {
   if (_gridLoading) return;
+  if (state.provider) {
+    if ((dir > 0 && !state.hasNext) || (dir < 0 && state.page === 0)) return;
+    state.page += dir;
+    if (!_modalStack.length) syncUrl(historyModeFor('page'));
+    loadLibrary({fromPop:true, keepPage:true});
+    document.getElementById('libResults').scrollIntoView({behavior:_scrollBehavior(), block:'start'});
+    return;
+  }
   if (serverGrouped()) {
     // Server paging: each page is a fresh fetch; bounds come from hasNext.
     if (dir > 0 && !state.hasNext) return;
@@ -1371,16 +1387,23 @@ function magnetGroupToolbar() {
       : detail.truncated ? 'Showing a bounded set of indexed releases. More may be available; this selection is partial.'
         : `${fmtNum(detail.releases.length)} indexed releases available. Quality and source filters apply to selection.`;
   const disabled = detail.loading ? 'disabled' : '';
-  return `<section class="lib-bulk-tools" aria-label="Select magnet links">
-    <div class="lib-bulk-intro"><strong>Build your magnet collection</strong><p role="status">${escHtml(status)}</p></div>
+  return `<section class="lib-magnet-actions" aria-label="Copy title magnet links">
+    <p class="lib-magnet-status" role="status">${escHtml(status)}</p>
     <div class="lib-bulk-actions">
       <label class="lib-bulk-mode">Versions <select id="libBulkMode" onchange="setMagnetMode(this.value)"><option value="best" ${detail.bulkMode === 'best' ? 'selected' : ''}>Recommended (packs + seed counts)</option><option value="all" ${detail.bulkMode === 'all' ? 'selected' : ''}>All matching versions</option></select></label>
-      <button class="lib-btn primary" ${disabled} onclick="selectMagnetGroup('${detail.ct === 'tv_show' ? 'show' : 'title'}')">Select ${detail.ct === 'tv_show' ? 'show' : 'title'}</button>
-      ${detail.ct === 'tv_show' ? `<button class="lib-btn" ${detail.loading || !Number.isInteger(detail.activeSeason) ? 'disabled' : ''} onclick="selectMagnetGroup('season')">Select active season</button>` : ''}
-      <button class="lib-btn" onclick="openMagnetCollection()">Review magnets <span data-magnet-count>0</span></button>
+      <button class="lib-btn primary" ${disabled} onclick="copyMagnetGroup('${detail.ct === 'tv_show' ? 'show' : 'title'}')">Copy ${detail.ct === 'tv_show' ? 'show' : 'title'} magnets</button>
+      ${detail.ct === 'tv_show' ? `<button class="lib-btn" ${detail.loading || !Number.isInteger(detail.activeSeason) ? 'disabled' : ''} onclick="copyMagnetGroup('season')">Copy season magnets</button>` : ''}
     </div>
-    <p class="lib-bulk-hint">Recommended picks favor packs and seed counts. Packs may contain overlapping episodes. Review selected links before copying.</p>
   </section>`;
+}
+
+function copyMagnetGroup(scope) {
+  if (detail.loading || (scope === 'season' && !Number.isInteger(detail.activeSeason))) return;
+  const releases = BitAgentLibraryTools.selectReleaseGroup(filteredReleases(), { scope, season: detail.activeSeason, mode: detail.bulkMode });
+  const links = releases.slice(0, MAGNET_SELECTION_LIMIT).map(BitAgentLibraryTools.magnetFor).filter(Boolean);
+  if (!links.length) { toast('No matching magnet links available'); return; }
+  const partial = releases.length > MAGNET_SELECTION_LIMIT || detail.truncated;
+  copyText(links.join('\n'), `${links.length} magnet links copied${partial ? ' · partial selection' : ''}`, () => recordLibraryGrab(links.length, 'copy'));
 }
 
 function toggleMagnetSelection(infoHash) {
@@ -1427,13 +1450,14 @@ function updateMagnetSelection() {
 function removeCollectedMagnet(hash) { magnetSelection.delete(hash); updateMagnetSelection(); }
 function clearMagnetCollection() { magnetSelection.clear(); updateMagnetSelection(); }
 function collectionText() { return [...magnetSelection.values()].map(BitAgentLibraryTools.magnetFor).filter(Boolean).join('\n'); }
-function copyMagnetCollection() { const text = collectionText(); if (text) copyText(text, `${magnetSelection.size} magnet links copied`); }
+function copyMagnetCollection() { const text = collectionText(), count = magnetSelection.size; if (text) copyText(text, `${count} magnet links copied`, () => recordLibraryGrab(count, 'copy')); }
 function saveMagnetCollection() {
   const text = collectionText();
   if (!text) return;
   const url = URL.createObjectURL(new Blob([text + '\n'], { type: 'text/plain;charset=utf-8' }));
   const link = document.createElement('a'); link.href = url; link.download = 'bitagent-magnets.txt';
   document.body.appendChild(link); link.click(); link.remove();
+  recordLibraryGrab(magnetSelection.size, 'export');
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function openMagnetCollection(fromPop = false) {
@@ -1521,7 +1545,7 @@ function relRow(t) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
         <span>Copy</span>
       </button>
-      ${magnet ? `<a class="lib-openmagnet" href="${escAttr(magnet)}" aria-label="${escAttr('Open magnet for ' + rn)}">Open ↗</a>` : ''}
+      ${magnet ? `<a class="lib-openmagnet" href="${escAttr(magnet)}" onclick="recordLibraryGrab(1,'open')" aria-label="${escAttr('Open magnet for ' + rn)}">Open ↗</a>` : ''}
     </div>
   </div>`;
 }
@@ -1782,14 +1806,14 @@ async function openTorrentDrawer(infoHash, fromPop = false) {
     ${files.length > 100 ? `<div class="lib-file"><span class="lib-file-path">+${fmtNum(files.length - 100)} more…</span></div>` : ''}
   </div>` : '';
 
-  const magnet = d.magnetUri || `magnet:?xt=urn:btih:${d.infoHash}`;
+  const magnet = BitAgentLibraryTools.magnetFor(d);
   bodyEl.innerHTML = `
     <div class="lib-drawer-title">${escHtml(d.name)}</div>
     ${tags.length ? `<div class="lib-drawer-tags">${tags.join('')}</div>` : ''}
     <dl class="lib-kv">${kv.join('')}</dl>
     <div class="lib-drawer-actions">
-      <a class="lib-btn primary" href="${escAttr(magnet)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v6a6 6 0 006 6 6 6 0 006-6V3"/><line x1="6" y1="3" x2="2" y2="3"/><line x1="22" y1="3" x2="18" y2="3"/></svg>Open magnet</a>
-      <button class="lib-btn" onclick="copyMagnet('${escAttr(jsStringArg(magnet))}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>Copy</button>
+      ${magnet ? `<a class="lib-btn primary" href="${escAttr(magnet)}" onclick="recordLibraryGrab(1,'open')">Open magnet ↗</a>` : ''}
+      <button class="lib-btn" ${magnet ? '' : 'disabled'} onclick="copyMagnet('${escAttr(jsStringArg(magnet))}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>Copy</button>
     </div>
     ${filesHtml}`;
 }
@@ -1813,10 +1837,10 @@ function toast(msg) {
   _toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
 function copyMagnet(magnet) {
-  if (magnet) copyText(magnet, 'Magnet link copied');
+  if (magnet) copyText(magnet, 'Magnet link copied', () => recordLibraryGrab(1, 'copy'));
 }
-function copyText(text, message) {
-  const done = () => toast(message);
+function copyText(text, message, onSuccess) {
+  const done = () => { toast(message); if (onSuccess) onSuccess(); };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
   } else fallbackCopy(text, done);
@@ -1831,6 +1855,7 @@ function fallbackCopy(text, done) {
 
 /* ── Account / API key panel ───────────────────────────────────────────── */
 let accountState = null;
+let _accountUsageSnapshot = null;
 function openAccount(fromPop = false) {
   const panel = document.getElementById('libAccount');
   const scrim = document.getElementById('libAccountScrim');
@@ -1852,11 +1877,13 @@ function closeAccount(fromPop) {
 }
 async function loadAccount() {
   const data = await api('/api/account');
-  if (!data) { toast('Account unavailable'); return; }
+  if (!data) { renderAccountUsage(null); toast('Account unavailable'); return; }
   renderAccount(data);
 }
 function renderAccount(data) {
+  if (accountState && (accountState.identity || {}).id !== (data.identity || {}).id) _accountUsageSnapshot = null;
   accountState = data;
+  if (data.usage) renderAccountUsage(data.usage);
   const ident = data.identity || {};
   const name = ident.display || ident.username || ident.email || ident.id || 'Account';
   const sub = [ident.email || ident.username || ident.id, ident.method].filter(Boolean).join(' · ');
@@ -1894,6 +1921,31 @@ function renderAccount(data) {
     secretInput.value = '';
     secretWrap.style.display = 'none';
   }
+}
+function accountUsageViewFor(usage) {
+  if (!usage || !Number.isSafeInteger(usage.grabs) || usage.grabs < 0 || !Number.isSafeInteger(usage.apiSearches) || usage.apiSearches < 0) return null;
+  const bytes = value => Number.isSafeInteger(value) && value >= 0 ? (value === 0 ? '0 B' : fmtBytes(value)) : 'Not reported';
+  return { downloaded: bytes(usage.downloadedBytes), uploaded: bytes(usage.uploadedBytes), grabs: fmtNum(usage.grabs),
+    searches: fmtNum(usage.apiSearches), hitAndRuns: Number.isSafeInteger(usage.hitAndRuns) && usage.hitAndRuns >= 0 ? fmtNum(usage.hitAndRuns) : 'Not reported',
+    ratio: Number.isSafeInteger(usage.uploadedBytes) && usage.uploadedBytes >= 0 && Number.isSafeInteger(usage.downloadedBytes) && usage.downloadedBytes > 0 ? (usage.uploadedBytes / usage.downloadedBytes).toFixed(2) : '—',
+    hint: `Grabs count magnet links copied, opened, or exported. Transfer and seeding stats need client reporting.${usage.trackingSince ? ' Activity tracked since ' + fmtDate(usage.trackingSince) + '.' : ''}` };
+}
+function renderAccountUsage(usage) {
+  if (usage && accountUsageViewFor(usage)) {
+    if (_accountUsageSnapshot && _accountUsageSnapshot.trackingSince === usage.trackingSince) {
+      usage = Object.assign({}, usage, {grabs:Math.max(usage.grabs, _accountUsageSnapshot.grabs), apiSearches:Math.max(usage.apiSearches, _accountUsageSnapshot.apiSearches)});
+    }
+    _accountUsageSnapshot = usage;
+  }
+  const view = accountUsageViewFor(usage);
+  const ids = {acctDownloaded:'downloaded', acctUploaded:'uploaded', acctGrabs:'grabs', acctHitAndRuns:'hitAndRuns', acctApiSearches:'searches', acctRatio:'ratio'};
+  for (const [id, key] of Object.entries(ids)) { const el = document.getElementById(id); if (el) el.textContent = view ? view[key] : '—'; }
+  const hint = document.getElementById('acctUsageHint'); if (hint) hint.textContent = view ? view.hint : 'Activity is temporarily unavailable.';
+  const grid = document.getElementById('acctUsage'); if (grid) grid.setAttribute('aria-busy', 'false');
+}
+async function recordLibraryGrab(count, action) {
+  const usage = await api('/api/account/usage/grab', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({count,action}) });
+  if (usage) renderAccountUsage(usage);
 }
 async function generateAccountKey() {
   const btn = document.getElementById('acctGenerateBtn');
@@ -2012,5 +2064,6 @@ if (typeof module !== 'undefined' && module.exports) {
     rawResultNoteFor,
     normalizeLibraryStats,
     libraryStatsViewFor,
+    accountUsageViewFor,
   };
 }

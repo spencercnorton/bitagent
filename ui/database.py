@@ -204,6 +204,15 @@ async def _init_tables(db: aiosqlite.Connection):
             ON user_api_keys(user_id, revoked_at, created_at);
         CREATE INDEX IF NOT EXISTS idx_user_api_keys_hash_active
             ON user_api_keys(key_hash, revoked_at);
+        CREATE TABLE IF NOT EXISTS account_usage (
+            user_id TEXT PRIMARY KEY,
+            tracking_since REAL NOT NULL,
+            grabs INTEGER NOT NULL DEFAULT 0 CHECK (grabs >= 0),
+            api_searches INTEGER NOT NULL DEFAULT 0 CHECK (api_searches >= 0),
+            magnet_copies INTEGER NOT NULL DEFAULT 0 CHECK (magnet_copies >= 0),
+            magnet_opens INTEGER NOT NULL DEFAULT 0 CHECK (magnet_opens >= 0),
+            magnet_exports INTEGER NOT NULL DEFAULT 0 CHECK (magnet_exports >= 0)
+        );
     """)
     # Scrub legacy rows that predate server-side redaction. The marker is
     # idempotent, and future writes below are redacted before insertion.

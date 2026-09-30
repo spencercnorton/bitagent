@@ -13,6 +13,7 @@ import secrets
 import socket
 import time
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote as _urlquote, urlparse as _urlparse_url
 from contextlib import asynccontextmanager
 
@@ -20,7 +21,7 @@ from fastapi import FastAPI, Request, Depends, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictInt
 
 import httpx
 from version import __version__
@@ -37,6 +38,8 @@ from database import (
 )
 import graphql_client as gql
 import tmdb
+import discovery
+from account_usage import get_account_usage, record_magnet_grab
 from prom_metrics import (
     _parse_prometheus_snapshot,
     _nonnegative_int,
@@ -78,6 +81,7 @@ async def lifespan(app: FastAPI):
     _reset_stats_snapshot_cache()
     _reset_library_stats_cache()
     _reset_indexer_stats_cache()
+    discovery.reset_cache()
     # Infisical, when configured, is the authoritative source for secrets
     # (e.g. TMDB_API_KEY). Hydrate before serving so a stale/typo'd deployment
     # env literal can't silently break poster fetches. No-op + fail-open when
@@ -91,6 +95,7 @@ async def lifespan(app: FastAPI):
     _reset_stats_snapshot_cache()
     _reset_library_stats_cache()
     _reset_indexer_stats_cache()
+    discovery.reset_cache()
     await close_all()
 
 
@@ -100,6 +105,7 @@ app = FastAPI(title="BitAgent Console", version=__version__, lifespan=lifespan)
 
 # Torznab proxy lives in its own module (ba_-key auth, not the SSO gate).
 app.include_router(torznab_router)
+app.include_router(discovery.router)
 
 # CSRF is otherwise mitigated only by our routes being JSON-only (a simple
 # cross-site form can't set Content-Type: application/json). Sec-Fetch-Site adds
@@ -248,7 +254,7 @@ def _compute_asset_version() -> str:
     h = hashlib.sha256()
     for rel in ("css/tokens.css", "css/app.css", "css/library.css", "css/library-next.css",
                 "js/torrent-kind.js", "js/norm-title.js", "js/app.js", "js/library.js",
-                "js/library-tools.js", "js/library-next.js"):
+                "js/library-tools.js", "js/library-next.js", "js/library-discovery.js"):
         try:
             h.update((BASE / "static" / rel).read_bytes())
         except OSError:
@@ -317,6 +323,11 @@ class AccountApiKeyRequest(BaseModel):
     name: str = "default"
 
 
+class AccountGrabRequest(BaseModel):
+    count: StrictInt = Field(ge=1, le=1000)
+    action: Literal["copy", "open", "export"]
+
+
 def _account_user_id(identity: dict) -> str:
     return str(identity.get("id") or identity.get("username") or identity.get("email") or "anonymous")
 
@@ -381,7 +392,14 @@ def _account_payload(
 @app.get("/api/account")
 async def api_account(request: Request, identity: dict = Depends(require_auth)):
     row = await get_user_api_key(_account_user_id(identity))
-    return _account_payload(request, identity, row)
+    payload = _account_payload(request, identity, row)
+    payload["usage"] = await get_account_usage(_account_user_id(identity))
+    return payload
+
+
+@app.post("/api/account/usage/grab")
+async def api_account_grab(body: AccountGrabRequest, identity: dict = Depends(require_auth)):
+    return await record_magnet_grab(_account_user_id(identity), body.count, body.action)
 
 
 @app.post("/api/account/api-key")

@@ -54,7 +54,7 @@ test('season shortcut is disabled without a valid active season', () => {
   const c = controller();
   c.controller.detail.ct = 'tv_show';
   c.controller.detail.activeSeason = null;
-  assert.match(c.controller.magnetGroupToolbar(), /disabled onclick="selectMagnetGroup\('season'\)"/);
+  assert.match(c.controller.magnetGroupToolbar(), /disabled onclick="copyMagnetGroup\('season'\)"/);
 });
 
 test('clipboard fallback never reports success when the browser rejects copying', () => {

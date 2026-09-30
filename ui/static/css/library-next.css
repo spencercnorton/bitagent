@@ -487,8 +487,256 @@ button:disabled { cursor: not-allowed; }
   .lib-collection > p { margin: 9px 0 13px; font-size: 11px; }
   #libCollectionList { min-height: 50px; margin-bottom: 12px; }
 }
+
+/* Real catalog spotlights: image-led discovery with explicit rotation controls.
+   The JS controller owns rotation; CSS never starts an automatic slide timer. */
+.lib-spotlight {
+  position: relative; isolation: isolate; overflow: hidden; display: flex;
+  align-items: flex-end; min-height: 410px; margin-bottom: 26px; padding: 42px;
+  border: 1px solid #26394c; border-radius: 24px; color: #fff;
+  background: linear-gradient(125deg, #142c3c, #0b1724 70%);
+  box-shadow: 0 14px 40px rgba(3,12,23,.13);
+}
+.lib-spotlight-image {
+  position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%;
+  object-fit: cover; object-position: 70% 35%; opacity: 1;
+  transition: opacity 350ms ease, transform 800ms var(--lib-ease);
+}
+.lib-spotlight::after, .lib-spotlight-shade {
+  content: ""; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: linear-gradient(90deg, rgba(4,13,22,.94) 0%, rgba(4,13,22,.76) 38%, rgba(4,13,22,.22) 78%),
+    linear-gradient(0deg, rgba(4,13,22,.76) 0%, rgba(4,13,22,.12) 62%);
+}
+.lib-spotlight:has(.lib-spotlight-shade)::after { display: none; }
+.lib-spotlight-content { position: relative; z-index: 2; width: min(610px, 64%); min-width: 0; }
+.lib-spotlight-eyebrow, #libSpotlightLabel {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 24px;
+  margin-bottom: 12px; color: #c4f56b; font-size: 10px; line-height: 1.5;
+  font-weight: 750; letter-spacing: .14em; text-transform: uppercase;
+}
+.lib-spotlight-eyebrow::before, #libSpotlightLabel::before {
+  content: ""; width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%;
+  background: currentColor; box-shadow: 0 0 0 4px rgba(196,245,107,.12);
+}
+.lib-spotlight-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.lib-spotlight-badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px;
+  border: 1px solid rgba(255,255,255,.2); border-radius: 6px;
+  background: rgba(5,14,24,.46); color: #dfeaf5; font-size: 10px; font-weight: 650;
+}
+.lib-spotlight-badge.lime { color: #c4f56b; border-color: rgba(196,245,107,.3); }
+.lib-spotlight-badge.violet { color: #cfb4ff; border-color: rgba(207,180,255,.3); }
+.lib-spotlight-badge.coral { color: #ffae9f; border-color: rgba(255,174,159,.3); }
+.lib-spotlight-title, #libSpotlightTitle {
+  margin: 0; color: #fff; font-size: clamp(32px, 4vw, 58px); line-height: 1.06;
+  font-weight: 800; letter-spacing: -.045em; text-wrap: balance;
+  overflow-wrap: anywhere; text-shadow: 0 3px 22px rgba(0,0,0,.25);
+}
+.lib-spotlight-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 15px; color: #d1dde9; font-size: 11px; font-weight: 550; line-height: 1.5; }
+.lib-spotlight-meta .dot-sep { width: 3px; height: 3px; border-radius: 50%; background: #879eb2; }
+.lib-spotlight-meta .lib-rating { color: #ffdb85; }
+.lib-spotlight-meta .lib-tag { border: 1px solid rgba(255,255,255,.2); background: rgba(12,24,35,.55); color: #d1dde9; }
+.lib-spotlight-overview, #libSpotlightOverview {
+  max-width: 540px; margin: 14px 0 0; color: #ccdae7; font-size: 13px;
+  line-height: 1.7; display: -webkit-box; -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical; overflow: hidden;
+}
+.lib-spotlight-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 23px; }
+.lib-spotlight-cta, #libSpotlightOpen, .lib-spotlight-actions .lib-btn.primary {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 46px; flex: 0 1 auto; padding: 11px 18px; border: 1px solid #c4f56b;
+  border-radius: 11px; background: #c4f56b; color: #102019; font: inherit;
+  font-size: 12px; font-weight: 750; transition: background 160ms ease, transform 160ms var(--lib-ease);
+}
+.lib-spotlight-cta:hover, #libSpotlightOpen:hover, .lib-spotlight-actions .lib-btn.primary:hover { transform: translateY(-2px); background: #d9ff9b; border-color: #d9ff9b; }
+.lib-spotlight-cta svg, #libSpotlightOpen svg { width: 17px; height: 17px; }
+.lib-spotlight-cta.secondary { border-color: rgba(255,255,255,.26); background: rgba(6,16,26,.5); color: #fff; }
+.lib-spotlight-controls {
+  position: absolute; z-index: 3; right: 30px; bottom: 28px;
+  display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 6px;
+  max-width: 42%; padding: 5px; border: 1px solid rgba(255,255,255,.16);
+  border-radius: 13px; background: rgba(5,15,25,.64); backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.lib-spotlight-arrow, .lib-spotlight-pause, .lib-spotlight-controls .lib-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-width: 36px; min-height: 36px; width: auto; height: 36px; padding: 7px;
+  border: 1px solid transparent; border-radius: 8px; background: transparent;
+  color: #e5eef7; font: inherit; font-size: 15px;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+.lib-spotlight-arrow svg, .lib-spotlight-pause svg, .lib-spotlight-controls .lib-iconbtn svg { width: 16px; height: 16px; }
+.lib-spotlight-arrow:hover, .lib-spotlight-pause:hover, .lib-spotlight-controls .lib-iconbtn:hover { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.14); }
+.lib-spotlight-pause[aria-pressed="true"] { color: #c4f56b; background: rgba(196,245,107,.09); }
+.lib-spotlight-controls :focus-visible { outline-color: #c4f56b; outline-offset: 2px; }
+.lib-spotlight-dots { display: flex; align-items: center; gap: 0; padding: 0 3px; }
+.lib-spotlight-dots button { display: grid; place-items: center; min-width: 24px; height: 36px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; }
+.lib-spotlight-dots button::after { content: ""; width: 6px; height: 6px; border-radius: 4px; background: #8695a6; transition: background 150ms ease, width 180ms var(--lib-ease); }
+.lib-spotlight-dots button.active::after, .lib-spotlight-dots button[aria-current="true"]::after, .lib-spotlight-dots button[aria-pressed="true"]::after { width: 19px; background: #c4f56b; }
+.lib-spotlight-dots button:hover::after { background: #e5eef7; }
+.lib-spotlight.is-changing .lib-spotlight-image { opacity: .35; transform: scale(1.015); }
+.lib-spotlight.is-loading, .lib-spotlight.is-empty { min-height: 190px; padding: 30px 36px; }
+.lib-spotlight.is-loading .lib-spotlight-title, .lib-spotlight.is-empty .lib-spotlight-title,
+.lib-spotlight.is-loading #libSpotlightTitle, .lib-spotlight.is-empty #libSpotlightTitle { font-size: 34px; }
+.lib-spotlight.is-loading .lib-spotlight-controls, .lib-spotlight.is-empty .lib-spotlight-controls { display: none; }
+.lib-browse.is-searching .lib-spotlight { display: none; }
+
+/* Provider discovery uses actual metadata, and colors echo recognizable marks.
+   The provider logo remains the source of identity; color is only an accent. */
+.lib-providers { margin: 0 0 28px; padding: 0 0 22px; border-bottom: 1px solid var(--color-border-subtle); }
+.lib-provider-head { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 13px; margin-bottom: 14px; }
+.lib-provider-head h2 { margin: 0; color: var(--color-fg); font-size: 17px; font-weight: 750; letter-spacing: -.025em; }
+.lib-provider-head > div { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lib-provider-head > div:first-child { display: block; }
+.lib-provider-head .lib-drawer-eyebrow { display: block; margin-bottom: 4px; font-size: 9px; letter-spacing: .12em; }
+.lib-provider-controls { margin-left: auto; }
+.lib-provider-head p, .lib-provider-hint { margin: 5px 0 0; font-size: 11px; color: var(--color-fg-subtle); line-height: 1.6; }
+.lib-provider-note { margin: 6px 0 0; color: var(--color-fg-muted); font-size: 11px; line-height: 1.6; }
+.lib-provider-attribution { margin: 5px 0 0; color: var(--color-fg-subtle); font-size: 9px; line-height: 1.6; }
+.lib-provider-attribution a { color: var(--color-fg-muted); text-decoration: underline; text-underline-offset: 2px; }
+.lib-provider-attribution a:hover { color: var(--color-accent); }
+.lib-provider-head label { display: inline-flex; align-items: center; gap: 8px; color: var(--color-fg-muted); font-size: 11px; }
+#libProviderRegion, #libProviderSearch {
+  min-height: 38px; min-width: 0; padding: 8px 11px; border: 1px solid var(--color-border);
+  border-radius: 9px; background: var(--color-bg-raised); color: var(--color-fg);
+  font: inherit; font-size: 11px;
+}
+#libProviderRegion { max-width: 160px; }
+#libProviderSearch { width: 190px; }
+#libProviderSearch::placeholder { color: var(--color-fg-subtle); opacity: 1; }
+.lib-provider-list, .lib-provider-strip {
+  display: flex; align-items: stretch; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity; scrollbar-width: thin; padding: 4px 1px 10px;
+}
+.lib-provider-list::-webkit-scrollbar, .lib-provider-strip::-webkit-scrollbar { height: 5px; }
+.lib-provider-list::-webkit-scrollbar-thumb, .lib-provider-strip::-webkit-scrollbar-thumb { border-radius: 5px; background: var(--color-border); }
+.lib-provider {
+  --provider-color: var(--lib-cyan); display: inline-flex; align-items: center; justify-content: flex-start;
+  gap: 11px; flex: 0 0 auto; min-width: 145px; max-width: 240px; min-height: 68px;
+  padding: 11px 15px; scroll-snap-align: start; border: 1px solid color-mix(in srgb, var(--provider-color) 25%, var(--color-border));
+  border-radius: 13px; background: linear-gradient(115deg, color-mix(in srgb, var(--provider-color) 8%, var(--color-bg-raised)), var(--color-bg-raised));
+  color: var(--color-fg); font: inherit; font-size: 12px; font-weight: 650;
+  text-align: left; transition: border-color 160ms ease, transform 180ms var(--lib-ease), background 160ms ease;
+}
+.lib-provider[data-provider="netflix"], .lib-provider[data-provider="8"] { --provider-color: #e64850; }
+.lib-provider[data-provider="prime"], .lib-provider[data-provider="9"], .lib-provider[data-provider="119"] { --provider-color: #20a6e7; }
+.lib-provider[data-provider="disney"], .lib-provider[data-provider="337"] { --provider-color: #3184e8; }
+.lib-provider[data-provider="hbo"], .lib-provider[data-provider="1899"] { --provider-color: #9970ec; }
+.lib-provider[data-provider="apple"], .lib-provider[data-provider="350"] { --provider-color: #8495a8; }
+.lib-provider[data-provider="hulu"], .lib-provider[data-provider="15"] { --provider-color: #3bba74; }
+.lib-provider[data-provider="paramount"], .lib-provider[data-provider="531"] { --provider-color: #477de9; }
+.lib-provider[data-provider="peacock"], .lib-provider[data-provider="386"] { --provider-color: #d5a02b; }
+.lib-provider[data-provider="crunchyroll"], .lib-provider[data-provider="283"] { --provider-color: #ef7d37; }
+.lib-provider > img, .lib-provider-logo { display: block; flex-shrink: 0; width: 38px; height: 38px; object-fit: contain; border: 1px solid rgba(0,0,0,.05); border-radius: 9px; background: #fff; overflow: hidden; }
+.lib-provider-logo svg { width: 100%; height: 100%; color: var(--provider-color); }
+.lib-provider-name { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.45; }
+.lib-provider-count { font-size: 10px; color: var(--color-fg-subtle); font-weight: 500; }
+.lib-provider:hover { border-color: var(--provider-color); transform: translateY(-2px); }
+.lib-provider[aria-pressed="true"], .lib-provider.active { border-color: var(--provider-color); background: color-mix(in srgb, var(--provider-color) 16%, var(--color-bg-raised)); box-shadow: inset 0 0 0 1px var(--provider-color); }
+.lib-provider[aria-pressed="true"]::after { content: "✓"; margin-left: auto; color: var(--color-fg); font-size: 13px; }
+.lib-provider-empty { display: block; padding: 8px 0; color: var(--color-fg-subtle); font-size: 12px; line-height: 1.6; }
+.lib-provider-catalog .lib-filterrail, .lib-provider-catalog #libFilterToggle,
+.lib-provider-catalog .lib-sort, .lib-provider-catalog .lib-spotlight { display: none; }
+.lib-provider-catalog .lib-layout { grid-template-columns: minmax(0, 1fr); }
+.lib-resultnote h2 { margin: 0 0 6px; color: var(--color-fg); font-size: 25px; line-height: 1.25; font-weight: 750; letter-spacing: -.035em; }
+.lib-resultnote > p { margin: 0; color: var(--color-fg-muted); font-size: 12px; line-height: 1.7; }
+.lib-catalog-badge { position: absolute; z-index: 2; bottom: 9px; left: 9px; right: 9px; display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 29px; padding: 5px 8px; border: 1px solid rgba(196,245,107,.32); border-radius: 7px; background: rgba(6,20,22,.88); color: #d2ff8f; font-size: 10px; font-weight: 650; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
+.lib-catalog-badge svg { width: 12px; height: 12px; }
+button.lib-card { appearance: none; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+
+/* Library totals stay useful without becoming another promotional card. */
+.lib-library-counts { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 18px; padding: 0 0 20px; margin: 0 0 24px; border-bottom: 1px solid var(--color-border-subtle); }
+.lib-library-counts .lib-stats-copy { display: block; margin: 0; }
+.lib-library-counts .lib-stats-copy h2 { font-size: 13px; font-weight: 650; color: var(--color-fg-muted); }
+.lib-library-counts .lib-stats-grid { display: flex; flex-wrap: wrap; gap: 24px; }
+.lib-library-counts .lib-stat-card { display: flex; align-items: baseline; gap: 9px; border: 0; padding: 0; background: transparent; border-radius: 0; }
+.lib-library-counts .lib-stat-card dt { font-size: 10px; letter-spacing: 0; text-transform: none; font-weight: 500; }
+.lib-library-counts .lib-stat-card dd { display: flex; align-items: baseline; gap: 7px; margin: 0; }
+.lib-library-counts .lib-stat-number { display: inline; min-width: 25px; min-height: 20px; margin: 0; font-size: 17px; font-weight: 750; letter-spacing: -.025em; }
+.lib-library-counts .lib-stat-hint { font-size: 9px; margin: 0; }
+.lib-library-counts .lib-stats-unavailable { width: 100%; margin: 0; }
+
+/* Magnet selection is a compact release toolbar, without an introductory card. */
+.lib-magnet-actions { margin: 0 0 24px; padding: 0 0 20px; border: 0; border-bottom: 1px solid var(--color-border-subtle); background: transparent; border-radius: 0; }
+.lib-magnet-actions .lib-bulk-actions { align-items: center; gap: 8px; }
+.lib-magnet-actions .lib-bulk-mode { display: inline-flex; align-items: center; gap: 8px; margin-right: 8px; font-size: 11px; }
+.lib-magnet-actions .lib-bulk-mode select { min-height: 40px; padding-top: 8px; padding-bottom: 8px; font-size: 11px; }
+.lib-magnet-actions .lib-btn { min-height: 40px; padding: 9px 13px; font-size: 11px; }
+.lib-magnet-status, .lib-magnet-actions .lib-bulk-hint { margin: 10px 0 0; color: var(--color-fg-subtle); font-size: 10px; line-height: 1.6; }
+.lib-magnet-actions > .lib-magnet-status { margin: 0 0 12px; }
+.lib-magnet-actions .lib-bulk-intro { display: none; }
+
+/* Usage reflects server-reported values, including an explicit missing state. */
+.lib-usage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 16px 0 0; }
+.lib-usage-grid > div { min-width: 0; padding: 13px; border: 1px solid var(--color-border-subtle); border-radius: 10px; background: var(--color-bg-subtle); }
+.lib-usage-grid dt { color: var(--color-fg-subtle); font-size: 10px; line-height: 1.5; }
+.lib-usage-grid dd { margin: 5px 0 0; color: var(--color-fg); font-size: 18px; font-weight: 650; line-height: 1.3; letter-spacing: -.025em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+@media (max-width: 1000px) {
+  .lib-spotlight { min-height: 380px; padding: 32px; }
+  .lib-spotlight-content { width: 68%; }
+  .lib-spotlight-controls { right: 22px; bottom: 22px; max-width: 32%; }
+  .lib-spotlight-dots { flex-basis: 100%; justify-content: center; }
+  .lib-spotlight-overview, #libSpotlightOverview { font-size: 12px; }
+  .lib-library-counts .lib-stat-hint { display: none; }
+}
+@media (max-width: 680px) {
+  .lib-spotlight { min-height: 435px; padding: 150px 25px 83px; border-radius: 20px; }
+  .lib-spotlight-content { width: 100%; }
+  .lib-spotlight-image { object-position: 60% 25%; }
+  .lib-spotlight::after, .lib-spotlight-shade { background: linear-gradient(0deg, rgba(4,13,22,.98) 0%, rgba(4,13,22,.81) 38%, rgba(4,13,22,.15) 100%), linear-gradient(90deg, rgba(4,13,22,.42), transparent 90%); }
+  .lib-spotlight-title, #libSpotlightTitle { max-width: 540px; font-size: clamp(30px, 6.5vw, 42px); }
+  .lib-spotlight-eyebrow, #libSpotlightLabel { margin-bottom: 9px; font-size: 9px; }
+  .lib-spotlight-meta { margin-top: 12px; font-size: 10px; }
+  .lib-spotlight-overview, #libSpotlightOverview { margin-top: 11px; -webkit-line-clamp: 2; font-size: 12px; }
+  .lib-spotlight-actions { margin-top: 18px; }
+  .lib-spotlight-controls { max-width: calc(100% - 40px); left: 20px; right: auto; bottom: 18px; justify-content: flex-start; gap: 4px; padding: 3px; border-radius: 10px; }
+  .lib-spotlight-dots { flex-basis: auto; padding: 0; }
+  .lib-spotlight-arrow, .lib-spotlight-pause, .lib-spotlight-controls .lib-iconbtn { min-width: 32px; min-height: 34px; height: 34px; padding: 6px; }
+  .lib-spotlight-dots button { height: 34px; }
+  .lib-spotlight.is-loading, .lib-spotlight.is-empty { min-height: 170px; padding: 24px; }
+  .lib-spotlight.is-loading #libSpotlightTitle, .lib-spotlight.is-empty #libSpotlightTitle { font-size: 28px; }
+  .lib-provider-head { align-items: flex-start; gap: 12px; }
+  .lib-provider-head > div { gap: 8px; }
+  #libProviderSearch { width: 165px; }
+  #libProviderRegion { max-width: 140px; }
+  .lib-provider-list, .lib-provider-strip { gap: 8px; }
+  .lib-provider { min-width: 134px; min-height: 61px; gap: 9px; padding: 10px 12px; font-size: 11px; border-radius: 11px; }
+  .lib-provider > img, .lib-provider-logo { width: 33px; height: 33px; border-radius: 8px; }
+  .lib-library-counts { gap: 12px; padding-bottom: 16px; }
+  .lib-library-counts .lib-stats-grid { gap: 16px; }
+  .lib-library-counts .lib-stat-card { gap: 6px; }
+  .lib-magnet-actions .lib-bulk-mode { width: 100%; margin-right: 0; }
+  .lib-magnet-actions .lib-bulk-mode select { flex: 1; min-width: 0; font-size: 13px; }
+}
+@media (max-width: 420px) {
+  .lib-spotlight { min-height: 415px; padding: 140px 20px 83px; border-radius: 17px; }
+  .lib-spotlight-title, #libSpotlightTitle { font-size: clamp(29px, 8vw, 34px); }
+  .lib-spotlight-cta, #libSpotlightOpen { min-height: 42px; padding: 10px 14px; font-size: 11px; }
+  .lib-spotlight-controls { left: 15px; bottom: 16px; max-width: calc(100% - 30px); gap: 2px; }
+  .lib-spotlight-dots button { min-width: 24px; padding: 0 5px; }
+  .lib-provider-head h2 { font-size: 16px; }
+  #libProviderRegion, #libProviderSearch { font-size: 16px; min-height: 40px; }
+  #libProviderSearch { width: 100%; }
+  .lib-provider-head > div:last-child { width: 100%; }
+  .lib-provider-head .lib-provider-controls { display: grid; grid-template-columns: minmax(0, 1fr) 135px; gap: 8px; margin-left: 0; }
+  .lib-provider-controls #libProviderRegion { width: 100%; max-width: none; }
+  .lib-provider-head label { flex: 1; }
+  .lib-provider-head label:has(#libProviderSearch) { flex: 1 1 100%; }
+  .lib-library-counts .lib-stats-copy { display: none; }
+  .lib-library-counts .lib-stats-grid { justify-content: space-between; width: 100%; gap: 10px; }
+  .lib-library-counts .lib-stat-number { font-size: 15px; }
+  .lib-library-counts .lib-stat-card dt { font-size: 9px; }
+  .lib-resultnote h2 { font-size: 22px; }
+}
+@media (hover: none) {
+  .lib-provider:hover, .lib-spotlight-cta:hover, #libSpotlightOpen:hover, .lib-spotlight-actions .lib-btn.primary:hover { transform: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .lib-card:hover, .lib-card:hover .lib-poster img, .lib-discovery-chip:hover { transform: none; }
+  .lib-spotlight-image, .lib-spotlight.is-changing .lib-spotlight-image,
+  .lib-provider:hover, .lib-spotlight-cta:hover, #libSpotlightOpen:hover,
+  .lib-spotlight-actions .lib-btn.primary:hover { transform: none; }
 }

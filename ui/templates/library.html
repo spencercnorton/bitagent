@@ -68,23 +68,35 @@
 
   <!-- ── Browse view ─────────────────────────────────────────────────── -->
   <main class="lib-browse" id="libBrowse" tabindex="-1">
-    <section class="lib-discovery" aria-labelledby="libDiscoveryTitle">
-      <div class="lib-discovery-copy">
-        <span class="lib-discovery-eyebrow"><span aria-hidden="true"></span> A WORLD OF DISCOVERY</span>
-        <h1 id="libDiscoveryTitle">Your next <em>great find.</em></h1>
-        <p>Movies, series, and anime. Find the right release, then grab a magnet for a title, a season, or your own selection.</p>
-        <div class="lib-discovery-shortcuts" aria-label="Quick filters">
-          <span>Jump into</span>
-          <button class="lib-discovery-chip lime" data-lib-quality="V2160p" onclick="toggleFacet('qualities','V2160p')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="5" width="18" height="13" rx="2"/><path d="M8 21h8M12 18v3"/></svg>4K Ultra HD</button>
-          <button class="lib-discovery-chip violet" data-lib-feature="hdr" onclick="toggleFeature('hdr')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="4"/></svg>HDR</button>
-          <button class="lib-discovery-chip coral" data-lib-feature="anime" onclick="toggleFeature('anime')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3z"/></svg>Anime</button>
-        </div>
+    <section class="lib-spotlight is-loading" id="libSpotlight" aria-label="Featured movies and series" aria-roledescription="carousel">
+      <img class="lib-spotlight-image" id="libSpotlightImage" alt="" decoding="async" fetchpriority="high" hidden>
+      <div class="lib-spotlight-content">
+        <span class="lib-spotlight-eyebrow" id="libSpotlightLabel">IN THE SPOTLIGHT</span>
+        <h1 class="lib-spotlight-title" id="libSpotlightTitle">Loading the spotlight…</h1>
+        <div class="lib-spotlight-meta" id="libSpotlightMeta"></div>
+        <p class="lib-spotlight-overview" id="libSpotlightOverview"></p>
+        <div class="lib-spotlight-actions"><button class="lib-spotlight-cta primary" id="libSpotlightOpen" onclick="openSpotlightTitle()" hidden>Find releases <span aria-hidden="true">↗</span></button></div>
       </div>
+      <div class="lib-spotlight-controls" id="libSpotlightControls" hidden>
+        <button class="lib-spotlight-arrow" onclick="moveSpotlight(-1)" aria-label="Previous featured title">‹</button>
+        <div class="lib-spotlight-dots" id="libSpotlightDots" aria-label="Choose featured title"></div>
+        <button class="lib-spotlight-arrow" onclick="moveSpotlight(1)" aria-label="Next featured title">›</button>
+        <button class="lib-spotlight-pause" id="libSpotlightPause" onclick="toggleSpotlightPause()" aria-label="Pause featured title rotation">Ⅱ</button>
+      </div>
+    </section>
+    <section class="lib-providers" aria-labelledby="libProviderTitle">
+      <div class="lib-provider-head"><div><span class="lib-drawer-eyebrow">Browse by service</span><h2 id="libProviderTitle">A world of entertainment.</h2></div>
+        <div class="lib-provider-controls"><input id="libProviderSearch" type="search" placeholder="Find a provider…" aria-label="Find a provider" oninput="filterProviders()"><select id="libProviderRegion" aria-label="Provider country" onchange="changeProviderRegion(this.value)"><option value="US">United States</option></select></div>
+      </div>
+      <div class="lib-provider-list" id="libProviders" aria-label="Streaming providers"></div>
+      <p class="lib-provider-note" id="libProviderStatus" role="status">Loading streaming providers…</p>
+      <p class="lib-provider-attribution">Provider availability powered by <a href="https://www.justwatch.com/" target="_blank" rel="noopener">JustWatch</a> via <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>.</p>
+    </section>
     {% if show_library_stats %}
-    <section class="lib-stats-banner" aria-labelledby="libStatsTitle">
+    <section class="lib-stats-banner lib-library-counts" aria-labelledby="libStatsTitle">
       <div class="lib-stats-copy">
         <span class="lib-stats-eyebrow">Library snapshot</span>
-        <h2 id="libStatsTitle">Always something to discover.</h2>
+        <h2 id="libStatsTitle">The library, right now.</h2>
       </div>
       <dl class="lib-stats-grid" id="libStatsGrid" aria-busy="true">
         <div class="lib-stat-card">
@@ -110,7 +122,6 @@
       </p>
     </section>
     {% endif %}
-    </section>
 
     <div class="lib-browse-toolbar">
       <nav class="lib-browse-nav" aria-label="Browse the library">
@@ -256,6 +267,19 @@
       </section>
 
       <section class="lib-account-section stack">
+        <div class="lib-section-head compact"><h3>Your activity</h3><span class="count">All time</span></div>
+        <dl class="lib-usage-grid" id="acctUsage" aria-busy="true">
+          <div><dt>Downloaded</dt><dd id="acctDownloaded">—</dd></div>
+          <div><dt>Uploaded</dt><dd id="acctUploaded">—</dd></div>
+          <div><dt>Grabs</dt><dd id="acctGrabs">—</dd></div>
+          <div><dt>Hit &amp; runs</dt><dd id="acctHitAndRuns">—</dd></div>
+          <div><dt>API searches</dt><dd id="acctApiSearches">—</dd></div>
+          <div><dt>Ratio</dt><dd id="acctRatio">—</dd></div>
+        </dl>
+        <p class="lib-account-hint" id="acctUsageHint">Loading activity…</p>
+      </section>
+
+      <section class="lib-account-section stack">
         <div class="lib-section-head compact">
           <h3>API Key</h3>
           <span class="count" id="acctKeyStatus">Loading</span>
@@ -318,6 +342,7 @@
 <script src="/static/js/library-tools.js?v={{ asset_version }}"></script>
 <script src="/static/js/library.js?v={{ asset_version }}"></script>
 <script src="/static/js/library-next.js?v={{ asset_version }}"></script>
+<script src="/static/js/library-discovery.js?v={{ asset_version }}"></script>
 {% if app_switcher_script_url %}
 <!-- Optional shared app switcher (APP_SWITCHER_SCRIPT_URL). data-me: this app
      exposes the verified privilege as `priv` on /api/me, and that check must

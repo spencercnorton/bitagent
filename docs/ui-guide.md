@@ -85,16 +85,33 @@ features in Filters. On smaller screens the Filters button opens these controls.
 Active filters appear above results; remove one chip or choose Clear all.
 The URL preserves search, filters, sorting, and the current page for sharing.
 
+The spotlight rotates artwork from popular and newly released movies and shows.
+Pause it or select a title with the arrow/dot controls. Keyboard focus, pointer
+hover, off-screen/hidden pages, and reduced-motion preferences pause rotation.
+**Find releases** checks the exact title identity against the index.
+
+Choose a streaming service under **Browse by service**, or search for its name.
+Select your country, then use the main search and Movies/Series tabs to navigate
+that provider's catalogue. These titles come from TMDB with JustWatch provider
+availability; open a title to check for indexed releases. Provider catalogues
+include subscription, free, ad-supported, rental, and purchase availability.
+Provider-specific text search checks each candidate's regional availability;
+empty filtered pages can still have a next page, and failed checks are disclosed
+as partial results. Provider/country/search/page state is shareable in the URL.
+Artwork and provider discovery require the operator's own `TMDB_API_KEY`; if
+metadata is unavailable, normal indexed-library search continues to work.
+
 Open a title to inspect releases and seasons. Every release has a checkbox,
 **Copy** magnet action, and **Open** link for the system's torrent client.
-**Select title**, **Select show**, and **Select active season** add releases to
-the magnet collection using the current quality/source filters. Recommended
+**Copy title magnets**, **Copy show magnets**, and **Copy season magnets** copy
+links directly using the current quality/source filters. Recommended
 selection favors packs and seed counts; **All matching versions** retains
 alternate releases. Filename parsing cannot establish that a pack is complete,
 and overlapping packs may include duplicate episodes. Review the selected
-release names before copying them.
+release names before copying them. A direct copy is bounded to 1,000 links;
+partial selections are disclosed.
 
-The **Magnets** button opens the collection, including links selected from
+Release checkboxes and the **Magnets** button support a custom collection, including links selected from
 different titles. Remove individual releases, copy the newline-separated
 magnet list, save a `.txt` file, or expand View magnet links for manual copying.
 Each line identifies one torrent; a list of links is not a new combined torrent.
@@ -107,3 +124,11 @@ available indexed releases and do not guarantee a whole season or show.
 Closing or switching the title cancels the pending scan. Metadata failure does
 not prevent using loaded releases. Motion respects the browser preference,
 and dialogs contain keyboard focus and restore it on close.
+
+The account sidebar shows all-time aggregate activity since tracking began.
+**Grabs** counts magnet links successfully copied or passed to open/export
+actions; repeated actions count again. **API searches** counts successful
+authenticated Torznab search feeds. These counts survive API-key rotation and
+store no release names, hashes, URLs, or keys. Downloaded/uploaded bytes,
+ratio, and hit-and-run totals require client or tracker reporting, so unavailable
+values appear as **Not reported** rather than inferred transfers or zeroes.

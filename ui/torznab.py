@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import logging
 import time
+import xml.etree.ElementTree as ET
 
 import httpx
 from fastapi import APIRouter, Request, Response
 
 from config import settings
+from account_usage import record_api_search
 from database import (
     _hash_user_api_key,
     get_override,
@@ -88,6 +90,36 @@ def _core_torznab_url(path: str) -> str:
 # a forwarded "../graphql" would have reached the core's other endpoints with
 # the operator key attached.
 _TORZNAB_PATHS = {"", "api"}
+_SEARCH_FUNCTIONS = {"search", "movie", "tvsearch", "music", "book"}
+
+
+class _SearchFeedTree(ET.TreeBuilder):
+    def doctype(self, name, pubid, system):
+        raise ValueError("Search feeds must not contain a DTD")
+
+
+def _successful_search(request: Request, upstream) -> bool:
+    """HTTP 200 may contain a Torznab <error>, so require a real search feed."""
+    functions = request.query_params.getlist("t")
+    if (
+        request.method != "GET"
+        or not functions
+        or functions[0] not in _SEARCH_FUNCTIONS
+        or upstream.status_code != 200
+    ):
+        return False
+    body = upstream.content
+    # The core emits plain RSS. Do not resolve DTD/entity declarations while
+    # checking a response, and never treat malformed XML as a successful search.
+    try:
+        root = ET.fromstring(body, parser=ET.XMLParser(target=_SearchFeedTree()))
+    except (ET.ParseError, ValueError):
+        return False
+    return (
+        root.tag.rsplit("}", 1)[-1] == "rss"
+        and any(child.tag.rsplit("}", 1)[-1] == "channel" for child in root)
+        and not any(node.tag.rsplit("}", 1)[-1] == "error" for node in root.iter())
+    )
 
 
 @router.api_route("/torznab/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
@@ -133,10 +165,18 @@ async def torznab_proxy(path: str, request: Request):
                 headers=headers,
             )
     except httpx.HTTPError as exc:
-        logger.warning("torznab proxy failed: %s", exc)
+        # HTTP exception strings may contain the upstream URL and injected key.
+        logger.warning("torznab proxy failed (%s)", type(exc).__name__)
         return _torznab_error(502, 900, "Upstream Torznab request failed")
 
     await touch_user_api_key(row["id"])
+    if _successful_search(request, upstream):
+        try:
+            await record_api_search(row["user_id"])
+        except Exception as exc:
+            # Usage accounting must not turn a successful indexer response into
+            # a failed client request. No URLs, keys or search terms are logged.
+            logger.warning("account usage recording failed (%s)", type(exc).__name__)
     out_headers = {}
     content_type = upstream.headers.get("content-type")
     if content_type:
