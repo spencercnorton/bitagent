@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     # Optional peer network allowlist (for a member VPN deployment). The seed
     # client firewall must enforce the same boundary on BitTorrent peer ports.
     private_peer_cidrs: str = ""
+    # Optionally bind tracker credentials to a freshly approved address owned
+    # by the same SSO identity, using the seed management snapshot endpoint.
+    private_peer_bindings_required: bool = False
     # Proxy identity is accepted only from these transport-peer CIDRs. Uvicorn
     # proxy-header rewriting must stay disabled so Request.client is the peer,
     # not a client-controlled X-Forwarded-For value.

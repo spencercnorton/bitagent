@@ -32,6 +32,7 @@ from auth import require_auth, proxy_provenance_valid
 from config import settings
 from database import get_db, get_user_api_key, lookup_user_api_key, _hash_user_api_key
 from deps import require_operator, _configured_hosts
+import privatebindings
 
 router = APIRouter()
 _WRITE_LOCK = asyncio.Lock()
@@ -98,6 +99,7 @@ async def private_write():
 
 
 def validate_settings():
+    privatebindings.validate_settings()
     if not settings.private_indexer_enabled:
         return
     if not settings.require_auth:
@@ -331,6 +333,7 @@ def _ready_cutoff():
 
 async def reset_readiness():
     """Require a fresh seed probe after every enabled application startup."""
+    privatebindings.reset()
     if settings.private_indexer_enabled:
         async with private_write() as db:
             await db.execute("UPDATE private_releases SET ready=0,verified_at=NULL")
@@ -418,6 +421,7 @@ async def refresh_readiness():
 
 def start_readiness_worker():
     global _READINESS_TASK
+    privatebindings.start()
     if not settings.private_indexer_enabled:
         return
     async def refresh_loop():
@@ -434,6 +438,7 @@ def start_readiness_worker():
 
 async def stop_readiness_worker():
     global _READINESS_TASK
+    await privatebindings.stop()
     if _READINESS_TASK:
         _READINESS_TASK.cancel()
         try:
@@ -568,10 +573,11 @@ async def search_releases(params) -> dict:
     for row in rows:
         item = {k: row[k] for k in ("id", "source_id", "title", "kind", "info_hash", "size", "created_at")}
         item.update(json.loads(row["metadata"]))
-        peers = await db.execute_fetchall("""SELECT p.remaining FROM private_peers p
+        peers = await db.execute_fetchall("""SELECT p.remaining,p.ip,p.user_id FROM private_peers p
             JOIN user_api_keys k ON k.id=p.api_key_id AND k.revoked_at IS NULL
             JOIN private_members m ON m.user_id=p.user_id AND m.active=1
             WHERE p.release_id=? AND p.updated_at>?""", (row["id"], time.time()-_PEER_TTL))
+        peers = [p for p in peers if privatebindings.matches(p["ip"], p["user_id"])]
         item["seeders"] = sum(p["remaining"] == 0 for p in peers)
         item["leechers"] = sum(p["remaining"] > 0 for p in peers)
         items.append(item)
@@ -762,6 +768,7 @@ async def announce(passkey: str, request: Request):
             raise ValueError("Retired tracker credential")
         info_hash, peer_id, counters, event, numwant = _announce_params(request)
         ip = _peer_ip(request)
+        privatebindings.require_match(ip, row["user_id"])
         releases = await db.execute_fetchall("SELECT id,size FROM private_releases WHERE info_hash=? AND ready=1 AND withdrawn=0 AND verified_at>?", (info_hash, _ready_cutoff()))
         if not releases:
             raise ValueError("Torrent unavailable")
@@ -775,6 +782,16 @@ async def announce(passkey: str, request: Request):
             raise ValueError("Rate limit exceeded")
         now = time.time()
         async with private_write() as db:
+            # A queued writer may outlive the snapshot checked above. Recheck
+            # after taking the write transaction and before any observation.
+            privatebindings.require_match(ip, row["user_id"])
+            if settings.private_peer_bindings_required:
+                current = await db.execute_fetchall("""SELECT k.id FROM user_api_keys k
+                    JOIN private_members m ON m.user_id=k.user_id AND m.active=1
+                    WHERE k.id=? AND k.user_id=? AND k.key_hash=? AND k.revoked_at IS NULL""",
+                    (row["id"], row["user_id"], row["source_key_hash"]))
+                if not current:
+                    raise ValueError("Retired tracker credential")
             # Bound persistent peer rows even for an approved member rotating
             # peer IDs. Normal clients use one ID per torrent.
             active = await db.execute_fetchall("SELECT count(*) n FROM private_peers WHERE release_id=? AND user_id=? AND updated_at>?", (release_id, row["user_id"], now-_PEER_TTL))
@@ -783,12 +800,17 @@ async def announce(passkey: str, request: Request):
             if not previous and active[0]["n"] >= 10:
                 raise ValueError("Peer limit exceeded")
             prior = dict(previous[0]) if previous else None
-            # First observation/session restart establishes a baseline. Never
-            # credit lifetime client counters, negative resets, or seed handoffs.
-            continuing = bool(prior and prior["api_key_id"] == row["id"] and prior["updated_at"] > now-_PEER_TTL and event != "started")
-            uploaded = max(0, counters["uploaded"]-prior["uploaded"]) if continuing else 0
-            downloaded = max(0, counters["downloaded"]-prior["downloaded"]) if continuing else 0
+            # First/new-key/expired observations establish a baseline. The same
+            # active peer keeps a high-water mark even for repeated started
+            # events: a delayed report cannot lower it and re-credit old bytes.
+            # A stop, new peer ID/key, or expiry opens a new counter epoch.
+            continuing = bool(prior and prior["api_key_id"] == row["id"] and prior["updated_at"] > now-_PEER_TTL)
+            high_uploaded = max(counters["uploaded"], prior["uploaded"]) if continuing else counters["uploaded"]
+            high_downloaded = max(counters["downloaded"], prior["downloaded"]) if continuing else counters["downloaded"]
+            uploaded = high_uploaded-prior["uploaded"] if continuing else 0
+            downloaded = high_downloaded-prior["downloaded"] if continuing else 0
             completed = int(bool(continuing and event == "completed" and prior["remaining"] > 0 and not prior["completed"]))
+            privatebindings.require_match(ip, row["user_id"])
             await db.execute("""INSERT INTO private_transfer_totals(user_id,release_id,uploaded,downloaded,completed)
                 VALUES (?,?,?,?,?) ON CONFLICT(user_id,release_id) DO UPDATE SET
                 uploaded=min(9223372036854775807,uploaded+excluded.uploaded),
@@ -798,13 +820,17 @@ async def announce(passkey: str, request: Request):
                 await db.execute("DELETE FROM private_peers WHERE release_id=? AND user_id=? AND peer_id=?", (release_id, row["user_id"], peer_id))
             else:
                 await db.execute("""INSERT OR REPLACE INTO private_peers VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                    (release_id,row["user_id"],row["id"],peer_id,ip,counters["port"],counters["uploaded"],counters["downloaded"],counters["left"],
+                    (release_id,row["user_id"],row["id"],peer_id,ip,counters["port"],high_uploaded,high_downloaded,counters["left"],
                      int(completed or (continuing and prior["completed"])), now))
             await db.execute("DELETE FROM private_peers WHERE updated_at<?", (now-_PEER_TTL,))
             peers = await db.execute_fetchall("""SELECT p.* FROM private_peers p
                 JOIN user_api_keys k ON k.id=p.api_key_id AND k.revoked_at IS NULL
                 JOIN private_members m ON m.user_id=p.user_id AND m.active=1
                 WHERE p.release_id=? AND p.updated_at>? LIMIT 10000""", (release_id, now-_PEER_TTL))
+            # Expiry/revocation during awaited database I/O rolls the whole
+            # observation back instead of committing a partially stale claim.
+            privatebindings.require_match(ip, row["user_id"])
+        peers = [p for p in peers if privatebindings.matches(p["ip"], p["user_id"])]
         peers4, peers6, count = bytearray(), bytearray(), 0
         for peer in peers:
             if (peer["user_id"] == row["user_id"] and peer["peer_id"] == peer_id) or count >= numwant:
@@ -822,18 +848,56 @@ async def announce(passkey: str, request: Request):
     return Response(bencode(result), media_type="text/plain", headers={"Cache-Control": "no-store"})
 
 
+async def _transfer_summary(db, where, args):
+    fields = ("uploaded", "downloaded", "completed", "issued")
+    aggregates = ",".join(f"coalesce(sum({name}),0) AS {name}" for name in fields)
+    try:
+        rows = await db.execute_fetchall(
+            "SELECT count(*) AS total_items," + aggregates + " FROM private_transfer_totals t" + where, args,
+        )
+        return dict(rows[0])
+    except aiosqlite.OperationalError as error:
+        if str(error) != "integer overflow":
+            raise
+    # Individual stored counters fit SQLite integers, but their account sum
+    # may not. Preserve exact bytes with Python integers and bounded batches.
+    totals = {name: 0 for name in (*fields, "total_items")}
+    async with db.execute("SELECT " + ",".join(fields) + " FROM private_transfer_totals t" + where, args) as cursor:
+        while batch := await cursor.fetchmany(1000):
+            totals["total_items"] += len(batch)
+            for row in batch:
+                for name in fields:
+                    totals[name] += row[name]
+    return totals
+
+
 async def _metrics(user_id: str | None):
     args = () if user_id is None else (user_id,)
     where = "" if user_id is None else " WHERE t.user_id=?"
-    rows = await (await get_db()).execute_fetchall("""SELECT t.*,r.title,r.info_hash FROM private_transfer_totals t
-        JOIN private_releases r ON r.id=t.release_id""" + where + " ORDER BY t.user_id,r.title LIMIT 1000", args)
+    # Initialize the schema/WAL first. A dedicated read transaction pins both
+    # queries (including aggregate overflow fallback) to the same snapshot,
+    # without placing BEGIN on the app's shared writer connection.
+    await get_db()
+    async with aiosqlite.connect(settings.db_path, timeout=5) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA query_only=ON")
+        await db.execute("BEGIN")
+        try:
+            summary = await _transfer_summary(db, where, args)
+            rows = await db.execute_fetchall("""SELECT t.*,r.title,r.info_hash FROM private_transfer_totals t
+                JOIN private_releases r ON r.id=t.release_id""" + where + " ORDER BY t.user_id,r.title LIMIT 1000", args)
+        finally:
+            await db.rollback()
     items = []
     for row in rows:
         item = dict(row)
         item["ratio"] = row["uploaded"] / row["downloaded"] if row["downloaded"] else None
         items.append(item)
+    total_items = summary.pop("total_items")
+    summary["ratio"] = summary["uploaded"] / summary["downloaded"] if summary["downloaded"] else None
     return {"source": "client-reported tracker observations", "issuedMeaning": "credentialed torrent/magnet requests, not completed downloads",
-            "items": items, "limit": 1000}
+            "items": items, "limit": 1000, "totals": summary, "totalItems": total_items,
+            "itemsTruncated": total_items > len(items)}
 
 
 @router.get("/api/account/private/metrics")

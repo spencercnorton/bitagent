@@ -25,6 +25,7 @@ These settings are startup-only and cannot be changed through the settings API:
 | `PRIVATE_SEED_VERIFICATION_TTL` | Freshness window, default 1800 seconds, permitted range 60–86400. |
 | `PRIVATE_TRACKER_RATE_LIMIT_PER_MIN` | Per-member announce limit, default 10000; size for the seed corpus and its 15-minute cadence. |
 | `PRIVATE_PEER_CIDRS` | Optional explicit peer network allowlist for a member VPN. |
+| `PRIVATE_PEER_BINDINGS_REQUIRED` | Defaults to `false`; require a fresh approved IPv4-to-SSO mapping for tracker announces. |
 
 Preserve the existing trusted proxy CIDRs and proof boundary. The proxy must
 overwrite `X-BitAgent-Peer-IP` with the original client's address and inject
@@ -52,6 +53,51 @@ activity. Only the operator can read all members' activity.
 Suspending membership revokes its indexer keys and removes tracker peers;
 reapproval requires a new key. Key rotation also revokes earlier tracker
 credentials. Neither action terminates already-established peer connections.
+
+### Optional tracker address ownership
+
+Enable `PRIVATE_PEER_BINDINGS_REQUIRED` only when the seed management boundary
+provides the authenticated `GET /_bitagent/peer-bindings` endpoint. In this mode,
+`PRIVATE_SEEDER_URL` must be an HTTPS origin with a valid server certificate,
+and the configured seed session credentials must cover this endpoint. The UI
+uses the existing qBittorrent login and a fresh applicable session cookie;
+it never follows redirects or environment HTTP proxies.
+
+The endpoint must derive bindings from currently approved devices and active
+SSO membership. It returns `application/json`, no more than 256 KiB or 1000
+bindings, with this versioned shape:
+
+```json
+{"version":1,"issued_at":1900000000,"expires_at":1900000030,"bindings":[{"user_id":"example-member","address":"192.0.2.1"}]}
+```
+
+The timestamps are Unix seconds from the successful authority observation;
+expiry must be no more than 30 seconds after issuance. Return each canonical
+IPv4 address once, with its exact SSO identity. One member may own several
+approved device addresses. Restrict this read-only endpoint to the original
+seed management service; reject missing/invalid sessions and stale permission
+state. Its authorization must be independent of tracker announces and torrent
+readiness to avoid a bootstrap cycle.
+
+The UI refreshes the small snapshot separately from seed catalog verification,
+with a five-second total request bound and a three-second refresh interval.
+Startup begins without trusted addresses. Failed or cancelled observations
+withdraw cached trust immediately. Absolute source expiry becomes a monotonic
+deadline, and replayed observations cannot extend it or restore trust after a
+failure. Keep both hosts' clocks synchronized; future-issued observations are
+rejected.
+
+Before recording an announce, the tracker requires the effective client IPv4
+to belong to the passkey owner's SSO identity. Peers and seed/leecher counts
+are filtered through the same current mappings. Membership and API-key
+revocation remain independent checks. Preserve the trusted proxy's original
+source address; an ordinary forwarded chain or caller-supplied `ip` parameter
+does not establish ownership.
+
+This binds tracker attribution to an approved device address. It does not
+measure transferred bytes, prevent sharing between approved members, or stop
+already-connected peers. Client counters remain self-reported. Enforce data
+network access and permission expiry at the VPN/client firewall as well.
 
 ## Prepare genuine torrents
 
@@ -186,8 +232,21 @@ Public DHT clients should remain separate. An application CIDR check cannot
 replace the seed client's firewall or prevent an approved member forwarding files.
 
 Metrics distinguish issued links from client-reported uploaded/downloaded byte
-deltas and completion events. First observations establish a baseline; resets,
-restarts and duplicate completion events do not inflate totals. Ratios are
+deltas and completion events. First observations establish a baseline. Each
+active peer and key retains its highest upload and download counters; lower,
+duplicate or repeated `started` reports cannot lower that baseline. A `stopped`
+event removes the peer. A later observation after a stop, peer expiry, a new
+peer ID or a key change establishes a new baseline without crediting lifetime
+bytes. Clients resetting counters with the same still-active peer ID should
+stop first or use a new peer ID. A reset without an observable session boundary
+can miss bytes until counters exceed the previous high-water mark; the tracker
+cannot distinguish it from a delayed report. Duplicate completion events in
+an active session do not increase its completion count.
+
+The metrics API's `totals` covers all stored rows for the authorized account
+(all accounts for an operator). `items` retains the 1,000-row display limit;
+`totalItems` and `itemsTruncated` disclose that list's completeness. Account
+totals must come from `totals`, rather than summing the display list. Ratios are
 null until downloaded bytes are observed. These are operational observations,
 not independently verified delivery or billing measurements. Public DHT swarm
 transfers are outside this tracker and cannot be attributed to website members.

@@ -95,7 +95,7 @@ def _restore_settings():
         "private_indexer_enabled", "private_indexer_secret", "private_indexer_url",
         "private_seeder_url", "private_seeder_username", "private_seeder_password",
         "private_seed_verification_ttl", "private_tracker_rate_limit_per_min",
-        "private_peer_cidrs",
+        "private_peer_cidrs", "private_peer_bindings_required",
         # Integration creds — route tests mutate these to exercise the
         # configured/unconfigured branches; restore so order can't leak state.
         "sonarr_base_url", "sonarr_api_key",
