@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import stat
+import sqlite3
 
 import pytest
 
@@ -67,11 +68,11 @@ def test_output_owner_only_and_rehash_detects_changed_source(tmp_path):
     source = write(root, "Synthetic.mkv", b"synthetic original")
     output = tmp_path / "prepared"
     data = inventory(["Synthetic.mkv"])
-    catalog = publisher.publish_offline(data, root, ANNOUNCE, output, PIECE)
+    report = publisher.publish_offline(data, root, ANNOUNCE, output, PIECE)
     assert stat.S_IMODE(output.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(file.stat().st_mode) == 0o600 for file in output.iterdir())
     assert publisher.verify_offline(data, root, output) == 1
-    assert catalog["releases"][0]["seed_verified"] is False
+    assert report["seed_verified"] is False
     source.write_bytes(b"synthetic modified")
     with pytest.raises(metainfo.TorrentError, match="no longer match"):
         publisher.verify_offline(data, root, output)
@@ -205,13 +206,15 @@ def test_tampered_catalog_hash_and_artifact_are_rejected(tmp_path):
     data = inventory(["synthetic.mkv"])
     output = tmp_path / "prepared"
     publisher.publish_offline(data, root, ANNOUNCE, output, PIECE)
-    catalog = json.loads((output / "catalog.json").read_bytes())
+    index = json.loads((output / "catalog-index.json").read_bytes())
+    shard = output / index["shards"][0]["file"]
+    catalog = json.loads(shard.read_bytes())
     catalog["releases"][0]["info_hash"] = "f" * 40
-    (output / "catalog.json").write_text(json.dumps(catalog))
-    with pytest.raises(metainfo.TorrentError, match="hash or size"):
+    shard.write_text(json.dumps(catalog))
+    with pytest.raises(metainfo.TorrentError, match="(hash or size|missing from its checkpoint)"):
         publisher.verify_offline(data, root, output)
     catalog["releases"][0]["metainfo_base64"] = base64.b64encode(b"other").decode()
-    (output / "catalog.json").write_text(json.dumps(catalog))
+    shard.write_text(json.dumps(catalog))
     with pytest.raises(metainfo.TorrentError, match="differs from its artifact"):
         publisher.verify_offline(data, root, output)
 
@@ -234,3 +237,359 @@ def test_catalog_import_batches_are_bounded_and_keep_all_releases():
     assert [item for batch in batches for item in batch["releases"]] == items
     with pytest.raises(metainfo.TorrentError, match="too large"):
         publisher.catalog_batches({"releases": [{"metainfo_base64": "x" * publisher.MAX_IMPORT_BYTES}]})
+
+
+def test_streaming_batches_cover_more_than_one_hundred_thousand_identities():
+    produced = 0
+    def items():
+        nonlocal produced
+        for number in range(120_001):
+            produced += 1
+            yield {"source_id": f"synthetic-{number}", "title": "Synthetic media", "kind": "episode"}
+    iterator = publisher.iter_catalog_batches(items())
+    first = next(iterator)
+    assert len(first["releases"]) == 1000
+    assert produced == 1001  # a single lookahead, not the full inventory
+    count = len(first["releases"])
+    shards = 1
+    for batch in iterator:
+        assert 1 <= len(batch["releases"]) <= 1000
+        assert len(json.dumps(batch).encode()) <= publisher.MAX_IMPORT_BYTES
+        count += len(batch["releases"])
+        shards += 1
+    assert count == 120_001 and shards == 121
+
+
+def test_inventory_validation_supports_real_metadata_minimum_without_media_io():
+    releases = [{"source_id": f"synthetic-{n}", "title": "Synthetic", "kind": "episode", "files": ["synthetic.mkv"]} for n in range(120_001)]
+    assert len(publisher._inventory({"version": 1, "releases": releases})) == 120_001
+
+
+def test_checkpoint_resume_reuses_only_unchanged_source_fingerprints(tmp_path, monkeypatch):
+    root = tmp_path / "media"
+    root.mkdir()
+    source = write(root, "synthetic.mkv", b"original")
+    output = tmp_path / "prepared"
+    data = inventory(["synthetic.mkv"])
+    first = publisher.publish_offline(data, root, ANNOUNCE, output, PIECE)
+    assert first["hashes_built"] == 1
+    assert not (output / "catalog.json").exists()
+    original_builder = publisher.build_private_torrent
+    calls = 0
+    def builder(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_builder(*args, **kwargs)
+    monkeypatch.setattr(publisher, "build_private_torrent", builder)
+    second = publisher.publish_offline(data, root, ANNOUNCE, output, PIECE, resume=True)
+    assert calls == 0 and second["cache_reused"] == 1
+    old = source.stat()
+    source.write_bytes(b"changed!")
+    os.utime(source, ns=(old.st_atime_ns, old.st_mtime_ns))
+    third = publisher.publish_offline(data, root, ANNOUNCE, output, PIECE, resume=True)
+    assert calls == 1 and third["hashes_built"] == 1
+    assert publisher.verify_offline(None, root, output) == 1
+
+
+def test_interrupted_source_keeps_hash_checkpoint_without_publishing_complete_index(tmp_path, monkeypatch):
+    root = tmp_path / "media"
+    root.mkdir()
+    write(root, "synthetic.mkv", b"synthetic")
+    output = tmp_path / "prepared"
+    release = inventory(["synthetic.mkv"])["releases"][0]
+    def interrupted():
+        yield release
+        raise metainfo.TorrentError("synthetic source interruption")
+    with pytest.raises(metainfo.TorrentError, match="source interruption"):
+        publisher.publish_stream(interrupted(), root, ANNOUNCE, output, PIECE)
+    assert not (output / "catalog-index.json").exists()
+    assert (output / ".publisher.lock").exists()  # flock releases automatically, including process crashes
+    monkeypatch.setattr(publisher, "build_private_torrent", lambda *a, **kw: pytest.fail("resume rehashed unchanged media"))
+    report = publisher.publish_stream(iter([release]), root, ANNOUNCE, output, PIECE, resume=True)
+    assert report["completeness"] == "complete" and report["cache_reused"] == 1
+
+
+def test_missing_files_are_audited_and_never_claim_complete_inventory(tmp_path):
+    root = tmp_path / "media"
+    root.mkdir()
+    output = tmp_path / "prepared"
+    report = publisher.publish_offline(inventory(["absent.mkv"]), root, ANNOUNCE, output, PIECE)
+    assert report["completeness"] == "incomplete"
+    assert report["release_count"] == 0 and report["rejected"] == 1
+    audit = [json.loads(line) for line in (output / report["audit"]).read_text().splitlines()]
+    assert audit[-1]["source_id"] == "synthetic-1" and audit[-1]["status"] == "rejected"
+
+
+def test_corrupt_checkpoint_artifact_is_rejected_instead_of_reused(tmp_path):
+    root = tmp_path / "media"
+    root.mkdir()
+    write(root, "synthetic.mkv", b"synthetic")
+    output = tmp_path / "prepared"
+    data = inventory(["synthetic.mkv"])
+    first = publisher.publish_offline(data, root, ANNOUNCE, output, PIECE)
+    shard = json.loads((output / first["shards"][0]["file"]).read_bytes())
+    (output / shard["releases"][0]["torrent_file"]).write_bytes(b"invalid")
+    report = publisher.publish_offline(data, root, ANNOUNCE, output, PIECE, resume=True)
+    assert report["cache_reused"] == 0 and report["rejected"] == 1
+
+
+def test_optional_full_catalog_is_explicit(tmp_path):
+    write(tmp_path, "synthetic.mkv", b"synthetic")
+    output = tmp_path / "prepared"
+    publisher.publish_offline(inventory(["synthetic.mkv"]), tmp_path, ANNOUNCE, output, PIECE, full_catalog=True)
+    assert (output / "catalog.json").exists()
+
+
+def test_streamed_plex_records_audit_every_empty_or_unmapped_asset(tmp_path, monkeypatch):
+    write(tmp_path, "TV/Synthetic/Season 1/01.mkv", b"synthetic episode")
+    responses = [
+        {"MediaContainer": {"Directory": [{"key": "2", "type": "show"}]}},
+        {"MediaContainer": {"totalSize": 2, "Metadata": [{"type": "show", "ratingKey": "500", "title": "Synthetic"}, {"type": "show", "ratingKey": "600", "title": "Empty show"}]}},
+        {"MediaContainer": {"totalSize": 3, "Metadata": [{"type": "season", "ratingKey": "501", "parentRatingKey": "500", "index": 1}, {"type": "season", "ratingKey": "502", "parentRatingKey": "500", "index": 2}, {"type": "season", "ratingKey": "601", "parentRatingKey": "600", "index": 1}]}},
+        {"MediaContainer": {"totalSize": 2, "Metadata": [plex_episode(1, "/plex/Synthetic/Season 1/01.mkv", 2001), plex_episode(2, "/unmapped/02.mkv", 2002)]}},
+    ]
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, limit): return json.dumps(responses.pop(0)).encode()
+    class Opener:
+        def open(self, request, timeout): return Response()
+    monkeypatch.setattr(publisher, "build_opener", lambda *handlers: Opener())
+    releases = publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path, [("/plex", "TV")])
+    report = publisher.publish_stream(releases, tmp_path, ANNOUNCE, tmp_path / "prepared", PIECE)
+    assert report["metadata_counts"] == {"show": 2, "season": 3, "episode": 2}
+    assert report["emitted_counts"] == {"episode": 1}
+    assert report["rejected_counts"] == {"episode": 1, "season": 3, "show": 2}
+    assert report["completeness"] == "incomplete" and report["rejected"] == 6
+    assert report["release_count"] + report["rejected"] == sum(report["metadata_counts"].values())
+
+
+def test_pack_spanning_approved_subtrees_uses_actual_common_root(tmp_path):
+    root = tmp_path / "library"
+    root.mkdir()
+    write(root, "drive-a/Synthetic/01.mkv", b"one")
+    write(root, "drive-b/Synthetic/02.mkv", b"two")
+    files = ["drive-a/Synthetic/01.mkv", "drive-b/Synthetic/02.mkv"]
+    _, seeding, artifacts = publisher.prepare_catalog(inventory(files, "show"), root, ANNOUNCE, PIECE)
+    meta = metainfo.parse_metainfo(next(iter(artifacts.values())))
+    assert meta["info"]["name"] == b"library"
+    assert seeding["releases"][0]["save_parent_of_root"] is True
+    for mapping in seeding["releases"][0]["files"]:
+        assert (root.parent / "/".join(mapping["torrent_path"])).read_bytes() == (root / mapping["source_path"]).read_bytes()
+
+
+def test_live_output_lock_prevents_concurrent_publisher(tmp_path):
+    import fcntl
+    write(tmp_path, "synthetic.mkv", b"synthetic")
+    output = tmp_path / "prepared"
+    data = inventory(["synthetic.mkv"])
+    publisher.publish_offline(data, tmp_path, ANNOUNCE, output, PIECE)
+    with (output / ".publisher.lock").open("r+") as holder:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(metainfo.TorrentError, match="another publisher"):
+            publisher.publish_offline(data, tmp_path, ANNOUNCE, output, PIECE, resume=True)
+
+
+def test_large_pack_piece_table_scales_without_reading_large_media():
+    size = 600 * 1024**3
+    length = metainfo.adaptive_piece_length(size)
+    assert length == 8 * 1024**2
+    assert 20 * ((size + length - 1) // length) <= metainfo.MAX_METAINFO_BYTES // 2
+    with pytest.raises(metainfo.TorrentError, match="maximum piece length"):
+        metainfo.adaptive_piece_length(10 * 1024**4)
+
+
+def test_explicit_pack_exclusions_are_audited_as_declared_scope(tmp_path, monkeypatch):
+    write(tmp_path, "synthetic.mkv", b"synthetic episode")
+    responses = [
+        {"MediaContainer": {"Directory": [{"key": "2", "type": "show"}]}},
+        {"MediaContainer": {"totalSize": 1, "Metadata": [{"type": "show", "ratingKey": "500", "title": "Synthetic"}]}},
+        {"MediaContainer": {"totalSize": 1, "Metadata": [{"type": "season", "ratingKey": "501", "parentRatingKey": "500", "index": 1}]}},
+        {"MediaContainer": {"totalSize": 1, "Metadata": [plex_episode(1, "/plex/synthetic.mkv", 2001)]}},
+    ]
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, limit): return json.dumps(responses.pop(0)).encode()
+    class Opener:
+        def open(self, request, timeout): return Response()
+    monkeypatch.setattr(publisher, "build_opener", lambda *handlers: Opener())
+    records = publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path, [("/plex", "")], include_packs=False)
+    report = publisher.publish_stream(records, tmp_path, ANNOUNCE, tmp_path / "prepared", PIECE)
+    assert report["inventory_scope"]["include_packs"] is False
+    assert report["excluded_counts"] == {"season": 1, "show": 1}
+    assert report["rejected"] == 0 and report["release_count"] == 1
+    assert report["completeness"] == "complete"  # only within the explicitly recorded scope
+    audit = [json.loads(line) for line in (tmp_path / "prepared" / report["audit"]).read_text().splitlines()]
+    assert sum(row.get("status") == "excluded" for row in audit) == 2
+
+
+def test_interrupted_resume_preserves_prior_generation_for_actual_rehash_verification(tmp_path, monkeypatch):
+    root = tmp_path / "media"
+    root.mkdir()
+    write(root, "one.mkv", b"one")
+    write(root, "two.mkv", b"two")
+    data = {"version": 1, "releases": [
+        inventory(["one.mkv"], source_id="one")["releases"][0],
+        inventory(["two.mkv"], source_id="two")["releases"][0],
+    ]}
+    output = tmp_path / "prepared"
+    first = publisher.publish_offline(data, root, ANNOUNCE, output, PIECE)
+    original_index = (output / "catalog-index.json").read_bytes()
+    monkeypatch.setattr(publisher, "build_private_torrent", lambda *a, **kw: pytest.fail("unchanged resume rehashed media"))
+    def interrupted():
+        yield data["releases"][0]
+        raise metainfo.TorrentError("synthetic interruption after cached source")
+    with pytest.raises(metainfo.TorrentError, match="synthetic interruption"):
+        publisher.publish_stream(interrupted(), root, ANNOUNCE, output, PIECE, resume=True)
+    assert (output / "catalog-index.json").read_bytes() == original_index
+    # This actually reads both old checkpoint rows and rehashes source files.
+    assert publisher.verify_offline(None, root, output) == 2
+    with sqlite3.connect(output / "publisher-checkpoint.sqlite3") as db:
+        assert db.execute("SELECT count(*) FROM published_releases WHERE run_id=?", (first["run_id"],)).fetchone()[0] == 2
+        assert db.execute("SELECT count(*) FROM published_releases").fetchone()[0] == 3
+    second = publisher.publish_offline(data, root, ANNOUNCE, output, PIECE, resume=True)
+    assert second["cache_reused"] == 2
+    assert publisher.verify_offline(data, root, output) == 2
+
+
+def test_legacy_checkpoint_schema_migrates_without_invalidating_completed_generation(tmp_path):
+    write(tmp_path, "one.mkv", b"one")
+    output = tmp_path / "prepared"
+    data = inventory(["one.mkv"])
+    first = publisher.publish_offline(data, tmp_path, ANNOUNCE, output, PIECE)
+    with sqlite3.connect(output / "publisher-checkpoint.sqlite3") as db:
+        db.execute("ALTER TABLE published_releases RENAME TO current_releases")
+        db.execute("CREATE TABLE published_releases (source_id TEXT PRIMARY KEY, input_source_id TEXT NOT NULL, inventory TEXT NOT NULL, run_id TEXT NOT NULL)")
+        db.execute("INSERT INTO published_releases SELECT * FROM current_releases")
+        db.execute("DROP TABLE current_releases")
+        db.execute("CREATE INDEX published_run ON published_releases(run_id,input_source_id)")
+    def interrupted():
+        yield data["releases"][0]
+        raise metainfo.TorrentError("synthetic source interruption")
+    with pytest.raises(metainfo.TorrentError, match="synthetic source interruption"):
+        publisher.publish_stream(interrupted(), tmp_path, ANNOUNCE, output, PIECE, resume=True)
+    assert publisher.verify_offline(None, tmp_path, output) == 1
+    with sqlite3.connect(output / "publisher-checkpoint.sqlite3") as db:
+        primary = tuple(row[1] for row in sorted(db.execute("PRAGMA table_info(published_releases)"), key=lambda row: row[5]) if row[5])
+        assert primary == ("run_id", "source_id")
+        assert db.execute("SELECT count(*) FROM published_releases WHERE run_id=?", (first["run_id"],)).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("failure", [OSError, KeyboardInterrupt])
+def test_interrupted_torrent_write_never_installs_partial_artifact_and_resume_recovers(tmp_path, monkeypatch, failure):
+    write(tmp_path, "one.mkv", b"one")
+    data = inventory(["one.mkv"])
+    output = tmp_path / "prepared"
+    writer = publisher._write_private
+    def interrupted(path, content):
+        if ".torrent." in path.name:
+            path.write_bytes(content[:5])
+            raise failure("synthetic write interruption")
+        writer(path, content)
+    monkeypatch.setattr(publisher, "_write_private", interrupted)
+    if failure is KeyboardInterrupt:
+        with pytest.raises(KeyboardInterrupt):
+            publisher.publish_offline(data, tmp_path, ANNOUNCE, output, PIECE)
+    else:
+        assert publisher.publish_offline(data, tmp_path, ANNOUNCE, output, PIECE)["rejected"] == 1
+    assert not list(output.glob("*.torrent"))
+    assert not list(output.glob("*.torrent.*.tmp"))
+    with sqlite3.connect(output / "publisher-checkpoint.sqlite3") as db:
+        assert db.execute("SELECT count(*) FROM hash_cache").fetchone()[0] == 0
+    monkeypatch.setattr(publisher, "_write_private", writer)
+    report = publisher.publish_offline(data, tmp_path, ANNOUNCE, output, PIECE, resume=True)
+    assert report["hashes_built"] == 1 and report["completeness"] == "complete"
+    assert publisher.verify_offline(None, tmp_path, output) == 1
+
+
+def test_verifier_rejects_duplicate_catalog_source_without_manifest(tmp_path):
+    write(tmp_path, "one.mkv", b"one")
+    write(tmp_path, "two.mkv", b"two")
+    data = {"version": 1, "releases": [inventory(["one.mkv"], source_id="one")["releases"][0], inventory(["two.mkv"], source_id="two")["releases"][0]]}
+    output = tmp_path / "prepared"
+    report = publisher.publish_offline(data, tmp_path, ANNOUNCE, output, PIECE)
+    shard = output / report["shards"][0]["file"]
+    catalog = json.loads(shard.read_bytes())
+    catalog["releases"][1] = catalog["releases"][0]
+    shard.write_text(json.dumps(catalog))
+    with pytest.raises(metainfo.TorrentError, match="duplicate source_id"):
+        publisher.verify_offline(None, tmp_path, output)
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("page", [
+    {"totalSize": 1, "Metadata": []},
+    {"totalSize": "1", "Metadata": []},
+    {"totalSize": True, "Metadata": []},
+    {"totalSize": -1, "Metadata": []},
+    {"totalSize": 0, "offset": 1, "Metadata": []},
+    {"totalSize": 0, "offset": "0", "Metadata": []},
+    {"totalSize": 0, "size": 1, "Metadata": []},
+    {"totalSize": 0, "Metadata": [{"ratingKey": "1"}]},
+])
+def test_plex_pagination_refuses_partial_or_contradictory_inventory(tmp_path, monkeypatch, streamed, page):
+    responses = [{"MediaContainer": {"Directory": [{"key": "1", "type": "movie"}]}}, {"MediaContainer": page}]
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, limit): return json.dumps(responses.pop(0)).encode()
+    class Opener:
+        def open(self, request, timeout): return Response()
+    monkeypatch.setattr(publisher, "build_opener", lambda *handlers: Opener())
+    with pytest.raises(metainfo.TorrentError, match="Plex pagination"):
+        if streamed:
+            publisher.publish_stream(publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path), tmp_path, ANNOUNCE, tmp_path / "prepared", PIECE)
+        else:
+            publisher.fetch_plex_inventory("https://plex.example.org", "synthetic-token", tmp_path)
+    if streamed:
+        assert not (tmp_path / "prepared/catalog-index.json").exists()
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("second_total", [None, 2, 4])
+def test_plex_total_change_mid_scan_is_an_interruption(tmp_path, monkeypatch, streamed, second_total):
+    row = {"type": "movie", "ratingKey": "101", "title": "Synthetic", "Media": [{"Part": [{"file": "/plex/one.mkv"}]}]}
+    write(tmp_path, "one.mkv", b"one")
+    second = {"Metadata": [{**row, "ratingKey": "102"}]}
+    if second_total is not None:
+        second["totalSize"] = second_total
+    responses = [{"MediaContainer": {"Directory": [{"key": "1", "type": "movie"}]}}, {"MediaContainer": {"totalSize": 3, "Metadata": [row]}}, {"MediaContainer": second}]
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, limit): return json.dumps(responses.pop(0)).encode()
+    class Opener:
+        def open(self, request, timeout): return Response()
+    monkeypatch.setattr(publisher, "build_opener", lambda *handlers: Opener())
+    with pytest.raises(metainfo.TorrentError, match="total changed"):
+        if streamed:
+            records = publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path, [("/plex", "")])
+            publisher.publish_stream(records, tmp_path, ANNOUNCE, tmp_path / "prepared", PIECE)
+        else:
+            publisher.fetch_plex_inventory("https://plex.example.org", "synthetic-token", tmp_path, [("/plex", "")])
+
+
+def test_streamed_episodes_convert_only_their_own_series_metadata(tmp_path, monkeypatch):
+    shows = [{"type": "show", "ratingKey": str(500 + n), "title": "Synthetic", "Guid": [{"id": f"tvdb://{1000 + n}"}]} for n in range(10)]
+    seasons = [{"type": "season", "parentRatingKey": "500", "index": 1}]
+    episodes = [plex_episode(n, f"/plex/{n}.mkv", 2000 + n) for n in range(1, 4)]
+    responses = [{"MediaContainer": {"Directory": [{"key": "1", "type": "show"}]}}] + [{"MediaContainer": {"totalSize": len(rows), "Metadata": rows}} for rows in (shows, seasons, episodes)]
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, limit): return json.dumps(responses.pop(0)).encode()
+    class Opener:
+        def open(self, request, timeout): return Response()
+    monkeypatch.setattr(publisher, "build_opener", lambda *handlers: Opener())
+    converter = publisher.inventory_from_plex
+    observed = []
+    def capture(payloads, *args):
+        observed.append(payloads)
+        return converter(payloads, *args)
+    monkeypatch.setattr(publisher, "inventory_from_plex", capture)
+    records = list(publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path, [("/plex", "")], include_packs=False))
+    emitted = [record for record in records if record.get("kind") == "episode" and not record.get("_rejection")]
+    assert len(emitted) == 3
+    assert all(record["tvdb_id"] == 1000 for record in emitted)
+    assert all(len(payloads) == 2 and payloads[0]["ratingKey"] == "500" for payloads in observed)

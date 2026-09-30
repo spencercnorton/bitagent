@@ -8,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
@@ -199,6 +199,7 @@ class BuiltTorrent:
     info_hash: str
     size: int
     files: tuple[dict, ...]
+    source_fingerprint: dict = field(default_factory=dict)
 
 
 def build_private_torrent(root: Path, files: list[str], name: str, announce_url: str,
@@ -223,6 +224,7 @@ def build_private_torrent(root: Path, files: list[str], name: str, announce_url:
     if any(parts[:len(path_prefix)] != path_prefix or len(parts) <= len(path_prefix) for parts in paths):
         raise TorrentError("pack files must stay below their shared directory")
     root_fd = os.open(Path(root).resolve(strict=True), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    root_identity = os.fstat(root_fd)
     mappings = []
     fingerprints = []
     piece_hashes = bytearray()
@@ -274,7 +276,55 @@ def build_private_torrent(root: Path, files: list[str], name: str, announce_url:
             item["torrent_path"] = [name, *item["path"]]
     metainfo = {"announce": announce_url, "info": info}
     encoded = encode_metainfo(metainfo)
-    return BuiltTorrent(encoded, info_hash(metainfo), size, tuple(mappings))
+    return BuiltTorrent(encoded, info_hash(metainfo), size, tuple(mappings),
+                        {"root": [root_identity.st_dev, root_identity.st_ino],
+                         "files": [{"path": "/".join(parts), "stat": list(values)} for parts, values in fingerprints]})
+
+
+
+
+def adaptive_piece_length(size: int, minimum: int = DEFAULT_PIECE_LENGTH) -> int:
+    """Choose a bounded power-of-two piece length for large genuine packs."""
+    if (type(size) is not int or size <= 0 or type(minimum) is not int
+            or minimum < MIN_PIECE_LENGTH or minimum > MAX_PIECE_LENGTH
+            or minimum & (minimum - 1)):
+        raise TorrentError("invalid adaptive piece layout")
+    length = minimum
+    while 20 * ((size + length - 1) // length) > MAX_METAINFO_BYTES // 2 and length < MAX_PIECE_LENGTH:
+        length *= 2
+    if 20 * ((size + length - 1) // length) > MAX_METAINFO_BYTES // 2:
+        raise TorrentError("release exceeds supported private metainfo size even at maximum piece length")
+    return length
+
+
+def source_snapshot(root: Path, files: list[str]) -> dict:
+    """Inspect safe file descriptors for cache reuse without reading media bytes.
+
+    Device/inode/size/mtime/ctime must all match the original successful hash.
+    This is a filesystem change detector, not a live seeder hash verification.
+    """
+    if not isinstance(files, list) or not 1 <= len(files) <= MAX_FILES:
+        raise TorrentError("release file count is outside the supported limit")
+    paths = sorted(relative_media_path(path) for path in files)
+    if len(set(paths)) != len(paths):
+        raise TorrentError("duplicate media path")
+    root_fd = os.open(Path(root).resolve(strict=True), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    result = {"root": [], "files": []}
+    try:
+        identity = os.fstat(root_fd)
+        result["root"] = [identity.st_dev, identity.st_ino]
+        for parts in paths:
+            file_fd = _open_media(root_fd, parts)
+            try:
+                info = os.fstat(file_fd)
+                if not stat.S_ISREG(info.st_mode):
+                    raise TorrentError("only regular media files can be published")
+                result["files"].append({"path": "/".join(parts), "stat": list(_fingerprint(info))})
+            finally:
+                os.close(file_fd)
+    finally:
+        os.close(root_fd)
+    return result
 
 
 def verify_torrent_files(root: Path, files: list[str], data: bytes, path_prefix: tuple[str, ...] = ()) -> BuiltTorrent:

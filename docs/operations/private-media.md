@@ -70,9 +70,11 @@ Set `PLEX_TOKEN` through your secret manager first; never put its value in the
 command or URL. The initial announce is a passkey-free preparation placeholder;
 the service replaces it outside the `info` dictionary for each member.
 The publisher streams piece hashes, rejects symlinks/path escapes and changing
-files, and creates movie/episode versions plus real season/show packs. It
-fails on unmapped or missing media rather than silently claiming completeness.
-It covers movie/TV items available to the Plex token; it cannot infer files
+files, and creates movie/episode versions plus real season/show packs. Unmapped, absent, unsafe or changing sources are recorded in the private
+audit with per-kind rejection counts. Empty seasons/shows and incomplete
+packs are also explicit. The command returns exit code 3 for an incomplete
+preparation. Its index distinguishes Plex metadata counts, emitted variants,
+new hashes, reused checkpoints and rejected entries. It covers movie/TV items available to the Plex token; it cannot infer files
 Plex has not indexed or that the token cannot see.
 
 Alternatively supply `--manifest inventory.json`, containing `version: 1` and
@@ -82,17 +84,47 @@ The normalized source ID includes the full content hash, preserving old swarm
 history when files change. Duplicate episode/season/show hashes become aliases
 of one swarm rather than different copies of the same torrent.
 
-Re-run the same inventory command with `--verify` to compare current files
-against the prepared metainfo. Hashing a large library is disk-intensive;
-schedule it on the media host and use smaller inventory batches when needed.
-No command adds torrents, opens peer ports or modifies the seed client.
+Default preparation streams owner-only `.torrent` artifacts and import shards,
+with at most 1000 releases and 4 MiB per shard. `catalog-index.json` names the
+current shards, the JSONL seeding map and rejection audit. No monolithic catalog
+is required. `--full-catalog` optionally creates a bounded `catalog.json` for a
+small export; it is not the import or completeness authority.
+
+Restart the same preparation command with `--resume` after interruption. Its
+private SQLite checkpoint reuses a successful hash only when every file's
+safe descriptor reports the same device, inode, size, mtime and ctime, with
+matching root identity and piece layout. Otherwise it hashes again. A process
+lock releases automatically on exit/crash. Checkpoint rows retain each run's
+identity, so an interrupted resume leaves the prior complete index independently
+verifiable. Torrent files are installed atomically after their full write; a
+partial write cannot occupy a final hash filename. Previous complete shard
+indexes stay intact if the inventory source fails; import only files named in
+the latest completed index. `--sections 10,20` selects explicit Plex sections for separate
+exports. An index's completeness applies only to its recorded inventory scope.
+`--no-packs` records each season/show as an operator-requested exclusion; those
+counts must not be described as complete coverage of all media kinds.
+
+Verify bytes independently of the cache before seeding:
+
+```bash
+python media_publish.py --root /media/library --output /private/prepared --verify
+```
+
+This rehashes every indexed artifact using its checkpointed source mapping,
+without requesting Plex metadata again. An optional `--manifest` also checks
+coverage against that input. Cache fingerprints are change detection, not proof
+of a live seed. Large packs automatically increase piece length up to 16 MiB;
+unsupported layouts stay unavailable and appear in the audit. Hashing a large
+library is disk-intensive; schedule it on the media host. No command adds
+torrents, opens peer ports or modifies the seed client.
 
 ## Import and provision the original seed
 
-1. Send each `catalog-0001.json` batch to the operator-only
-   `POST /api/private/catalog/import` using the authenticated operator session
-   or operator API header. Batches are bounded; `catalog.json` is the full
-   offline verification index and must not replace the batched import files.
+1. Read `catalog-index.json` and send each file named in its `shards` array to
+   the operator-only `POST /api/private/catalog/import`, using the authenticated
+   operator session or operator API header. Shards contain `version: 1` and
+   bounded release arrays. Review rejection/completeness counts before claiming
+   full library coverage; an old or unfinished run is not a current catalog.
 2. Use `GET /api/private/catalog` to obtain canonical release IDs. New releases
    remain unavailable to members regardless of any `seed_verified` manifest field.
 3. Approve a dedicated existing SSO identity for the seed client and create its
@@ -101,7 +133,9 @@ No command adds torrents, opens peer ports or modifies the seed client.
    its personalized original-seed torrent before public availability exists.
    Keep this torrent private; it contains the seed member's tracker credential.
 4. Add that torrent to a dedicated seed client, paused, pointing at the existing
-   files using `seeding_map.json`. Single files use their parent directory;
+   files using the JSONL seeding-map file named in `catalog-index.json`. Each
+   line carries the inventory ID, catalog ID, hash and actual file mapping.
+   Single files use their parent directory;
    packs use their actual shared directory. Respect `save_parent_of_root` when
    the pack directory is the configured root. Do not copy or rename the media.
 5. Complete a **fresh full qBittorrent hash recheck** of the current files.
@@ -112,7 +146,10 @@ No command adds torrents, opens peer ports or modifies the seed client.
    worker refresh. It checks the exact hash, size, zero remaining bytes,
    complete progress and an active upload state through the configured client.
    This is a seed-client observation, not independent rehashing by the web app.
-7. Verify a synthetic download from a separate approved client, its announce
+7. Explicitly reannounce the original seed after readiness is verified. The
+   tracker may have rejected its earlier announces while the release was
+   unavailable. Confirm the seed peer is registered before a member download.
+8. Verify a synthetic download from a separate approved client, its announce
    accounting and key revocation before publishing the real media catalog.
 
 The worker refreshes availability at most every five minutes, with per-batch
