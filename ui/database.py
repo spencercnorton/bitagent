@@ -213,9 +213,43 @@ async def _init_tables(db: aiosqlite.Connection):
             api_searches INTEGER NOT NULL DEFAULT 0 CHECK (api_searches >= 0),
             magnet_copies INTEGER NOT NULL DEFAULT 0 CHECK (magnet_copies >= 0),
             magnet_opens INTEGER NOT NULL DEFAULT 0 CHECK (magnet_opens >= 0),
-            magnet_exports INTEGER NOT NULL DEFAULT 0 CHECK (magnet_exports >= 0)
+            magnet_exports INTEGER NOT NULL DEFAULT 0 CHECK (magnet_exports >= 0),
+            revision INTEGER NOT NULL DEFAULT 0,
+            period_tracking_since REAL
+        );
+        CREATE TABLE IF NOT EXISTS account_usage_events (
+            user_id TEXT NOT NULL,
+            event_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            count INTEGER NOT NULL CHECK (count BETWEEN 1 AND 1000),
+            PRIMARY KEY (user_id, event_id)
+        );
+        CREATE TABLE IF NOT EXISTS account_usage_daily (
+            user_id TEXT NOT NULL,
+            day TEXT NOT NULL,
+            grabs INTEGER NOT NULL DEFAULT 0,
+            api_searches INTEGER NOT NULL DEFAULT 0,
+            magnet_copies INTEGER NOT NULL DEFAULT 0,
+            magnet_opens INTEGER NOT NULL DEFAULT 0,
+            magnet_exports INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, day)
+        );
+        CREATE TABLE IF NOT EXISTS account_preferences (
+            user_id TEXT PRIMARY KEY,
+            revision INTEGER NOT NULL DEFAULT 0,
+            updated_at REAL,
+            settings TEXT NOT NULL
         );
     """)
+    # Additive account migrations preserve lifetime counters. Historical daily
+    # windows cannot be rebuilt from the original untimestamped totals.
+    account_columns = {row["name"] for row in await db.execute_fetchall("PRAGMA table_info(account_usage)")}
+    for name, definition in (
+        ("revision", "INTEGER NOT NULL DEFAULT 0"),
+        ("period_tracking_since", "REAL"),
+    ):
+        if name not in account_columns:
+            await db.execute(f"ALTER TABLE account_usage ADD COLUMN {name} {definition}")
     # Scrub legacy rows that predate server-side redaction. The marker is
     # idempotent, and future writes below are redacted before insertion.
     if SENSITIVE_FIELDS:

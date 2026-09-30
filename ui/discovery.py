@@ -19,6 +19,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 import tmdb
+import network_catalog
+from provider_catalog import group_providers
 from auth import require_auth
 from config import settings
 
@@ -28,9 +30,17 @@ _INFLIGHT_LIMIT = 128
 _FEED_TTL = 600.0
 _PROVIDER_TTL = 24 * 3600.0
 _PROVIDER_CHECK_BUDGET = 7.0
+_UPSTREAM_REQUEST_BUDGET = 7.0
 _CACHE: OrderedDict[tuple, tuple[float, dict]] = OrderedDict()
 _INFLIGHT: dict[tuple, asyncio.Task] = {}
 _SEMAPHORE: asyncio.Semaphore | None = None
+_NETWORK_PAGE_SIZE = 24
+# Canonical identities from TMDB's network index; names/logos still come from
+# current metadata. Other networks remain searchable in the full daily index.
+_FEATURED_NETWORKS = (
+    49, 67, 88, 174, 74, 64, 2, 16, 6, 19, 4, 71, 47, 41, 68, 56,
+    80, 65, 43, 30, 33, 2076, 13, 77, 129, 210, 143,
+)
 
 
 class DiscoveryUnavailable(Exception):
@@ -45,6 +55,7 @@ def reset_cache() -> None:
     _INFLIGHT.clear()
     _CACHE.clear()
     _SEMAPHORE = None
+    network_catalog.reset_cache()
 
 
 async def _cached_get(path: str, params: dict, ttl: float) -> dict:
@@ -64,7 +75,7 @@ async def _cached_get(path: str, params: dict, ttl: float) -> dict:
             _SEMAPHORE = asyncio.Semaphore(4)
         semaphore = _SEMAPHORE
 
-        async def fetch() -> dict:
+        async def request() -> dict:
             async with semaphore:
                 try:
                     response = await tmdb._get_client().get(
@@ -84,6 +95,14 @@ async def _cached_get(path: str, params: dict, ttl: float) -> dict:
                     _CACHE.popitem(last=False)
                 return payload
 
+        async def fetch() -> dict:
+            try:
+                # Include time waiting for the shared four-request limit.
+                # A disconnected caller must not leave an unbounded queue.
+                return await asyncio.wait_for(request(), timeout=_UPSTREAM_REQUEST_BUDGET)
+            except TimeoutError:
+                raise DiscoveryUnavailable("upstream_unavailable") from None
+
         task = asyncio.create_task(fetch())
         _INFLIGHT[key] = task
 
@@ -102,8 +121,10 @@ def _number(value, default=0):
 
 
 def _image(path, size: str) -> str | None:
-    if not isinstance(path, str) or not re.fullmatch(r"/[a-zA-Z\d_-]+\.(?:jpg|png|webp)", path):
+    if not isinstance(path, str) or not re.fullmatch(r"/[a-zA-Z\d_-]+\.(?:jpg|png|webp|svg)", path):
         return None
+    if path.endswith(".svg"):
+        size = "original"
     return f"https://image.tmdb.org/t/p/{size}{path}"
 
 
@@ -181,18 +202,99 @@ async def get_providers(region: str = "US") -> dict:
                 priority = priorities.get(region, row.get("display_priority", 999)) if isinstance(priorities, dict) else 999
                 provider = providers.setdefault(identifier, {
                     "id": identifier, "name": name[:200], "logo": _image(row.get("logo_path"), "w92"),
-                    "displayPriority": _number(priority, 999), "types": [],
+                    "displayPriority": _number(priority, 999), "types": [], "logoAlternatives": [], "aliases": [],
                 })
+                if name[:200] not in provider["aliases"]:
+                    provider["aliases"].append(name[:200])
+                logo = _image(row.get("logo_path"), "w92")
+                if not provider["logo"] and logo:
+                    provider["logo"] = logo
+                elif logo and logo != provider["logo"] and logo not in provider["logoAlternatives"]:
+                    provider["logoAlternatives"].append(logo)
+                provider["displayPriority"] = min(provider["displayPriority"], _number(priority, 999))
                 if media_type not in provider["types"]:
                     provider["types"].append(media_type)
-        ordered = sorted(providers.values(), key=lambda row: (row["displayPriority"], row["name"].casefold()))
+        ordered = group_providers(list(providers.values()))
         return {"available": True, "region": region, "regions": regions, "providers": ordered,
                 "attribution": "Provider availability: JustWatch via TMDB"}
     except DiscoveryUnavailable as exc:
         return _unavailable(str(exc), region=region, regions=[], providers=[])
 
 
-async def _provider_match(item: dict, provider: int, region: str) -> bool | None:
+async def _network_details(identifier: int) -> dict:
+    payload = await _cached_get(f"network/{identifier}", {}, _PROVIDER_TTL)
+    if (not isinstance(payload.get("id"), int) or isinstance(payload.get("id"), bool)
+            or payload["id"] != identifier
+            or not isinstance(payload.get("name"), str) or not payload["name"].strip()):
+        raise DiscoveryUnavailable("upstream_unavailable")
+    logo = _image(payload.get("logo_path"), "w185")
+    alternatives = []
+    if not logo:
+        try:
+            images = await _cached_get(f"network/{identifier}/images", {}, _PROVIDER_TTL)
+            for row in images.get("logos", []) if isinstance(images.get("logos"), list) else []:
+                candidate = _image(row.get("file_path"), "w185") if isinstance(row, dict) else None
+                if candidate and candidate not in alternatives:
+                    alternatives.append(candidate)
+            if alternatives:
+                logo = alternatives.pop(0)
+        except DiscoveryUnavailable:
+            pass
+    country = payload.get("origin_country")
+    return {"id": identifier, "name": payload["name"].strip()[:200], "logo": logo,
+            "logoAlternatives": alternatives[:4],
+            "country": country if isinstance(country, str) and re.fullmatch(r"[A-Z]{2}", country) else ""}
+
+
+async def get_networks(*, q: str = "", page: int = 1) -> dict:
+    fields = {"q": q.strip(), "page": page, "hasNext": False, "hasNextPage": False,
+              "total": 0, "partial": False, "networks": []}
+    if not settings.tmdb_api_key:
+        return _unavailable("not_configured", **fields)
+    try:
+        rows = await asyncio.wait_for(network_catalog.get_index(), timeout=_PROVIDER_CHECK_BUDGET)
+        query = q.strip().casefold()
+        if query:
+            rows = [row for row in rows if query in row["name"].casefold()]
+        else:
+            rank = {identifier: index for index, identifier in enumerate(_FEATURED_NETWORKS)}
+            rows = sorted(rows, key=lambda row: (rank.get(row["id"], len(rank)), row["name"].casefold(), row["id"]))
+        fields["total"] = len(rows)
+        fields["hasNext"] = fields["hasNextPage"] = page * _NETWORK_PAGE_SIZE < len(rows)
+        window = rows[(page - 1) * _NETWORK_PAGE_SIZE:page * _NETWORK_PAGE_SIZE]
+
+        async def resolve(row: dict) -> dict | None:
+            try:
+                return await asyncio.wait_for(_network_details(row["id"]), timeout=_PROVIDER_CHECK_BUDGET)
+            except (DiscoveryUnavailable, TimeoutError):
+                return None
+
+        resolved = await asyncio.gather(*(resolve(row) for row in window))
+        fields["networks"] = [row for row in resolved if row is not None]
+        fields["partial"] = any(row is None for row in resolved)
+        return {"available": True, **fields,
+                "attribution": "TV network metadata: TMDB. Network association is not current streaming availability."}
+    except (network_catalog.NetworkIndexUnavailable, DiscoveryUnavailable, TimeoutError):
+        return _unavailable("upstream_unavailable", **fields)
+
+
+async def _network_match(item: dict, network: int) -> bool | None:
+    try:
+        payload = await asyncio.wait_for(
+            _cached_get(f"tv/{item['id']}", {}, _PROVIDER_TTL), timeout=_PROVIDER_CHECK_BUDGET)
+        if (not isinstance(payload.get("id"), int) or isinstance(payload.get("id"), bool)
+                or str(payload["id"]) != item["id"]):
+            return None
+        rows = payload.get("networks")
+        if not isinstance(rows, list):
+            return None
+        return any(isinstance(row, dict) and isinstance(row.get("id"), int)
+                   and not isinstance(row.get("id"), bool) and row["id"] == network for row in rows)
+    except (DiscoveryUnavailable, TimeoutError):
+        return None
+
+
+async def _provider_match(item: dict, provider_ids: list[int], region: str) -> bool | None:
     media_type = "movie" if item["type"] == "movie" else "tv"
     try:
         payload = await asyncio.wait_for(
@@ -210,28 +312,38 @@ async def _provider_match(item: dict, provider: int, region: str) -> bool | None
             rows = market.get(kind, [])
             if not isinstance(rows, list):
                 return None
-            found = found or any(isinstance(row, dict) and row.get("provider_id") == provider for row in rows)
+            found = found or any(isinstance(row, dict) and isinstance(row.get("provider_id"), int)
+                                 and not isinstance(row["provider_id"], bool)
+                                 and row["provider_id"] in provider_ids for row in rows)
         return found
     except (DiscoveryUnavailable, TimeoutError):
         return None
 
 
-async def get_discovery(*, provider: int | None = None, region: str = "US",
+async def get_discovery(*, provider: int | None = None, network: int | None = None, region: str = "US",
                         type: str = "movie", q: str = "", page: int = 1, mode: str = "popular") -> dict:
-    fields = {"provider": provider, "region": region, "type": type, "q": q.strip(),
+    if provider and network:
+        raise HTTPException(400, "Choose a streaming service or TV network")
+    if network:
+        if type == "movie":
+            raise HTTPException(400, "TV networks can only filter series")
+        type = "tv_show"
+    fields = {"provider": provider, "network": network, "region": region, "type": type, "q": q.strip(),
               "page": page, "mode": mode, "hasNextPage": False, "partial": False}
     if not settings.tmdb_api_key:
         return _unavailable("not_configured", **fields)
+    selected = None
+    if provider:
+        catalogue = await get_providers(region)
+        if not catalogue["available"]:
+            return _unavailable(catalogue["reason"], **fields)
+        selected = next((row for row in catalogue["providers"] if provider in row["providerIds"]), None)
+        if selected is None:
+            raise HTTPException(400, "Provider is not available in this region")
+        fields["providerName"] = selected["name"]
+        fields["providerIds"] = selected["providerIds"] if type == "all" else selected["idsByType"].get(type, [])
     if type == "all":
-        types = ["movie", "tv_show"]
-        if provider:
-            catalogue = await get_providers(region)
-            if not catalogue["available"]:
-                return _unavailable(catalogue["reason"], **fields)
-            selected = next((row for row in catalogue["providers"] if row["id"] == provider), None)
-            if selected is None:
-                raise HTTPException(400, "Provider is not available in this region")
-            types = selected["types"]
+        types = selected["types"] if selected else ["movie", "tv_show"]
         feeds = await asyncio.gather(*(
             get_discovery(provider=provider, region=region, type=media_type, q=q, page=page, mode=mode)
             for media_type in types
@@ -246,14 +358,12 @@ async def get_discovery(*, provider: int | None = None, region: str = "US",
     media_type = "tv" if type == "tv_show" else "movie"
     params = {"language": "en-US", "page": page, "include_adult": "false"}
     try:
+        if network:
+            selected_network = await asyncio.wait_for(
+                _network_details(network), timeout=_PROVIDER_CHECK_BUDGET)
+            fields["networkName"] = selected_network["name"]
         if provider:
-            catalogue = await get_providers(region)
-            if not catalogue["available"]:
-                return _unavailable(catalogue["reason"], **fields)
-            supported = any(row["id"] == provider and type in row["types"] for row in catalogue["providers"])
-            if not supported:
-                if not any(row["id"] == provider for row in catalogue["providers"]):
-                    raise HTTPException(400, "Provider is not available in this region")
+            if not fields["providerIds"]:
                 return {"available": True, "items": [], **fields,
                         "attribution": "Provider availability: JustWatch via TMDB"}
         if q.strip():
@@ -268,8 +378,10 @@ async def get_discovery(*, provider: int | None = None, region: str = "US",
                 params[date_field] = datetime.now(timezone.utc).date().isoformat()
                 params["vote_count.gte"] = 5
             if provider:
-                params["with_watch_providers"] = str(provider)
+                params["with_watch_providers"] = "|".join(map(str, fields["providerIds"]))
                 params["watch_region"] = region
+            if network:
+                params["with_networks"] = str(network)
         payload = await _cached_get(path, params, _FEED_TTL)
         items = _items(payload, media_type)
         pages = payload.get("total_pages")
@@ -277,14 +389,22 @@ async def get_discovery(*, provider: int | None = None, region: str = "US",
         fields["hasNextPage"] = page < min(pages, 50) if known_pages else len(items) == 20 and page < 50
         fields["partial"] = not known_pages or (pages > 50 and page == 50)
         if q.strip() and provider:
-            checks = await asyncio.gather(*(_provider_match(item, provider, region) for item in items))
+            checks = await asyncio.gather(*(_provider_match(item, fields["providerIds"], region) for item in items))
             fields["partial"] = fields["partial"] or any(check is None for check in checks)
             # Unknown attribution never passes a provider filter. One upstream
             # search page can be empty after filtering and still have a next.
             items = [item for item, match in zip(items, checks) if match is True]
             fields["searchScope"] = "provider_checked_search_page"
+        if q.strip() and network:
+            checks = await asyncio.gather(*(_network_match(item, network) for item in items))
+            fields["partial"] = fields["partial"] or any(check is None for check in checks)
+            items = [item for item, match in zip(items, checks) if match is True]
+            fields["searchScope"] = "network_checked_search_page"
         return {"available": True, "items": items, **fields,
-                "attribution": "Provider availability: JustWatch via TMDB"}
+                "attribution": ("TV network metadata: TMDB. Network association is not current streaming availability."
+                                if network else "Provider availability: JustWatch via TMDB")}
+    except TimeoutError:
+        return _unavailable("upstream_unavailable", **fields)
     except DiscoveryUnavailable as exc:
         return _unavailable(str(exc), **fields)
 
@@ -326,11 +446,18 @@ async def api_spotlight(region: str = Query("US", pattern=r"^[A-Z]{2}$"),
     return await get_spotlight(region)
 
 
+@router.get("/api/discovery/networks")
+async def api_networks(q: str = Query("", max_length=200), page: int = Query(1, ge=1, le=1000),
+                       identity: dict = Depends(require_auth)):
+    return await get_networks(q=q, page=page)
+
+
 @router.get("/api/discovery")
 async def api_discovery(provider: int | None = Query(None, ge=1, le=2_147_483_647),
+                        network: int | None = Query(None, ge=1, le=2_147_483_647),
                         region: str = Query("US", pattern=r"^[A-Z]{2}$"),
                         type: Literal["all", "movie", "tv_show"] = "movie",
                         q: str = Query("", max_length=200), page: int = Query(1, ge=1, le=50),
                         mode: Literal["popular", "newest"] = "popular",
                         identity: dict = Depends(require_auth)):
-    return await get_discovery(provider=provider, region=region, type=type, q=q, page=page, mode=mode)
+    return await get_discovery(provider=provider, network=network, region=region, type=type, q=q, page=page, mode=mode)

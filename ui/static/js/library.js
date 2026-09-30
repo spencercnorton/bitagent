@@ -10,6 +10,7 @@
      GET /api/poster/{id}          — cached TMDB poster proxy
    ========================================================================== */
 'use strict';
+const BitAgentPreferences = typeof module !== 'undefined' && module.exports ? require('./library-preferences.js') : window.BitAgentPreferences;
 
 /* ── Theme ──────────────────────────────────────────────────────────────── */
 function syncThemeColor() {
@@ -20,9 +21,8 @@ function syncThemeColor() {
 function toggleTheme() {
   const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
   const next = isDark ? 'light' : 'dark';
-  document.documentElement.setAttribute('data-theme', next);
-  try { localStorage.setItem('bitagent-theme', next); } catch (_) {}
-  syncThemeColor();
+  if (typeof setAccountPreference === 'function' && _accountPreferenceStore) setAccountPreference('theme', next);
+  else { document.documentElement.setAttribute('data-theme', next); syncThemeColor(); }
 }
 if (typeof document !== 'undefined') syncThemeColor();
 
@@ -154,7 +154,7 @@ async function loadLibraryStats(retry = true) {
 
 /* ── Accessibility helpers ──────────────────────────────────────────────── */
 function _reducedMotion() {
-  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  return document.documentElement.getAttribute('data-library-motion') === 'reduced' || !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 }
 function _scrollBehavior() { return _reducedMotion() ? 'auto' : 'smooth'; }
 
@@ -345,7 +345,7 @@ function posterImgSrc(id, source, ct) {
 
 /* ── Browse state ───────────────────────────────────────────────────────── */
 const state = {
-  q: '', type: '', sort: 'seeders', provider: '', region: 'US',
+  q: '', type: '', sort: 'seeders', provider: '', network: '', region: 'US',
   genres: new Set(), qualities: new Set(), sources: new Set(), features: new Set(),
   yearMin: '', yearMax: '',
   facets: {}, facetsKey: '',
@@ -373,8 +373,9 @@ let _navSeq = 0;
 function browseParamsFor(browseState) {
   const p = new URLSearchParams();
   if (browseState.q) p.set('q', browseState.q);
-  if (browseState.type) p.set('type', browseState.type);
-  if (browseState.provider) { p.set('provider', browseState.provider); p.set('region', browseState.region || 'US'); }
+  if (browseState.type || browseState.network) p.set('type', browseState.network ? 'tv_show' : browseState.type);
+  if (browseState.network) p.set('network', browseState.network);
+  else if (browseState.provider) { p.set('provider', browseState.provider); p.set('region', browseState.region || 'US'); }
   if (browseState.sort && browseState.sort !== 'seeders') p.set('sort', browseState.sort);
   if (browseState.genres.size) p.set('genres', [...browseState.genres].join(','));
   if (browseState.qualities.size) p.set('qualities', [...browseState.qualities].join(','));
@@ -410,6 +411,8 @@ function _setInputValue(id, value) {
 }
 function parseBrowseState(search) {
   const p = new URLSearchParams(search || '');
+  const networkValue = p.get('network') || '';
+  const network = /^[1-9]\d{0,9}$/.test(networkValue) && Number(networkValue) <= 2147483647 ? networkValue : '';
   const toSet = name => new Set((p.get(name) || '').split(',').map(s => s.trim()).filter(Boolean));
   const features = toSet('features');
   const years = p.get('years') || '';
@@ -430,8 +433,9 @@ function parseBrowseState(search) {
   }
   return {
     q: p.get('q') || '',
-    type: p.get('type') || '',
-    provider: /^\d{1,8}$/.test(p.get('provider') || '') ? p.get('provider') : '',
+    type: network ? 'tv_show' : p.get('type') || '',
+    provider: !network && /^[1-9]\d{0,7}$/.test(p.get('provider') || '') ? p.get('provider') : '',
+    network,
     region: /^[A-Z]{2}$/.test(p.get('region') || '') ? p.get('region') : 'US',
     sort: p.get('sort') || 'seeders',
     genres: toSet('genres'),
@@ -446,8 +450,9 @@ function parseBrowseState(search) {
     page: Math.max(0, (parseInt(p.get('page'), 10) || 1) - 1),
   };
 }
-function applyStateFromUrl() {
-  Object.assign(state, parseBrowseState(location.search));
+function applyStateFromUrl(useDefaults = false) {
+  const parsed=parseBrowseState(location.search);
+  Object.assign(state, useDefaults ? BitAgentPreferences.applyBrowseDefaultsFor(parsed,accountPreferenceSettings(),location.search) : parsed);
   // Push hydrated values into the controls loadLibrary reads back.
   _setInputValue('libSearch', state.q);
   _setInputValue('libYearMin', state.yearMin);
@@ -532,7 +537,10 @@ function renderTypePills() {
     return `<button class="lib-typepill ${state.type === type ? 'active' : ''}" onclick="setType('${type}')">${icon}${escHtml(label)}</button>`;
   }).join('');
 }
-function setType(type) { state.type = type; state.page = 0; renderTypePills(); loadLibrary(); }
+function setType(type) {
+  if (state.network && type !== 'tv_show') state.network = '';
+  state.type = type; state.page = 0; renderTypePills(); loadLibrary();
+}
 function sortTransitionFor(_browseState, value) {
   return {
     sort: value,
@@ -570,6 +578,7 @@ function setFacet(which, value) {
 function clearFacets() {
   state.type = '';
   state.provider = '';
+  state.network = '';
   state.genres.clear(); state.qualities.clear(); state.sources.clear(); state.features.clear();
   state.yearMin = ''; state.yearMax = '';
   state.hideForeign = false; state.hideUnmatched = true; state._preAnimeHideUnmatched = null;
@@ -598,7 +607,7 @@ function hasAdvancedFiltersFor(browseState) {
 }
 function hasAdvancedFilters() { return hasAdvancedFiltersFor(state); }
 function isHomeFor(browseState) {
-  return !browseState.provider && !browseState.q && browseState.type === '' && !hasAdvancedFiltersFor(browseState) &&
+  return !browseState.provider && !browseState.network && !browseState.q && browseState.type === '' && !hasAdvancedFiltersFor(browseState) &&
     browseState.sort === 'seeders' && !browseState.hideForeign && browseState.hideUnmatched;
 }
 // Every visible non-default browse control leaves the curated landing page.
@@ -793,6 +802,8 @@ function setGridLoading(on) {
   if (typeof document === 'undefined') return;
   const spinner = document.getElementById('libSearchSpinner');
   if (spinner) spinner.style.display = on ? '' : 'none';
+  const grid = document.getElementById('libraryGrid');
+  if (grid) grid.setAttribute('aria-busy', String(on));
   if (on) {
     ['libPrev', 'libNext'].forEach(id => {
       const el = document.getElementById(id);
@@ -829,7 +840,7 @@ async function loadLibrary(opts) {
     syncUrl(historyModeFor(opts.push ? 'search' : 'filter'));
   }
   renderTypePills(); renderFacetControls(); syncControls();
-  if (state.provider && typeof loadProviderLibrary === 'function') {
+  if ((state.provider || state.network) && typeof loadProviderLibrary === 'function') {
     showHome(false);
     return loadProviderLibrary(nav.seq, nav.signal);
   }
@@ -1038,7 +1049,7 @@ async function loadGrid(navSeq, signal) {
 
 function libPage(dir) {
   if (_gridLoading) return;
-  if (state.provider) {
+  if (state.provider || state.network) {
     if ((dir > 0 && !state.hasNext) || (dir < 0 && state.page === 0)) return;
     state.page += dir;
     if (!_modalStack.length) syncUrl(historyModeFor('page'));
@@ -1103,6 +1114,9 @@ function renderGrid(groups) {
 }
 
 // Shared poster-card markup, used by both the flat grid and the home rows.
+function posterFallbackHtml(title, ct) {
+  return `<div class="lib-poster-ph" aria-hidden="true"><span class="lib-poster-fallback-type">${escHtml(typeLabel(ct))}</span><strong class="lib-poster-fallback-title">${escHtml(title)}</strong>${iconFor(ct)}</div>`;
+}
 function cardHtml(g) {
   const t = g.best;
   const ct = g.contentType || 'unknown';
@@ -1116,9 +1130,7 @@ function cardHtml(g) {
   return `<div class="lib-card" aria-label="${escAttr(cardLabel)}" onclick="openDetail('${escAttr(jsStringArg(g.key))}')" role="button" tabindex="0"
       onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openDetail('${escAttr(jsStringArg(g.key))}')}">
     <div class="lib-poster">
-      <div class="lib-poster-ph" aria-hidden="true">
-        ${iconFor(ct)}<span>${escHtml((ct || 'unknown').replace('_', ' '))}</span>
-      </div>
+      ${posterFallbackHtml(title, ct)}
       ${posterId ? `<img class="lib-poster-img" loading="lazy" decoding="async" alt="" src="${escAttr(posterImgSrc(posterId, posterSource, ct))}" onerror="this.remove()">` : ''}
       <span class="lib-type-badge">${iconFor(ct)}${escHtml(typeLabel(ct))}</span>
       ${count > 1 ? `<span class="lib-count-badge">${count}</span>` : ''}
@@ -1205,7 +1217,7 @@ function rowScroll(btn, dir) {
 /* ── Detail view ────────────────────────────────────────────────────────── */
 const detail = { group: null, ct: '', title: '', tmdbId: null, meta: null,
   releases: [], activeSeason: null, quality: 'all', source: 'all', edition: 'all',
-  seasonCache: new Map(), loading: false, truncated: false, loadError: false, bulkMode: 'best' };
+  seasonCache: new Map(), loading: false, truncated: false, loadError: false, bulkMode: 'best', filtersExpanded: false };
 let _detailAbortController = null;
 const magnetSelection = new Map();
 const MAGNET_SELECTION_LIMIT = 1000;
@@ -1230,6 +1242,8 @@ async function openDetail(key) {
   const signal = _detailAbortController.signal;
   detail.loading = true; detail.truncated = false; detail.loadError = false;
   detail.activeSeason = null; detail.quality = 'all'; detail.source = 'all'; detail.edition = 'all'; detail.seasonCache = new Map();
+  detail.filtersExpanded = false;
+  detail.bulkMode = accountPreferenceSettings().magnetMode;
 
   const view = document.getElementById('libDetail');
   view.classList.add('open');
@@ -1325,18 +1339,19 @@ function renderDetailShell() {
   const links = [];
   if (m && m.tmdbId) links.push(`<a class="lib-extlink" target="_blank" rel="noopener" href="https://www.themoviedb.org/${m.mediaType}/${m.tmdbId}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>TMDB</a>`);
   // Every title has a stable shareable permalink.
-  links.push(`<button type="button" class="lib-extlink" onclick="copyDetailLink()" aria-label="Copy link to this title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>Copy link</button>`);
+  links.push(`<button type="button" class="lib-extlink" onclick="copyDetailLink()" aria-label="Copy link to this title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>Share title</button>`);
 
   const genres = (m && m.genres && m.genres.length)
     ? `<div class="lib-genres">${m.genres.map(x => `<span class="lib-genre">${escHtml(x)}</span>`).join('')}</div>` : '';
   const overview = (m && m.overview) ? `<p class="lib-hero-overview">${escHtml(m.overview)}</p>` : '';
   const tagline = (m && m.tagline) ? `<p class="lib-hero-tagline">${escHtml(m.tagline)}</p>` : '';
 
-  const posterInner = posterUrl
-    ? `<img src="${escAttr(posterUrl)}" alt="">`
+  const posterImage = posterUrl
+    ? `<img src="${escAttr(posterUrl)}" alt="" decoding="async" onerror="this.remove()">`
     : posterId
       ? `<img src="${escAttr(posterImgSrc(posterId, posterSource, ct))}" alt="" loading="lazy" decoding="async" onerror="this.remove()">`
-      : `<div class="lib-poster-ph">${iconFor(ct)}<span>${escHtml(typeLabel(ct))}</span></div>`;
+      : '';
+  const posterInner = posterFallbackHtml(detail.title, ct) + posterImage;
 
   document.getElementById('libDetailScroll').innerHTML = `
     <div class="lib-hero ${backdrop ? '' : 'no-backdrop'}">
@@ -1403,7 +1418,7 @@ function copyMagnetGroup(scope) {
   const links = releases.slice(0, MAGNET_SELECTION_LIMIT).map(BitAgentLibraryTools.magnetFor).filter(Boolean);
   if (!links.length) { toast('No matching magnet links available'); return; }
   const partial = releases.length > MAGNET_SELECTION_LIMIT || detail.truncated;
-  copyText(links.join('\n'), `${links.length} magnet links copied${partial ? ' · partial selection' : ''}`, () => recordLibraryGrab(links.length, 'copy'));
+  copyText(links.join('\n'), `${links.length} magnet links copied${partial ? ' · partial selection' : ''}`, scope => recordLibraryGrab(links.length, 'copy', scope));
 }
 
 function toggleMagnetSelection(infoHash) {
@@ -1450,7 +1465,7 @@ function updateMagnetSelection() {
 function removeCollectedMagnet(hash) { magnetSelection.delete(hash); updateMagnetSelection(); }
 function clearMagnetCollection() { magnetSelection.clear(); updateMagnetSelection(); }
 function collectionText() { return [...magnetSelection.values()].map(BitAgentLibraryTools.magnetFor).filter(Boolean).join('\n'); }
-function copyMagnetCollection() { const text = collectionText(), count = magnetSelection.size; if (text) copyText(text, `${count} magnet links copied`, () => recordLibraryGrab(count, 'copy')); }
+function copyMagnetCollection() { const text = collectionText(), count = magnetSelection.size; if (text) copyText(text, `${count} magnet links copied`, scope => recordLibraryGrab(count, 'copy', scope)); }
 function saveMagnetCollection() {
   const text = collectionText();
   if (!text) return;
@@ -1486,9 +1501,10 @@ function closeMagnetCollection(fromPop) {
 /* Release filters shared by movie + TV */
 function chipSet(values, active, setter, allLabel) {
   if (!values.length) return '';
+  const kind = {setQuality:'quality', setSource:'source', setEdition:'edition'}[setter] || 'release';
   return ['all', ...values].map(v => {
     const label = v === 'all' ? allLabel : v;
-    return `<button class="lib-chip-btn ${active === v ? 'active' : ''}" onclick="${setter}('${escAttr(jsStringArg(v))}')">${escHtml(label)}</button>`;
+    return `<button class="lib-chip-btn ${active === v ? 'active' : ''}" aria-pressed="${active === v}" aria-label="${escAttr(`Filter ${kind}: ${label}`)}" onclick="${setter}('${escAttr(jsStringArg(v))}')">${escHtml(label)}</button>`;
   }).join('');
 }
 function releaseFilterBar() {
@@ -1503,11 +1519,26 @@ function releaseFilterBar() {
     chipSet(srcSet, detail.source, 'setSource', 'All sources'),
     chipSet(editionSet, detail.edition, 'setEdition', 'All editions'),
   ].filter(Boolean);
-  return groups.length ? `<div class="lib-release-filters">${groups.map(g => `<div class="lib-chips">${g}</div>`).join('')}</div>` : '';
+  const active = [detail.quality, detail.source, detail.edition].filter(value => value !== 'all').length;
+  return groups.length ? `<details class="lib-detail-filters" ${detail.filtersExpanded ? 'open' : ''} ontoggle="detail.filtersExpanded=this.open">
+    <summary aria-label="Filter releases">Filter releases${active ? ` <span class="count">${active} active</span>` : ''}</summary>
+    <div class="lib-detail-filter-body lib-release-filters">${groups.map(g => `<div class="lib-chips">${g}</div>`).join('')}</div></details>` : '';
 }
-function setQuality(q) { detail.quality = q; renderDetailBody(); }
-function setSource(s) { detail.source = s; renderDetailBody(); }
-function setEdition(e) { detail.edition = e; renderDetailBody(); }
+function setReleaseFilter(kind, value) {
+  if (!['quality', 'source', 'edition'].includes(kind)) return;
+  detail[kind] = value; detail.filtersExpanded = true;
+  renderDetailBody();
+  // A filter click redraws the release list. Retain its semantic focus so
+  // keyboard users can continue refining without returning to the page top.
+  const setter = {quality:'setQuality', source:'setSource', edition:'setEdition'}[kind];
+  const handler = `${setter}('${jsStringArg(value)}')`;
+  const next = [...document.querySelectorAll('.lib-detail-filter-body button')]
+    .find(button => button.getAttribute('onclick') === handler);
+  if (next) next.focus({preventScroll:true});
+}
+function setQuality(q) { setReleaseFilter('quality', q); }
+function setSource(s) { setReleaseFilter('source', s); }
+function setEdition(e) { setReleaseFilter('edition', e); }
 function filteredReleases() {
   return detail.releases.filter(t => {
     if (detail.quality !== 'all' && resOf(t) !== detail.quality) return false;
@@ -1593,7 +1624,7 @@ function renderMovieSection() {
   const inner = order.map(ed => relGroup(ed, byEd.get(ed).sort(relSort))).join('')
     || `<div class="lib-rel-empty">No releases match this filter.</div>`;
   return `<div class="lib-section">
-    <div class="lib-toolbar"><div class="lib-section-head"><h2>Downloads</h2><span class="count">${rels.length}/${detail.releases.length} release${detail.releases.length !== 1 ? 's' : ''}</span></div></div>
+    <div class="lib-toolbar"><div class="lib-section-head"><h2>Available releases</h2><span class="count">${rels.length}/${detail.releases.length} release${detail.releases.length !== 1 ? 's' : ''}</span></div></div>
     ${releaseFilterBar()}${inner}</div>`;
 }
 
@@ -1837,10 +1868,11 @@ function toast(msg) {
   _toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
 function copyMagnet(magnet) {
-  if (magnet) copyText(magnet, 'Magnet link copied', () => recordLibraryGrab(1, 'copy'));
+  if (magnet) copyText(magnet, 'Magnet link copied', scope => recordLibraryGrab(1, 'copy', scope));
 }
 function copyText(text, message, onSuccess) {
-  const done = () => { toast(message); if (onSuccess) onSuccess(); };
+  const scope={accountId:_accountOwner,epoch:_accountOwnerEpoch,signedIn:_accountSignedIn()};
+  const done = () => { toast(message); if (onSuccess) onSuccess(scope); };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
   } else fallbackCopy(text, done);
@@ -1853,127 +1885,229 @@ function fallbackCopy(text, done) {
   document.body.removeChild(ta);
 }
 
-/* ── Account / API key panel ───────────────────────────────────────────── */
+/* ── Account preferences and measured activity ──────────────────────────── */
 let accountState = null;
 let _accountUsageSnapshot = null;
+let _accountRequestVersion = 0;
+let _accountOwner = typeof document !== 'undefined' ? (document.body.dataset.accountId || 'anonymous') : 'anonymous';
+let _accountMethod = typeof document !== 'undefined' ? document.body.dataset.accountMethod : 'anonymous';
+let _accountOwnerEpoch = 0;
+let _accountKeyBusy = false;
+let _accountConnected = false;
+let _accountUsagePeriod = 'tracked';
+let _accountPreferenceStore = null;
+const _accountGrabQueue = [];
+let _accountGrabSaving = false;
+let _accountGrabStorageAvailable = true;
+function _accountGrabCacheKey() { return 'bitagent-library-actions:v1:'+encodeURIComponent(_accountOwner); }
+function _saveAccountGrabQueue() {
+  try { window.localStorage.setItem(_accountGrabCacheKey(),JSON.stringify({schemaVersion:1,events:_accountGrabQueue.map(({epoch,...event})=>event)}));_accountGrabStorageAvailable=true; } catch (_) {_accountGrabStorageAvailable=false;}
+}
+function _restoreAccountGrabQueue() {
+  _accountGrabQueue.length=0;
+  if(!_accountSignedIn())return;
+  try {
+    const stored=JSON.parse(window.localStorage.getItem(_accountGrabCacheKey()) || 'null');
+    if(stored?.schemaVersion!==1 || !Array.isArray(stored.events))return;
+    for(const event of stored.events) if(event?.expectedAccountId===_accountOwner && Number.isSafeInteger(event.count) && event.count>=1 && event.count<=1000 && ['copy','open','export'].includes(event.action) && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.eventId))_accountGrabQueue.push({...event,epoch:_accountOwnerEpoch});
+  } catch (_) {_accountGrabStorageAvailable=false;}
+}
+function _accountElementText(id, text) { const el = document.getElementById(id); if (el) el.textContent = text; }
+function _accountSignedIn() { return !!_accountOwner && !['anonymous','api-client'].includes(_accountOwner) && !['anonymous','open','api-key'].includes(_accountMethod); }
+async function accountRequest(path, options = {}) {
+  try {
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),6000);
+    try {
+      const response = await fetch(path, {...options,signal:controller.signal, headers:{Accept:'application/json',...(options.headers || {})}, credentials:'same-origin'});
+      return {ok:response.ok, status:response.status, data:response.ok ? await response.json() : null};
+    } finally {clearTimeout(timer);}
+  } catch (_) { return {ok:false,status:0,data:null}; }
+}
+function accountPreferenceSettings() { return _accountPreferenceStore?.get() || BitAgentPreferences.normalizeLibraryPreferences({}); }
+function _applyAccountAppearance(settings) {
+  const dark = settings.theme === 'dark' || (settings.theme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-library-density', settings.density);
+  document.documentElement.setAttribute('data-library-motion', settings.motion === 'reduced' || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'system');
+  syncThemeColor();
+  window.dispatchEvent(new CustomEvent('bitagent:preferences'));
+  renderAccountPreferences();
+}
+function _initializeAccountPreferences() {
+  _accountPreferenceStore?.dispose();
+  _restoreAccountGrabQueue();
+  let storage; try { storage=window.localStorage; } catch (_) {}
+  const epoch = _accountOwnerEpoch;
+  _accountPreferenceStore = BitAgentPreferences.createPreferenceStore({ownerId:_accountOwner,authenticated:_accountSignedIn(),storage,
+    request:async(changes,ownerId)=> { if(!_accountConnected)return {ok:false}; const response=await accountRequest('/api/account/preferences',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({expectedAccountId:ownerId,changes})}); return epoch===_accountOwnerEpoch?response:{ok:false}; },
+    onChange:_applyAccountAppearance,
+    onStatus:status=> { _accountElementText('acctPrefStatus',status); const retry=document.getElementById('acctPrefRetry'); if(retry)retry.hidden=!status.includes('unavailable') && !status.includes('pending'); },
+  });
+  _applyAccountAppearance(_accountPreferenceStore.get());
+  _accountElementText('acctPrefStatus',_accountSignedIn()?'Loading account preferences…':'Browser preferences');
+}
+
+function renderAccountPreferences() {
+  const settings=accountPreferenceSettings();
+  const controls={theme:'acctPrefTheme',motion:'acctPrefMotion',density:'acctPrefDensity',region:'acctPrefRegion',contentType:'acctPrefType',sort:'acctPrefSort',quality:'acctPrefQuality',matchedOnly:'acctPrefMatched',englishOnly:'acctPrefEnglish',magnetMode:'acctPrefMagnetMode'};
+  for(const [key,id] of Object.entries(controls)) {
+    const el=document.getElementById(id); if(!el)continue;
+    if(typeof settings[key]==='boolean')el.checked=settings[key]; else {
+      if(key==='region' && !Array.from(el.options || []).some(option=>option.value===settings[key])) { const option=document.createElement('option'); option.value=settings[key];option.textContent=settings[key];el.appendChild(option); }
+      el.value=settings[key];
+    }
+  }
+}
+function setAccountPreference(name,value) { if(!Object.hasOwn(BitAgentPreferences.PREFERENCE_DEFAULTS,name))return; return _accountPreferenceStore?.set({[name]:value}); }
+function retryAccountPreferences() { return _accountPreferenceStore?.retry(); }
+function resetAccountPreferences() { return _accountPreferenceStore?.reset(); }
 function openAccount(fromPop = false) {
-  const panel = document.getElementById('libAccount');
-  const scrim = document.getElementById('libAccountScrim');
-  panel.classList.add('open'); scrim.classList.add('open');
-  panel.setAttribute('aria-hidden', 'false');
-  openModal(panel);
-  // Own history entry so Back closes the account panel (was previously orphaned).
-  if (!fromPop) history.pushState({ lib: 'account' }, '');
-  loadAccount();
+  const panel=document.getElementById('libAccount'), scrim=document.getElementById('libAccountScrim');
+  panel.classList.add('open');scrim.classList.add('open');panel.setAttribute('aria-hidden','false');openModal(panel);
+  if(!fromPop)history.pushState({lib:'account'},'');
+  renderAccountPreferences(); loadAccount();
 }
+function _clearAccountSecret() { const input=document.getElementById('acctApiSecret'),wrap=document.getElementById('acctSecretWrap'); if(input)input.value='';if(wrap)wrap.style.display='none'; }
 function closeAccount(fromPop) {
-  const panel = document.getElementById('libAccount');
-  const scrim = document.getElementById('libAccountScrim');
-  if (!panel.classList.contains('open')) return;
-  if (!fromPop && history.state && history.state.lib === 'account') { history.back(); return; }
-  panel.classList.remove('open'); scrim.classList.remove('open');
-  panel.setAttribute('aria-hidden', 'true');
-  closeModal(panel);
+  const panel=document.getElementById('libAccount'),scrim=document.getElementById('libAccountScrim');
+  if(!panel.classList.contains('open'))return;
+  if(!fromPop&&history.state?.lib==='account'){history.back();return;}
+  panel.classList.remove('open');scrim.classList.remove('open');panel.setAttribute('aria-hidden','true');_clearAccountSecret();closeModal(panel);
 }
-async function loadAccount() {
-  const data = await api('/api/account');
-  if (!data) { renderAccountUsage(null); toast('Account unavailable'); return; }
-  renderAccount(data);
+function _clearAccountView() {
+  _accountConnected=false;_accountOwnerEpoch++;_accountRequestVersion++;
+  _initializeAccountPreferences();
+  accountState=null;_accountUsageSnapshot=null;_clearAccountSecret();
+  _accountElementText('acctAvatar','?');_accountElementText('acctName','Account unavailable');_accountElementText('acctSub','Refresh to reconnect to your account');
+  _accountElementText('acctKeyStatus','Unavailable');_accountElementText('acctKeyMeta','');
+  const url=document.getElementById('acctTorznabUrl');if(url)url.value='';
+  for(const id of ['acctGenerateBtn','acctRevokeBtn']) {const btn=document.getElementById(id);if(btn)btn.disabled=true;}
+  renderAccountUsage(null);
+  _accountElementText('acctPrefStatus','Account unavailable. Display choices still apply to this visit.');
+}
+function _validAccountIdentity(identity) { return !!identity && typeof identity.id==='string' && !!identity.id.trim() && identity.id.length<=200; }
+async function loadAccount(quiet = false) {
+  if(_accountKeyBusy)return false;
+  const version=++_accountRequestVersion,epoch=_accountOwnerEpoch;
+  _accountElementText('acctUsageStatus','Refreshing…');
+  const response=await accountRequest('/api/account');
+  if(version!==_accountRequestVersion || epoch!==_accountOwnerEpoch)return false;
+  if(!response.ok || !_validAccountIdentity(response.data?.identity)){_clearAccountView();if(!quiet)toast('Account unavailable');return false;}
+  renderAccount(response.data); if(_accountGrabQueue.length)retryAccountUsage(); return true;
 }
 function renderAccount(data) {
-  if (accountState && (accountState.identity || {}).id !== (data.identity || {}).id) _accountUsageSnapshot = null;
-  accountState = data;
-  if (data.usage) renderAccountUsage(data.usage);
-  const ident = data.identity || {};
-  const name = ident.display || ident.username || ident.email || ident.id || 'Account';
-  const sub = [ident.email || ident.username || ident.id, ident.method].filter(Boolean).join(' · ');
-  document.getElementById('acctAvatar').textContent = (name[0] || '?').toUpperCase();
-  document.getElementById('acctName').textContent = name;
-  document.getElementById('acctSub').textContent = sub;
-  document.getElementById('acctTorznabUrl').value = data.torznabUrl || '';
-
-  const key = data.apiKey;
-  document.getElementById('acctKeyStatus').textContent = key ? `Active ${key.prefix || ''}` : 'No key';
-  document.getElementById('acctRevokeBtn').disabled = !key;
-  const genLabel = document.getElementById('acctGenerateLabel');
-  if (genLabel) genLabel.textContent = key ? 'Rotate' : 'Generate';
-
-  const keyMeta = document.getElementById('acctKeyMeta');
-  if (keyMeta) {
-    if (key) {
-      const bits = [];
-      if (key.createdAt) bits.push('Created ' + fmtDate(key.createdAt));
-      bits.push(key.lastUsedAt ? 'Last used ' + fmtDate(key.lastUsedAt) : 'Never used');
-      keyMeta.textContent = bits.join(' · ');
-      keyMeta.style.display = '';
-    } else {
-      keyMeta.textContent = '';
-      keyMeta.style.display = 'none';
+  const ident=data.identity || {};
+  if(!_validAccountIdentity(ident)){_clearAccountView();return false;}
+  if(_accountOwner!==ident.id || _accountMethod!==ident.method) {
+    _accountOwner=ident.id;_accountMethod=ident.method;_accountOwnerEpoch++;_accountUsageSnapshot=null;_accountUsagePeriod='tracked';_accountGrabQueue.length=0;_initializeAccountPreferences();
+  }
+  _accountConnected=true;
+  accountState=data;
+  if(data.preferences && _accountSignedIn()) { _accountPreferenceStore?.ingest(data.preferences); if(_accountPreferenceStore?.isPending())_accountPreferenceStore.retry(); }
+  renderAccountUsage(data.usage || null);
+  const name=ident.display||ident.username||ident.email||ident.id||'Account';
+  _accountElementText('acctAvatar',(name[0]||'?').toUpperCase());_accountElementText('acctName',name);
+  _accountElementText('acctSub',[ident.email||ident.username||ident.id,ident.method].filter(Boolean).join(' · '));
+  document.getElementById('acctTorznabUrl').value=data.torznabUrl||'';
+  const key=data.apiKey;
+  _accountElementText('acctKeyStatus',key?`Active ${key.prefix||''}`:'No key');_accountElementText('acctGenerateLabel',key?'Rotate':'Generate');
+  document.getElementById('acctGenerateBtn').disabled=_accountKeyBusy||!_accountSignedIn();
+  document.getElementById('acctRevokeBtn').disabled=_accountKeyBusy||!key||!_accountSignedIn();
+  const meta=document.getElementById('acctKeyMeta');if(meta){meta.textContent=key?[key.createdAt?'Created '+fmtDate(key.createdAt):'',key.lastUsedAt?'Last used '+fmtDate(key.lastUsedAt):'Never used'].filter(Boolean).join(' · '):'';meta.style.display=key?'':'none';}
+  _clearAccountSecret();if(data.apiKeySecret){document.getElementById('acctApiSecret').value=data.apiKeySecret;document.getElementById('acctSecretWrap').style.display='';}
+  return true;
+}
+function accountUsageViewFor(usage) { return BitAgentPreferences.accountUsageViewFor(usage); }
+function _accountPeriodSnapshot(usage) {
+  if(!usage || _accountUsagePeriod==='tracked')return usage;
+  const period=usage.periods?.[_accountUsagePeriod==='7d'?'last7Days':'last30Days'];
+  if(!period || typeof period.complete!=='boolean' || !_isUtcTimestamp(period.windowStart) || !_isUtcTimestamp(period.windowEnd) || Date.parse(period.windowStart)>Date.parse(period.windowEnd) || !Number.isFinite(period.trackingSince))return null;
+  return {...usage,...period,accountId:usage.accountId,revision:usage.revision,observedAt:usage.observedAt,trackingSince:usage.trackingSince};
+}
+function renderAccountUsage(incoming) {
+  if(incoming && incoming.accountId===_accountOwner && !accountUsageViewFor(incoming)) incoming=null;
+  if(incoming) {
+    const accepted=BitAgentPreferences.acceptAccountUsageSnapshot(_accountUsageSnapshot,incoming,_accountOwner);
+    // Missing or malformed responses are unknown, never a remembered zero.
+    if(!accepted || (accepted===_accountUsageSnapshot && incoming.accountId!==_accountOwner))return false;
+    _accountUsageSnapshot=accepted;
+  } else _accountUsageSnapshot=null;
+  const usage=_accountPeriodSnapshot(_accountUsageSnapshot),view=accountUsageViewFor(usage);
+  const ids={acctDownloaded:'downloaded',acctUploaded:'uploaded',acctGrabs:'grabs',acctHitAndRuns:'hitAndRuns',acctApiSearches:'searches',acctRatio:'ratio',acctCopies:'copies',acctOpens:'opens',acctExports:'exports'};
+  for(const [id,key] of Object.entries(ids))_accountElementText(id,view?view[key]:'—');
+  _accountElementText('acctUsageHint',view?view.hint:_accountSignedIn()?'Activity is temporarily unavailable. Refresh to try again.':'Sign in to view your personal activity.');
+  _accountElementText('acctUsageTracked',view?'Tracking since '+fmtDate(usage.trackingSince):'Tracking unavailable');
+  _accountElementText('acctUsageUpdated',view?'Updated '+new Date(usage.observedAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}):'');
+  _accountElementText('acctPrefScope',_accountSignedIn()?'Your choices follow your account across devices':'Browser preferences · sign in to sync across devices');
+  const period=_accountUsagePeriod==='tracked'?null:_accountUsageSnapshot?.periods?.[_accountUsagePeriod==='7d'?'last7Days':'last30Days'];
+  if(view && period) { const utcDate=value=>new Date(value).toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:'UTC'}); _accountElementText('acctUsageTracked',utcDate(period.windowStart)+' – '+utcDate(period.windowEnd)+' · UTC calendar days'); }
+  _accountElementText('acctUsageStatus',_accountGrabQueue.length?'Activity sync pending · '+_accountGrabQueue.length+' action'+(_accountGrabQueue.length===1?'':'s')+(_accountGrabStorageAvailable?'':' · for this visit only'):view?(period&&!period.complete?'Partial window · tracking began '+fmtDate(period.trackingSince):'Synced at last refresh'):'Unavailable');
+  const periods=document.getElementById('acctUsagePeriods');if(periods){periods.hidden=!_accountUsageSnapshot?.periods;periods.querySelectorAll('[data-period]').forEach(btn=>btn.setAttribute('aria-pressed',String(btn.dataset.period===_accountUsagePeriod)));}
+  const retry=document.getElementById('acctUsageRetry');if(retry)retry.hidden=!_accountGrabQueue.length;
+  document.getElementById('acctUsage')?.setAttribute('aria-busy','false');return !!view;
+}
+function setAccountUsagePeriod(period) { if(!['tracked','7d','30d'].includes(period))return;_accountUsagePeriod=period;renderAccountUsage(_accountUsageSnapshot); }
+function refreshAccountUsage() { return loadAccount(); }
+function _accountEventId() {
+  if(globalThis.crypto?.randomUUID)return globalThis.crypto.randomUUID();
+  if(!globalThis.crypto?.getRandomValues)return null;
+  const bytes=globalThis.crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+  return Array.from(bytes,(b,i)=>([4,6,8,10].includes(i)?'-':'')+b.toString(16).padStart(2,'0')).join('');
+}
+async function recordLibraryGrab(count,action,scope) {
+  if(!Number.isSafeInteger(count) || count<1 || count>1000 || !['copy','open','export'].includes(action))return;
+  if(scope && (!scope.signedIn || scope.accountId!==_accountOwner || scope.epoch!==_accountOwnerEpoch)) {
+    // A delayed clipboard completion belongs to the account that initiated it.
+    if(!scope.signedIn)return;
+    const eventId=_accountEventId();if(!eventId)return;
+    try {
+      const key='bitagent-library-actions:v1:'+encodeURIComponent(scope.accountId);
+      const stored=JSON.parse(window.localStorage.getItem(key) || 'null');
+      const events=stored?.schemaVersion===1 && Array.isArray(stored.events)?stored.events:[];
+      events.push({count,action,eventId,expectedAccountId:scope.accountId});
+      window.localStorage.setItem(key,JSON.stringify({schemaVersion:1,events}));
+      if(scope.accountId===_accountOwner) {_restoreAccountGrabQueue();renderAccountUsage(_accountUsageSnapshot);if(_accountConnected)retryAccountUsage();}
+    } catch (_) {toast('Link copied; previous account activity could not be saved');}
+    return;
+  }
+  if(!_accountSignedIn())return;
+  const eventId=_accountEventId();if(!eventId){_accountElementText('acctUsageStatus','Activity could not be synced');return;}
+  _accountGrabQueue.push({count,action,eventId,expectedAccountId:_accountOwner,epoch:_accountOwnerEpoch});
+  _saveAccountGrabQueue();
+  renderAccountUsage(_accountUsageSnapshot);return retryAccountUsage();
+}
+async function retryAccountUsage() {
+  if(_accountGrabSaving || !_accountConnected)return;
+  _accountGrabSaving=true;
+  try {
+    while(_accountGrabQueue.length && _accountConnected) {
+      const event=_accountGrabQueue[0];
+      if(event.expectedAccountId!==_accountOwner || event.epoch!==_accountOwnerEpoch){_accountGrabQueue.shift();_saveAccountGrabQueue();continue;}
+      const {epoch,...body}=event;
+      const response=await accountRequest('/api/account/usage/grab',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(epoch!==_accountOwnerEpoch)continue;
+      if(!response.ok || !accountUsageViewFor(response.data) || response.data.accountId!==event.expectedAccountId || response.data.receipt?.eventId!==event.eventId || response.data.receipt?.recorded!==true){_accountElementText('acctUsageStatus','Activity sync unavailable. Retry to record completed actions.'+(_accountGrabStorageAvailable?'':' Pending actions are kept for this visit only.'));const retry=document.getElementById('acctUsageRetry');if(retry)retry.hidden=false;return;}
+      _accountGrabQueue.shift();_saveAccountGrabQueue();renderAccountUsage(response.data);
     }
-  }
-
-  const secretWrap = document.getElementById('acctSecretWrap');
-  const secretInput = document.getElementById('acctApiSecret');
-  if (data.apiKeySecret) {
-    secretInput.value = data.apiKeySecret;
-    secretWrap.style.display = '';
-  } else {
-    secretInput.value = '';
-    secretWrap.style.display = 'none';
-  }
+  } finally {_accountGrabSaving=false;}
 }
-function accountUsageViewFor(usage) {
-  if (!usage || !Number.isSafeInteger(usage.grabs) || usage.grabs < 0 || !Number.isSafeInteger(usage.apiSearches) || usage.apiSearches < 0) return null;
-  const bytes = value => Number.isSafeInteger(value) && value >= 0 ? (value === 0 ? '0 B' : fmtBytes(value)) : 'Not reported';
-  return { downloaded: bytes(usage.downloadedBytes), uploaded: bytes(usage.uploadedBytes), grabs: fmtNum(usage.grabs),
-    searches: fmtNum(usage.apiSearches), hitAndRuns: Number.isSafeInteger(usage.hitAndRuns) && usage.hitAndRuns >= 0 ? fmtNum(usage.hitAndRuns) : 'Not reported',
-    ratio: Number.isSafeInteger(usage.uploadedBytes) && usage.uploadedBytes >= 0 && Number.isSafeInteger(usage.downloadedBytes) && usage.downloadedBytes > 0 ? (usage.uploadedBytes / usage.downloadedBytes).toFixed(2) : '—',
-    hint: `Grabs count magnet links copied, opened, or exported. Transfer and seeding stats need client reporting.${usage.trackingSince ? ' Activity tracked since ' + fmtDate(usage.trackingSince) + '.' : ''}` };
+async function _mutateAccountKey(method) {
+  if(_accountKeyBusy || !_accountSignedIn())return;
+  _accountKeyBusy=true;const version=++_accountRequestVersion,epoch=_accountOwnerEpoch,owner=_accountOwner;
+  for(const id of ['acctGenerateBtn','acctRevokeBtn'])document.getElementById(id).disabled=true;
+  const path='/api/account/api-key'+(method==='DELETE'?'?expectedAccountId='+encodeURIComponent(owner):'');
+  const response=await accountRequest(path,method==='POST'?{method,headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'default',expectedAccountId:owner})}:{method});
+  _accountKeyBusy=false;
+  if(epoch!==_accountOwnerEpoch || version!==_accountRequestVersion){ if(accountState) {document.getElementById('acctGenerateBtn').disabled=!_accountSignedIn();document.getElementById('acctRevokeBtn').disabled=!_accountSignedIn()||!accountState.apiKey;}return;}
+  if(!response.ok || response.data?.identity?.id!==owner){_clearAccountView();toast(method==='POST'?'Key update failed':'Revoke failed');return;}
+  renderAccount(response.data);toast(method==='POST'?'API key ready':'API key revoked');
 }
-function renderAccountUsage(usage) {
-  if (usage && accountUsageViewFor(usage)) {
-    if (_accountUsageSnapshot && _accountUsageSnapshot.trackingSince === usage.trackingSince) {
-      usage = Object.assign({}, usage, {grabs:Math.max(usage.grabs, _accountUsageSnapshot.grabs), apiSearches:Math.max(usage.apiSearches, _accountUsageSnapshot.apiSearches)});
-    }
-    _accountUsageSnapshot = usage;
-  }
-  const view = accountUsageViewFor(usage);
-  const ids = {acctDownloaded:'downloaded', acctUploaded:'uploaded', acctGrabs:'grabs', acctHitAndRuns:'hitAndRuns', acctApiSearches:'searches', acctRatio:'ratio'};
-  for (const [id, key] of Object.entries(ids)) { const el = document.getElementById(id); if (el) el.textContent = view ? view[key] : '—'; }
-  const hint = document.getElementById('acctUsageHint'); if (hint) hint.textContent = view ? view.hint : 'Activity is temporarily unavailable.';
-  const grid = document.getElementById('acctUsage'); if (grid) grid.setAttribute('aria-busy', 'false');
-}
-async function recordLibraryGrab(count, action) {
-  const usage = await api('/api/account/usage/grab', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({count,action}) });
-  if (usage) renderAccountUsage(usage);
-}
-async function generateAccountKey() {
-  const btn = document.getElementById('acctGenerateBtn');
-  btn.disabled = true;
-  const data = await api('/api/account/api-key', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'default' }),
-  });
-  btn.disabled = false;
-  if (!data) { toast('Key update failed'); return; }
-  renderAccount(data);
-  toast('API key ready');
-}
-async function revokeAccountKey() {
-  const btn = document.getElementById('acctRevokeBtn');
-  btn.disabled = true;
-  const data = await api('/api/account/api-key', { method: 'DELETE' });
-  if (!data) { btn.disabled = false; toast('Revoke failed'); return; }
-  renderAccount(data);
-  toast('API key revoked');
-}
-function copyAccountField(id) {
-  const el = document.getElementById(id);
-  if (!el || !el.value) return;
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(el.value).then(() => toast('Copied')).catch(() => fallbackCopy(el.value, () => toast('Copied')));
-  } else fallbackCopy(el.value, () => toast('Copied'));
+function generateAccountKey() {return _mutateAccountKey('POST');}
+function revokeAccountKey() {return _mutateAccountKey('DELETE');}
+function copyAccountField(id) {const el=document.getElementById(id);if(!el?.value)return;copyText(el.value,'Copied');}
+if(typeof document!=='undefined') {
+  _initializeAccountPreferences();
+  for(const query of ['(prefers-color-scheme: dark)','(prefers-reduced-motion: reduce)'])window.matchMedia?.(query).addEventListener('change',()=>_applyAccountAppearance(accountPreferenceSettings()));
 }
 
 /* ── Global keys + history ──────────────────────────────────────────────── */
@@ -2029,8 +2163,10 @@ renderDetailBody = function () { _origRenderDetailBody(); if (detail.ct === 'tv_
 
 /* ── Boot ───────────────────────────────────────────────────────────────── */
 if (typeof document !== 'undefined') {
+  (async () => {
   _applyModalInert();
-  applyStateFromUrl();
+  await loadAccount(true);
+  applyStateFromUrl(true);
   const _bootPermalink = _readPermalink();
   // Establish a clean browse entry as the history base (strips any title params),
   // then open the shared title (if any) as a pushed entry on top so Back returns
@@ -2040,6 +2176,7 @@ if (typeof document !== 'undefined') {
   if (document.getElementById('libStatsGrid')) loadLibraryStats();
   loadLibrary({ fromPop: true });
   if (_bootPermalink) resolvePermalink(_bootPermalink);
+  })();
 }
 
 // Node's built-in test runner imports these pure state/request helpers. The
@@ -2065,5 +2202,6 @@ if (typeof module !== 'undefined' && module.exports) {
     normalizeLibraryStats,
     libraryStatsViewFor,
     accountUsageViewFor,
+    loadAccount, renderAccount, renderAccountUsage, recordLibraryGrab, retryAccountUsage, generateAccountKey, revokeAccountKey,
   };
 }

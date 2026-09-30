@@ -10,14 +10,20 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Library">
   <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
-  <!-- Apply the saved theme before first paint to avoid a light→dark flash. -->
+  <!-- Read only validated, account-scoped appearance choices before paint. -->
   <script>
     (function () {
+      var owner = {{ (identity.id or 'anonymous') | tojson }};
+      var settings = {};
       try {
-        var t = localStorage.getItem('bitagent-theme');
-        if (!t) t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', t);
-      } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+        var saved = JSON.parse(localStorage.getItem('bitagent-library-preferences:v1:' + encodeURIComponent(owner)) || 'null');
+        if (saved && saved.schemaVersion === 1) settings = saved.settings || {};
+      } catch (e) {}
+      var theme = ['system','light','dark'].indexOf(settings.theme) >= 0 ? settings.theme : 'system';
+      var dark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-library-density', settings.density === 'compact' ? 'compact' : 'comfortable');
+      document.documentElement.setAttribute('data-library-motion', settings.motion === 'reduced' || window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'system');
     })();
   </script>
   <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version }}">
@@ -26,7 +32,7 @@
   <link rel="icon" href="/static/img/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
 </head>
-<body>
+<body data-account-id="{{ identity.id or 'anonymous' }}" data-account-method="{{ identity.method or 'anonymous' }}">
 <a class="lib-skiplink" href="#libBrowse">Skip to library</a>
 <div class="lib-app">
 
@@ -52,7 +58,7 @@
     </div>
 
     <div class="lib-actions">
-      {% if private_indexer_enabled %}<a href="/library/private">Private media</a>{% endif %}
+      {% if private_indexer_enabled %}<a class="lib-private-link" href="/library/private">Private media</a>{% endif %}
       <div id="ge-switcher-mount"></div>
       <button class="lib-magnet-nav" onclick="openMagnetCollection()" aria-label="Review magnet collection" title="Your magnet collection"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 4h4v8a2 2 0 004 0V4h4v8a6 6 0 01-12 0V4z"/><path d="M6 8h4M14 8h4"/></svg><span class="lib-magnet-label">Magnets</span><span data-magnet-count>0</span></button>
       <button class="lib-iconbtn" id="themeToggle" onclick="toggleTheme()"
@@ -69,6 +75,15 @@
 
   <!-- ── Browse view ─────────────────────────────────────────────────── -->
   <main class="lib-browse" id="libBrowse" tabindex="-1">
+    <div class="lib-browse-toolbar">
+      <nav class="lib-browse-nav" aria-label="Browse the library">
+        <button class="lib-browse-tab active" data-lib-type="" onclick="setType('')" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Discover</button>
+        <button class="lib-browse-tab" data-lib-type="movie" onclick="setType('movie')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4"/></svg>Movies</button>
+        <button class="lib-browse-tab" data-lib-type="tv_show" onclick="setType('tv_show')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 3l4 4 4-4"/></svg>Series</button>
+      </nav>
+
+      <p class="lib-browse-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 7v5a3 3 0 006 0V7M6 10v3a6 6 0 0012 0v-3M6 7h3M15 7h3"/></svg>Find a title. Choose a release. Copy a magnet.</p>
+    </div>
     <section class="lib-spotlight is-loading" id="libSpotlight" aria-label="Featured movies and series" aria-roledescription="carousel">
       <img class="lib-spotlight-image" id="libSpotlightImage" alt="" decoding="async" fetchpriority="high" hidden>
       <div class="lib-spotlight-content">
@@ -86,52 +101,31 @@
       </div>
     </section>
     <section class="lib-providers" aria-labelledby="libProviderTitle">
-      <div class="lib-provider-head"><div><span class="lib-drawer-eyebrow">Browse by service</span><h2 id="libProviderTitle">A world of entertainment.</h2></div>
-        <div class="lib-provider-controls"><input id="libProviderSearch" type="search" placeholder="Find a provider…" aria-label="Find a provider" oninput="filterProviders()"><select id="libProviderRegion" aria-label="Provider country" onchange="changeProviderRegion(this.value)"><option value="US">United States</option></select></div>
+      <div class="lib-provider-head">
+        <div class="lib-provider-intro">
+          <h2 id="libProviderTitle">Browse services &amp; channels</h2>
+          <div class="lib-discovery-modes" role="group" aria-label="Discovery catalogue">
+            <button id="libStreamingMode" type="button" aria-pressed="true" onclick="setDiscoveryMode('streaming')">Streaming</button>
+            <button id="libNetworkMode" type="button" aria-pressed="false" onclick="setDiscoveryMode('networks')">TV &amp; cable</button>
+          </div>
+        </div>
+        <div class="lib-provider-controls"><input id="libProviderSearch" type="search" placeholder="Find a streaming service…" aria-label="Find a streaming service" oninput="searchDiscoveryPicker()"><select id="libProviderRegion" aria-label="Streaming availability country" onchange="changeProviderRegion(this.value)"><option value="US">United States</option></select></div>
       </div>
       <div class="lib-provider-list" id="libProviders" aria-label="Streaming providers"></div>
-      <p class="lib-provider-note" id="libProviderStatus" role="status">Loading streaming providers…</p>
-      <p class="lib-provider-attribution">Provider availability powered by <a href="https://www.justwatch.com/" target="_blank" rel="noopener">JustWatch</a> via <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>.</p>
-    </section>
-    {% if show_library_stats %}
-    <section class="lib-stats-banner lib-library-counts" aria-labelledby="libStatsTitle">
-      <div class="lib-stats-copy">
-        <span class="lib-stats-eyebrow">Library snapshot</span>
-        <h2 id="libStatsTitle">The library, right now.</h2>
+      <div class="lib-provider-footer">
+        <p class="lib-provider-note" id="libProviderStatus" role="status">Loading streaming providers…</p>
+        <div class="lib-picker-actions">
+          <button id="libProviderMore" class="lib-text-button" type="button" hidden aria-expanded="false" aria-controls="libProviders" onclick="toggleProviderPicker()">Browse all services <span aria-hidden="true">↓</span></button>
+          <div class="lib-network-pagination"><button id="libNetworkMore" class="lib-text-button" type="button" hidden onclick="loadNetworks(true)">More networks <span aria-hidden="true">↓</span></button></div>
+        </div>
       </div>
-      <dl class="lib-stats-grid" id="libStatsGrid" aria-busy="true">
-        <div class="lib-stat-card">
-          <dt>Total torrents</dt>
-          <dd>
-            <span class="lib-stat-number is-loading" id="libStatTotal" aria-hidden="true">—</span>
-            <span class="lib-stat-hint" id="libStatTotalHint">Loading…</span>
-          </dd>
-        </div>
-        <div class="lib-stat-card">
-          <dt>Added this week</dt>
-          <dd>
-            <span class="lib-stat-number is-loading" id="libStatAdded" aria-hidden="true">—</span>
-            <span class="lib-stat-hint" id="libStatAddedHint">Last 7 days</span>
-          </dd>
-        </div>
-      </dl>
-      <p class="lib-stats-unavailable" id="libStatsUnavailable" hidden>
-        Library totals are temporarily unavailable.
-      </p>
-      <p class="lib-sr-only" id="libStatsStatus" role="status" aria-live="polite" aria-atomic="true">
-        Loading library statistics.
-      </p>
+      <p class="lib-provider-attribution" id="libProviderAttribution">Provider availability powered by <a href="https://www.justwatch.com/" target="_blank" rel="noopener">JustWatch</a> via <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>.</p>
+      <p class="lib-provider-attribution" id="libNetworkAttribution" hidden>Network names and logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. Network origin does not indicate availability in your country.</p>
     </section>
-    {% endif %}
 
-    <div class="lib-browse-toolbar">
-      <nav class="lib-browse-nav" aria-label="Browse the library">
-        <button class="lib-browse-tab active" data-lib-type="" onclick="setType('')" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Discover</button>
-        <button class="lib-browse-tab" data-lib-type="movie" onclick="setType('movie')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4"/></svg>Movies</button>
-        <button class="lib-browse-tab" data-lib-type="tv_show" onclick="setType('tv_show')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 3l4 4 4-4"/></svg>Series</button>
-      </nav>
+
+    <div class="lib-results-controls">
       <button class="lib-filter-toggle" id="libFilterToggle" onclick="toggleFilterRail()" aria-expanded="false" aria-controls="libFilterRail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="18" r="2"/></svg><span>Filters</span><span class="lib-filter-count" id="libFilterCount" hidden>0</span></button>
-      <p class="lib-browse-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 7v5a3 3 0 006 0V7M6 10v3a6 6 0 0012 0v-3M6 7h3M15 7h3"/></svg>Find a title. Choose a release. Copy a magnet.</p>
     </div>
     <div class="lib-filter-summary" id="libFilterSummary" hidden>
       <div class="lib-active-filters" id="libActiveFilters" aria-label="Active filters"></div>
@@ -219,6 +213,10 @@
 
         <!-- Flat results grid (search results / single-type browse) -->
         <div class="lib-results" id="libResults" style="display:none">
+          <div class="lib-catalogue-heading" id="libCatalogueHeading" hidden>
+            <span class="lib-catalogue-logo" id="libCatalogueLogo" hidden aria-hidden="true"></span>
+            <div><h2 id="libCatalogueTitle"></h2><p id="libCatalogueSubtitle"></p></div>
+          </div>
           <div class="lib-resultnote" id="libResultNote" role="status" aria-live="polite" aria-atomic="true"></div>
           <div class="lib-grid" id="libraryGrid"></div>
           <div class="lib-pager" id="libPager">
@@ -235,6 +233,36 @@
         </div>
       </div>
     </div>
+    {% if show_library_stats %}
+    <section class="lib-stats-banner lib-library-counts" aria-labelledby="libStatsTitle">
+      <div class="lib-stats-copy">
+        <span class="lib-stats-eyebrow">Library snapshot</span>
+        <h2 id="libStatsTitle">The library, right now.</h2>
+      </div>
+      <dl class="lib-stats-grid" id="libStatsGrid" aria-busy="true">
+        <div class="lib-stat-card">
+          <dt>Total torrents</dt>
+          <dd>
+            <span class="lib-stat-number is-loading" id="libStatTotal" aria-hidden="true">—</span>
+            <span class="lib-stat-hint" id="libStatTotalHint">Loading…</span>
+          </dd>
+        </div>
+        <div class="lib-stat-card">
+          <dt>Added this week</dt>
+          <dd>
+            <span class="lib-stat-number is-loading" id="libStatAdded" aria-hidden="true">—</span>
+            <span class="lib-stat-hint" id="libStatAddedHint">Last 7 days</span>
+          </dd>
+        </div>
+      </dl>
+      <p class="lib-stats-unavailable" id="libStatsUnavailable" hidden>
+        Library totals are temporarily unavailable.
+      </p>
+      <p class="lib-sr-only" id="libStatsStatus" role="status" aria-live="polite" aria-atomic="true">
+        Loading library statistics.
+      </p>
+    </section>
+    {% endif %}
   </main>
 
   <!-- ── Detail view (title hero + releases) ─────────────────────────── -->
@@ -267,17 +295,125 @@
         </div>
       </section>
 
-      <section class="lib-account-section stack">
-        <div class="lib-section-head compact"><h3>Your activity</h3><span class="count">All time</span></div>
-        <dl class="lib-usage-grid" id="acctUsage" aria-busy="true">
-          <div><dt>Downloaded</dt><dd id="acctDownloaded">—</dd></div>
-          <div><dt>Uploaded</dt><dd id="acctUploaded">—</dd></div>
-          <div><dt>Grabs</dt><dd id="acctGrabs">—</dd></div>
-          <div><dt>Hit &amp; runs</dt><dd id="acctHitAndRuns">—</dd></div>
-          <div><dt>API searches</dt><dd id="acctApiSearches">—</dd></div>
-          <div><dt>Ratio</dt><dd id="acctRatio">—</dd></div>
-        </dl>
-        <p class="lib-account-hint" id="acctUsageHint">Loading activity…</p>
+      <section class="lib-account-section stack lib-account-activity" aria-labelledby="acctUsageTitle">
+        <div class="lib-section-head compact">
+          <h3 id="acctUsageTitle">Your activity</h3>
+          <button class="lib-text-button" id="acctUsageRefresh" type="button" onclick="refreshAccountUsage()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 7a7 7 0 0111.7-1L20 9M4 15l2.2 3a7 7 0 0011.7-1"/></svg>Refresh</button>
+        </div>
+        <div class="lib-usage-context">
+          <p id="acctUsageTracked">Loading tracking period…</p>
+          <p id="acctUsageUpdated"></p>
+        </div>
+        <div class="lib-usage-periods" id="acctUsagePeriods" role="group" aria-label="Activity period" hidden>
+          <button type="button" data-period="tracked" aria-pressed="true" onclick="setAccountUsagePeriod('tracked')">Tracked</button>
+          <button type="button" data-period="7d" aria-pressed="false" onclick="setAccountUsagePeriod('7d')">7 days</button>
+          <button type="button" data-period="30d" aria-pressed="false" onclick="setAccountUsagePeriod('30d')">30 days</button>
+        </div>
+        <div id="acctUsage" aria-busy="true">
+          <dl class="lib-usage-grid lib-usage-primary">
+            <div><dt>Links grabbed</dt><dd id="acctGrabs">—</dd></div>
+            <div><dt>API searches</dt><dd id="acctApiSearches">—</dd></div>
+          </dl>
+          <dl class="lib-usage-breakdown" aria-label="Magnet link breakdown">
+            <div><dt>Copied</dt><dd id="acctCopies">—</dd></div>
+            <div><dt>Opened</dt><dd id="acctOpens">—</dd></div>
+            <div><dt>Exported</dt><dd id="acctExports">—</dd></div>
+          </dl>
+          <details class="lib-transfer-report">
+            <summary><span>Transfers &amp; seeding</span><small id="acctTransferStatus">Client reporting unavailable</small></summary>
+            <p>These values require client reporting.</p>
+            <dl class="lib-usage-grid lib-usage-transfers">
+              <div><dt>Downloaded</dt><dd id="acctDownloaded">—</dd></div>
+              <div><dt>Uploaded</dt><dd id="acctUploaded">—</dd></div>
+              <div><dt>Hit &amp; runs</dt><dd id="acctHitAndRuns">—</dd></div>
+              <div><dt>Ratio</dt><dd id="acctRatio">—</dd></div>
+            </dl>
+          </details>
+        </div>
+        <details class="lib-usage-method">
+          <summary>How activity is counted</summary>
+          <p class="lib-account-hint" id="acctUsageHint">Loading activity…</p>
+        </details>
+        <div class="lib-usage-feedback">
+          <p id="acctUsageStatus" role="status" aria-live="polite" aria-atomic="true"></p>
+          <button class="lib-text-button" id="acctUsageRetry" type="button" hidden onclick="retryAccountUsage()">Retry activity</button>
+        </div>
+      </section>
+
+      <section class="lib-account-section stack lib-preferences" aria-labelledby="acctPrefTitle">
+        <div class="lib-section-head compact"><h3 id="acctPrefTitle">Your preferences</h3></div>
+        <p class="lib-account-hint lib-preference-scope" id="acctPrefScope">Appearance and browsing defaults.</p>
+        <fieldset class="lib-preference-group">
+          <legend>Display</legend>
+          <label class="lib-preference-row">
+            <span class="lib-preference-copy"><strong>Appearance</strong><small>Follow your device or choose a theme.</small></span>
+            <select id="acctPrefTheme" onchange="setAccountPreference('theme', this.value)">
+              <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
+            </select>
+          </label>
+          <label class="lib-preference-row">
+            <span class="lib-preference-copy"><strong>Motion</strong><small>Control animations and title rotation.</small></span>
+            <select id="acctPrefMotion" onchange="setAccountPreference('motion', this.value)">
+              <option value="system">System</option><option value="reduced">Reduce motion</option>
+            </select>
+          </label>
+          <label class="lib-preference-row">
+            <span class="lib-preference-copy"><strong>Card spacing</strong><small>Choose how densely titles are arranged.</small></span>
+            <select id="acctPrefDensity" onchange="setAccountPreference('density', this.value)">
+              <option value="comfortable">Comfortable</option><option value="compact">Compact</option>
+            </select>
+          </label>
+        </fieldset>
+        <fieldset class="lib-preference-group">
+          <legend>Search defaults</legend>
+          <p class="lib-preference-caption">Used for new visits. Shared links keep their filters.</p>
+          <label class="lib-preference-row">
+            <span class="lib-preference-copy"><strong>Streaming country</strong><small>Availability country for service catalogues.</small></span>
+            <select id="acctPrefRegion" onchange="setAccountPreference('region', this.value)"><option value="US">United States</option></select>
+          </label>
+          <label class="lib-preference-row">
+            <span class="lib-preference-copy"><strong>Browse</strong><small>The title types shown on a new visit.</small></span>
+            <select id="acctPrefType" onchange="setAccountPreference('contentType', this.value)">
+              <option value="">All titles</option><option value="movie">Movies</option><option value="tv_show">Series</option>
+            </select>
+          </label>
+          <label class="lib-preference-row">
+            <span class="lib-preference-copy"><strong>Sort order</strong><small>Default order for indexed releases.</small></span>
+            <select id="acctPrefSort" onchange="setAccountPreference('sort', this.value)">
+              <option value="seeders">Most seeded</option><option value="newest">Newest</option><option value="name">A–Z</option><option value="size">Largest</option>
+            </select>
+          </label>
+          <label class="lib-preference-row">
+            <span class="lib-preference-copy"><strong>Quality</strong><small>Preferred resolution for indexed releases.</small></span>
+            <select id="acctPrefQuality" onchange="setAccountPreference('quality', this.value)">
+              <option value="">Any quality</option><option value="V2160p">2160p · 4K</option><option value="V1080p">1080p · Full HD</option><option value="V720p">720p · HD</option>
+            </select>
+          </label>
+          <label class="lib-preference-check">
+            <input id="acctPrefMatched" type="checkbox" checked onchange="setAccountPreference('matchedOnly', this.checked)">
+            <span class="lib-preference-copy"><strong>Matched titles only</strong><small>Show releases identified in the title catalogue.</small></span>
+          </label>
+          <label class="lib-preference-check">
+            <input id="acctPrefEnglish" type="checkbox" onchange="setAccountPreference('englishOnly', this.checked)">
+            <span class="lib-preference-copy"><strong>English audio only</strong><small>Filter out releases without an English audio track.</small></span>
+          </label>
+        </fieldset>
+        <fieldset class="lib-preference-group">
+          <legend>Magnet defaults</legend>
+          <label class="lib-preference-row">
+            <span class="lib-preference-copy"><strong>Title selection</strong><small>Default selection when copying title or season magnets.</small></span>
+            <select id="acctPrefMagnetMode" onchange="setAccountPreference('magnetMode', this.value)">
+              <option value="best">Recommended</option><option value="all">All versions</option>
+            </select>
+          </label>
+        </fieldset>
+        <div class="lib-preference-save">
+          <p class="lib-preference-status" id="acctPrefStatus" role="status" aria-live="polite" aria-atomic="true">Loading preferences…</p>
+          <div class="lib-preference-actions">
+            <button class="lib-text-button" id="acctPrefRetry" type="button" hidden onclick="retryAccountPreferences()">Retry</button>
+            <button class="lib-text-button" id="acctPrefReset" type="button" onclick="resetAccountPreferences()">Reset defaults</button>
+          </div>
+        </div>
       </section>
 
       <section class="lib-account-section stack">
@@ -341,6 +477,7 @@
 <script src="/static/js/torrent-kind.js?v={{ asset_version }}"></script>
 <script src="/static/js/norm-title.js?v={{ asset_version }}"></script>
 <script src="/static/js/library-tools.js?v={{ asset_version }}"></script>
+<script src="/static/js/library-preferences.js?v={{ asset_version }}"></script>
 <script src="/static/js/library.js?v={{ asset_version }}"></script>
 <script src="/static/js/library-next.js?v={{ asset_version }}"></script>
 <script src="/static/js/library-discovery.js?v={{ asset_version }}"></script>

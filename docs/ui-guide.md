@@ -125,10 +125,36 @@ Closing or switching the title cancels the pending scan. Metadata failure does
 not prevent using loaded releases. Motion respects the browser preference,
 and dialogs contain keyboard focus and restore it on close.
 
-The account sidebar shows all-time aggregate activity since tracking began.
-**Grabs** counts magnet links successfully copied or passed to open/export
-actions; repeated actions count again. **API searches** counts successful
-authenticated Torznab search feeds. These counts survive API-key rotation and
-store no release names, hashes, URLs, or keys. Downloaded/uploaded bytes,
-ratio, and hit-and-run totals require client or tracker reporting, so unavailable
-values appear as **Not reported** rather than inferred transfers or zeroes.
+The account sidebar puts tracked activity next to saved preferences. Signed-in
+members can choose system/light/dark appearance, reduced motion, card spacing,
+streaming country, initial title type, release sorting and quality, matched-only
+and English-audio filters, and recommended/all-version magnet selection. Display
+changes apply immediately; search defaults apply to fresh library visits. Shared
+URLs keep their own filters. Preferences sync per account and cache in that
+account's browser scope; guests use browser preferences. A failed save explicitly
+shows its local scope and a retry action. Unavailable browser storage is disclosed.
+
+**Links grabbed** counts links successfully copied or passed to open/export
+actions; repeated user actions count again. Copied, opened and exported totals
+are shown separately. A retry uses the same event receipt and does not count the
+action twice or repeat the clipboard/client action. Pending receipts cache in
+that account's browser scope so refresh can retry them; only action kind, link
+count and a random receipt ID are retained. Unavailable storage is disclosed. **API searches** counts
+successful authenticated Torznab search feeds, including empty responses; it
+does not count library searches, capability requests or failed feeds. These
+counts survive API-key rotation and store no release names, hashes, URLs or keys.
+
+Tracked totals start on the displayed tracking date. Seven- and thirty-day views
+use UTC calendar days, including today, with a displayed partial-window notice
+until daily tracking covers the entire window. Daily history begins with this
+feature; older totals are retained without inventing historical daily counts.
+Daily aggregates retain thirty dates. Event receipts remain durable to prevent
+late retries from being counted again. Refresh, observation time and pending-sync
+states distinguish a current response from unavailable or unsynced activity.
+Stale responses cannot replace a different account's counters or key details.
+
+Downloaded/uploaded bytes, ratio, and hit-and-run totals require reliable client
+or tracker reporting, so unavailable values appear as **Not reported** rather
+than inferred transfers or zeroes. A link action does not prove that a transfer
+started or completed. Anonymous sessions and shared global API credentials do
+not receive personal activity totals.

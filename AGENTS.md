@@ -8,6 +8,8 @@
 - Keep unreleased changes in `CHANGELOG.md`; never rewrite published tags.
 - Use a GitHub noreply commit identity. Document behavior and relevant validation in the pull request.
 
+- Keep internal journals and deployment handoffs outside this public repository; record behavior and validation in the pull request.
+
 ## Session notes
 
 - Optional private tracker address ownership uses a separate bounded,

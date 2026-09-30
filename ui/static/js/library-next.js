@@ -19,6 +19,7 @@ function clearAllFilters() {
 function removeLibraryFilter(kind, value) {
   if (kind === 'q') { clearLibSearch(); return; }
   if (kind === 'provider') { selectProvider(''); return; }
+  if (kind === 'network') { selectNetwork(''); return; }
   if (kind === 'type') { setType(''); return; }
   if (kind === 'sort') { setLibSort('seeders'); return; }
   if (kind === 'year') { state.yearMin = ''; state.yearMax = ''; loadLibrary(); return; }
@@ -35,6 +36,7 @@ function renderActiveLibraryFilters() {
   const add = (kind, value, label) => filters.push({ kind, value, label });
   if (state.q) add('q', '', `Search: ${state.q}`);
   if (state.provider) add('provider', '', typeof providerName === 'function' ? providerName(state.provider) : `Provider ${state.provider}`);
+  if (state.network) add('network', '', typeof networkName === 'function' ? networkName(state.network) : `Network ${state.network}`);
   if (state.type) add('type', '', typeLabel(state.type));
   if (state.yearMin || state.yearMax) add('year', '', `${state.yearMin || 'Any year'} – ${state.yearMax || 'today'}`);
   state.genres.forEach(v => add('genres', v, genreLabel(v)));
