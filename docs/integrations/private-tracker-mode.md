@@ -1,69 +1,39 @@
-# Private Tracker Mode
+# Authenticated indexing and private media torrents
 
-## What "private tracker mode" means here
+BitAgent supports two different access patterns. Protecting an indexer's search
+API with a key controls who can query that API. It does not make the indexed
+torrents private.
 
-In the *arr ecosystem, the term "private tracker" does not refer to community structure or ratio enforcement; it simply denotes an indexer that requires authentication to access. BitAgent adopts this terminology to clarify its operational profile. When you enable API key gating via the `TORZNAB_API_KEY` (enforced by the BitAgent server's Torznab handler) and `DASHBOARD_API_KEY` (enforced by the BitAgent dashboard), BitAgent functions identically to any other private indexer from Prowlarr's perspective: it blocks unauthenticated requests, validates passkeys, and routes traffic only for authorized clients.
+## Authenticated DHT gateway
 
-Structurally, however, BitAgent is a self-hosted, public-DHT metadata indexer. You are not joining a community; you *are* the tracker. Your "passkey" is the API key, and your only "members" are your own *arr stack. This mode borrows the authentication and routing conventions of traditional private trackers while remaining fundamentally a local search engine.
+The DHT catalog discovers public torrents and returns their public magnets. The
+core Torznab endpoint can require `TORZNAB_API_KEY` or `TORZNAB_API_KEYS`. The
+web service's Torznab proxy uses a personal member API key and forwards requests
+to the core with its separate operator credential.
 
-## Setup
+Public torrents continue to use their public swarms. API authentication does not
+provide private tracker announces, user seed ratios, or protection against
+redistributing those public magnets. See [Prowlarr setup](prowlarr.md) and the
+[Torznab reference](../reference/torznab-api.md) for configuration.
 
-Generate cryptographically secure, distinct keys for each service boundary:
+## Private media library
 
-```bash
-openssl rand -hex 32 > .env-TORZNAB_API_KEY
-openssl rand -hex 32 > .env-DASHBOARD_API_KEY
-```
+The optional private library publishes separate media releases with
+`private=1` metainfo, approved SSO memberships and personalized private tracker
+credentials. It has its own feed at `/torznab/private/api`. Tracker observations
+provide per-member transfer and seeding metrics; link requests and completed
+download events remain separate measurements.
 
-Export both values into your BitAgent environment. `TORZNAB_API_KEY` protects the Torznab XML endpoint for inbound indexer queries. `DASHBOARD_API_KEY` secures the web UI and administrative REST API. They must remain separate to maintain least-privilege boundaries.
+Use authenticated `.torrent` downloads by default. They carry the private flag
+and the member's announce credential. Personal magnets are an optional
+convenience for compatible clients and also contain a bearer credential. Copying
+a valid credential can give another person access; neither private torrents nor
+authentication can guarantee that an authorized member will not redistribute a
+file. Revocation blocks future authenticated requests and tracker announces,
+but does not disconnect transfers that peers have already established.
 
-Validate each gate independently before proceeding:
-
-```bash
-
-# Torznab endpoint verification
-
-curl -H "Authorization: Bearer $(cat .env-TORZNAB_API_KEY)" \
-  https://bitagent.example.com/torznab?t=caps
-
-# Dashboard verification
-
-curl "https://bitagent.example.com:8080/api/me?apikey=$(cat .env-DASHBOARD_API_KEY)"
-```
-
-Both should return `200 OK` with valid responses.
-
-In Prowlarr, navigate to `Settings → Indexers → Add New Indexer`, select `Custom (Torznab)`, and populate the fields exactly as you would for any private-tracker endpoint:
-
-- **URL:** `https://bitagent.example.com/torznab`
-- **API Key:** the `TORZNAB_API_KEY` you generated
-- **Enable Private:** checked (forces Prowlarr to skip public fallbacks)
-- **Priority:** `10` or `1` depending on your search strategy
-- **Search/Download Limits:** match your DHT throughput
-
-Once saved, Prowlarr will automatically append the `apikey` query parameter to all downstream requests. When the bundled definition ships upstream (`Prowlarr/Indexers!XXXX`), this collapses to a one-click import.
-
-## Why this matters
-
-Exposing BitAgent to the public internet without authentication would hand your entire indexed state and query metadata to unknown actors. Private mode keeps search patterns, library synchronization state, and DHT harvest entirely internal to your *arr stack.
-
-By enforcing API gating, you gain full compatibility with Prowlarr's private-indexer conventions: automatic rate-limiting, configurable retry budgets, and search-priority queuing all function as designed. The key is rotation-friendly; you can issue a Sonarr-style key rotation via `POST /api/settings/regenerate-api-key` without restarting the service or breaking active indexer health checks.
-
-## Comparison to traditional private trackers
-
-Traditional private trackers operate as invitation-only communities governed by ratio enforcement, upload curators, internal forums, and peer-review systems. BitAgent borrows only the authentication-gating pattern from that model. There is no member directory, no ratio tracking, and no community moderation. You are not seeding to a centralized swarm; you are harvesting a public DHT network.
-
-Curation is handled automatically by your CEL classifier rather than uploader reputation. While traditional trackers rely on social capital and manual approval, BitAgent relies on local configuration and deterministic indexing rules.
-
-## Operator checklist
-
-- Generate `TORZNAB_API_KEY` and `DASHBOARD_API_KEY` using separate `openssl rand` commands.
-- Inject both keys into your BitAgent container environments before first startup.
-- Restrict network egress on BitAgent if you wish to limit public DHT participation.
-- Place Caddy or Traefik in front to terminate TLS and handle upstream routing.
-- Store both API values in your password manager; never commit them to version control.
-- Set Prowlarr/Sonarr/Radarr indexer priority and search limits to match your bandwidth.
-- Verify operation by querying `?t=search&q=test` and confirming a `200` with valid Torznab XML.
-- Establish a 90-day key rotation cadence using the `/api/settings/regenerate-api-key` endpoint.
-- Monitor `/api/audit` logs for any unauthorized configuration changes or key rotations.
-- If exposing to the public internet, explicitly set `TRUST_NPM_HEADERS=false` after `DASHBOARD_API_KEY` is applied.
+See [Private library indexer](private-indexer.md) for setup, separate catalog
+definitions, metrics limits and upstream submission requirements. A deployment
+with invite-only membership can be listed as a private indexer; always-open
+account registration is classified as semi-private by Jackett. This catalog
+classification is separate from the torrent's `private=1` flag.

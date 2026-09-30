@@ -131,7 +131,8 @@ func (w *uiWorker) runOnce(ctx context.Context) error {
 	host, port, _ := net.SplitHostPort(w.cfg.ListenAddress)
 	// --no-proxy-headers is load-bearing: the UI's proxy-tier auth trusts the
 	// transport peer address (see ui/auth.py), which X-Forwarded-For must not replace.
-	// Torznab credentials are query parameters; raw access logs would retain them.
+	// HTTP paths and query strings carry member tracker passkeys and indexer
+	// credentials. Keep startup/error logs, but never log credentialed requests.
 	cmd := exec.CommandContext(ctx, w.cfg.Python, "-m", "uvicorn", "app:app", "--no-proxy-headers", "--no-access-log", "--host", host, "--port", port)
 	cmd.Dir = w.cfg.Dir
 	cmd.Env = os.Environ()

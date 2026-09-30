@@ -31,6 +31,7 @@
       </div>
     </div>
     <nav class="sidebar-nav">
+      {% if private_indexer_enabled %}<a class="nav-item" href="/private-admin">Private library members</a>{% endif %}
       <div class="sidebar-nav-group">
         <div class="sidebar-nav-label">Overview</div>
         <a class="nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')">

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add an optional private media catalog alongside the public DHT catalog, with
+  grants for existing SSO identities, revocable member tracker credentials,
+  personalized private torrents and separate client-reported transfer metrics.
+- Prepare and verify real movie, episode, season and show torrents from a
+  read-only Plex inventory or explicit file manifest; advertise only freshly
+  verified seed copies and retain separate metadata aliases for shared swarms.
+- Add a private library and membership administration page, private Torznab
+  feed, and candidate Jackett definitions for both catalog sources.
+- Keep credential-bearing request URLs out of application access logs.
+
 ## 2.11.0 — 2026-09-30
 
 - Redesign the public library with colorful discovery navigation, animated cards,

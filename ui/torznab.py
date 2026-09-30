@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import logging
 import time
-import xml.etree.ElementTree as ET
+import hashlib
+from datetime import datetime, timezone
+from xml.etree import ElementTree as ET
 
 import httpx
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from config import settings
 from account_usage import record_api_search
@@ -35,8 +37,9 @@ router = APIRouter()
 _TZ_BUCKETS: dict = {}
 
 
-def _torznab_rate_ok(key_id) -> tuple[bool, int]:
-    rate = getattr(settings, "torznab_rate_limit_per_min", 0) or 0
+def _torznab_rate_ok(key_id, *, rate=None) -> tuple[bool, int]:
+    if rate is None:
+        rate = getattr(settings, "torznab_rate_limit_per_min", 0) or 0
     if rate <= 0:
         return True, 0
     cap = float(rate)
@@ -52,7 +55,8 @@ def _torznab_rate_ok(key_id) -> tuple[bool, int]:
 
 
 def _extract_torznab_api_key(request: Request) -> str:
-    query_key = request.query_params.get("apikey") or request.query_params.get("api_key")
+    query = {key.lower(): value for key, value in request.query_params.multi_items()}
+    query_key = query.get("apikey") or query.get("api_key")
     if query_key:
         return query_key
     header_key = request.headers.get("x-api-key")
@@ -65,9 +69,9 @@ def _extract_torznab_api_key(request: Request) -> str:
 
 
 def _torznab_error(status: int, code: int, description: str) -> Response:
-    xml = (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        f'<error code="{code}" description="{description}"/>'
+    xml = ET.tostring(
+        ET.Element("error", code=str(code), description=description),
+        encoding="utf-8", xml_declaration=True,
     )
     return Response(xml, status_code=status, media_type="application/xml")
 
@@ -122,6 +126,129 @@ def _successful_search(request: Request, upstream) -> bool:
     )
 
 
+def _private_caps() -> bytes:
+    """Advertise only the categories and search modes implemented locally."""
+    caps = ET.Element("caps")
+    ET.SubElement(caps, "server", title="BitAgent Private Library")
+    ET.SubElement(caps, "limits", max="100", default="100")
+    ET.SubElement(caps, "registration", available="no", open="no")
+    searching = ET.SubElement(caps, "searching")
+    ET.SubElement(searching, "search", available="yes", supportedParams="q")
+    ET.SubElement(searching, "movie-search", available="yes", supportedParams="q,imdbid,tmdbid")
+    ET.SubElement(
+        searching, "tv-search", available="yes",
+        supportedParams="q,imdbid,tmdbid,tvdbid,season,ep",
+    )
+    categories = ET.SubElement(caps, "categories")
+    ET.SubElement(categories, "category", id="2000", name="Movies")
+    ET.SubElement(categories, "category", id="5000", name="TV")
+    return ET.tostring(caps, encoding="utf-8", xml_declaration=True)
+
+
+def _private_feed(result: dict, base_url: str, api_key: str) -> bytes:
+    """Private releases use authenticated torrent URLs, never public magnets."""
+    from urllib.parse import urlencode
+
+    namespace = "http://torznab.com/schemas/2015/feed"
+    ET.register_namespace("torznab", namespace)
+    rss = ET.Element("rss", version="2.0")
+    channel = ET.SubElement(rss, "channel")
+    ET.SubElement(channel, "title").text = "BitAgent Private Library"
+    ET.SubElement(channel, "link").text = base_url + "/library"
+    ET.SubElement(channel, "description").text = "Private member media releases"
+    ET.SubElement(
+        channel, f"{{{namespace}}}response",
+        offset=str(result["offset"]), total=str(result["total"]),
+    )
+    for release in result["items"]:
+        item = ET.SubElement(channel, "item")
+        ET.SubElement(item, "title").text = release["title"]
+        alias = hashlib.sha256(release["source_id"].encode()).hexdigest()
+        ET.SubElement(item, "guid", isPermaLink="false").text = "private:" + release["id"] + ":" + alias
+        download = base_url + "/torznab/private/api?" + urlencode({
+            "t": "get", "id": release["id"], "apikey": api_key,
+        })
+        ET.SubElement(item, "link").text = download
+        created = datetime.fromtimestamp(float(release["created_at"]), timezone.utc)
+        ET.SubElement(item, "pubDate").text = created.strftime("%a, %d %b %Y %H:%M:%S +0000")
+        ET.SubElement(
+            item, "enclosure", url=download,
+            length=str(release["size"]), type="application/x-bittorrent",
+        )
+
+        def attr(name, value):
+            if value is not None:
+                ET.SubElement(item, f"{{{namespace}}}attr", name=name, value=str(value))
+
+        attr("category", 2000 if release["kind"] == "movie" else 5000)
+        attr("size", release["size"])
+        # Unknown swarm counts stay absent; a download-capable release is not
+        # evidence that someone is currently seeding it.
+        attr("seeders", release.get("seeders"))
+        attr("leechers", release.get("leechers"))
+        attr("imdb", release.get("imdb_id"))
+        attr("tmdbid", release.get("tmdb_id"))
+        attr("tvdbid", release.get("tvdb_id"))
+        attr("season", release.get("season"))
+        for episode in release.get("episodes") or []:
+            attr("episode", episode)
+    return ET.tostring(rss, encoding="utf-8", xml_declaration=True)
+
+
+@router.api_route("/torznab/private/api", methods=["GET", "HEAD"], include_in_schema=False)
+async def private_torznab(request: Request):
+    """A separate paginated indexer for authenticated private releases."""
+    import private_indexer
+
+    if not settings.private_indexer_enabled:
+        return _torznab_error(404, 910, "Private indexer disabled")
+    presented = _extract_torznab_api_key(request)
+    row = await lookup_user_api_key(_hash_user_api_key(presented)) if presented else None
+    if not row:
+        return _torznab_error(401, 100, "Invalid API key")
+    if not await private_indexer.member_active(row["user_id"]):
+        return _torznab_error(403, 100, "Membership required")
+    ok, retry_after = _torznab_rate_ok(row["id"])
+    if not ok:
+        response = _torznab_error(429, 500, "Rate limit exceeded")
+        response.headers["Retry-After"] = str(retry_after)
+        return response
+    params = {
+        key.lower(): value for key, value in request.query_params.multi_items()
+        if key.lower() not in {"apikey", "api_key"}
+    }
+    function = params.get("t", "search").lower()
+    if function == "caps":
+        body = _private_caps()
+    elif function == "get":
+        if not params.get("id"):
+            return _torznab_error(400, 200, "Missing parameter (id)")
+        try:
+            return await private_indexer.torrent_response(params["id"], request, row)
+        except HTTPException as exc:
+            code = 100 if exc.status_code in {401, 403} else 300 if exc.status_code == 404 else 203
+            return _torznab_error(exc.status_code, code, str(exc.detail))
+    elif function in {"search", "movie", "tvsearch"}:
+        params["t"] = function
+        try:
+            result = await private_indexer.search_releases(params)
+        except ValueError as exc:
+            return _torznab_error(400, 201, str(exc))
+        except HTTPException as exc:
+            if exc.status_code in {400, 422}:
+                return _torznab_error(400, 201, str(exc.detail))
+            raise
+        body = _private_feed(result, private_indexer.external_base(request), presented)
+    else:
+        return _torznab_error(400, 202, "Function not available")
+    await touch_user_api_key(row["id"])
+    return Response(
+        b"" if request.method == "HEAD" else body,
+        media_type="application/xml",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.api_route("/torznab/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
 async def torznab_proxy(path: str, request: Request):
     if path.strip("/") not in _TORZNAB_PATHS:
@@ -132,6 +259,11 @@ async def torznab_proxy(path: str, request: Request):
     row = await lookup_user_api_key(_hash_user_api_key(presented))
     if not row:
         return _torznab_error(401, 100, "Invalid API key")
+    if settings.private_indexer_enabled:
+        import private_indexer
+
+        if not await private_indexer.torznab_requires_member(row):
+            return _torznab_error(403, 100, "Membership required")
 
     ok, retry_after = _torznab_rate_ok(row["id"])
     if not ok:
@@ -165,7 +297,8 @@ async def torznab_proxy(path: str, request: Request):
                 headers=headers,
             )
     except httpx.HTTPError as exc:
-        # HTTP exception strings may contain the upstream URL and injected key.
+        # httpx exception text may include the operator key in the upstream
+        # request URL. The failure class is enough to diagnose connectivity.
         logger.warning("torznab proxy failed (%s)", type(exc).__name__)
         return _torznab_error(502, 900, "Upstream Torznab request failed")
 

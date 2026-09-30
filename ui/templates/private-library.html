@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ 'Private library administration' if admin else 'Private media library' }} · BitAgent</title>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/private-library.css?v=1">
+</head>
+<body data-admin="{{ 'true' if admin else 'false' }}">
+  <main>
+    <nav><a href="/library">← Discovery</a>{% if admin %}<a href="/">Operator console</a>{% endif %}</nav>
+    <h1>{{ 'Private library administration' if admin else 'Private media library' }}</h1>
+    <p>{{ 'Approve existing SSO identities and review member activity.' if admin else 'Verified media releases for approved members. Your torrent and magnet links contain a revocable personal tracker credential.' }}</p>
+    <p id="status" role="status" aria-live="polite"></p>
+    {% if admin %}
+    <section aria-labelledby="members-heading">
+      <h2 id="members-heading">Membership</h2>
+      <form id="member-form"><label>Existing SSO user ID <input name="user" required maxlength="200"></label><label>Access <select name="active"><option value="true">Approve</option><option value="false">Suspend</option></select></label><button>Save membership</button></form>
+      <div id="members"></div>
+    </section>
+    {% else %}
+    <section aria-labelledby="connection-heading">
+      <h2 id="connection-heading">Your indexer connection</h2>
+      <p>Add the private Torznab URL to Prowlarr or Jackett with your personal API key. Rotating the key also revokes tracker credentials in your earlier torrents.</p>
+      <p id="connection"></p><button id="rotate-key">Create or rotate personal key</button>
+      <label id="secret-label" hidden>New key — copy now and keep private <input id="secret" readonly autocomplete="off"></label>
+    </section>
+    <form id="search-form"><label>Search media <input name="q" type="search" maxlength="300"></label><label>Type <select name="t"><option value="search">All media</option><option value="movie">Movies</option><option value="tvsearch">TV</option></select></label><button>Search</button></form>
+    <section aria-labelledby="releases-heading"><h2 id="releases-heading">Available releases</h2><div id="releases"></div><div class="paging"><button id="prev-page">Previous</button><span id="page-status"></span><button id="next-page">Next</button></div></section>
+    {% endif %}
+    <section aria-labelledby="metrics-heading"><h2 id="metrics-heading">{{ 'Member activity' if admin else 'My activity' }}</h2><p>Transfers and ratios come from client-reported tracker observations. Link requests are counted separately. A ratio stays blank until downloaded bytes have been observed.</p><div id="metrics"></div></section>
+  </main>
+  <script src="/static/js/private-library.js?v=1" defer></script>
+</body>
+</html>

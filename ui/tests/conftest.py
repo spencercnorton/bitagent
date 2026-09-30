@@ -90,7 +90,12 @@ def _restore_settings():
         "operator_roles", "operator_hosts", "public_library_hosts",
         "sso_cookie_name", "tmdb_api_key", "app_switcher_script_url",
         "torznab_api_key", "bitagent_graphql_url", "bitagent_torznab_url",
+        "torznab_rate_limit_per_min",
         "bitagent_metrics_url",
+        "private_indexer_enabled", "private_indexer_secret", "private_indexer_url",
+        "private_seeder_url", "private_seeder_username", "private_seeder_password",
+        "private_seed_verification_ttl", "private_tracker_rate_limit_per_min",
+        "private_peer_cidrs",
         # Integration creds — route tests mutate these to exercise the
         # configured/unconfigured branches; restore so order can't leak state.
         "sonarr_base_url", "sonarr_api_key",
