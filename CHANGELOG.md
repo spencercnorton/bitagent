@@ -14,6 +14,7 @@
 - Replace the collection prompt with direct title/show/season magnet copy controls.
 - Persist private per-account aggregate grab and successful Torznab-search totals;
   show transfer and hit-and-run metrics as unreported until client reporting exists.
+- Avoid retaining Torznab query-string credentials in raw UI access/error logs.
 - Page title releases within explicit bounds and disclose partial results.
 - Preserve collection history, dialog focus, and title identity during async metadata loads.
 
