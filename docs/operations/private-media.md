@@ -8,6 +8,11 @@ existing SSO identities; explicit owner grants control membership.
 ## Configure the service
 
 Keep the feature disabled until the seed client, proxy and SSO are ready.
+Then enable it on a withheld deployment to approve members, import the catalog
+and provision the original seed. Keep public ingress closed during this
+bootstrap: the private administration endpoints also return 404 when the
+feature is disabled. Admit public traffic only after the seed, network and
+client acceptance checks below pass.
 These settings are startup-only and cannot be changed through the settings API:
 
 | Setting | Purpose |
