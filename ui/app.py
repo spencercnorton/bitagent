@@ -176,6 +176,9 @@ async def _security_headers(request: Request, call_next):
             settings.private_indexer_enabled and _host_scope(request) == "public"
             and not path.startswith(("/static/", "/torznab/", "/private/", "/api/private/"))
             and path not in {"/healthz", "/api/me", "/api/account", "/api/account/private", "/private-admin"}
+            # A suspended member must still be able to revoke their own
+            # credentials. The route retains SSO identity and CSRF checks.
+            and not (path == "/api/account/api-key" and request.method == "DELETE")
         )
         if membership_required:
             try:

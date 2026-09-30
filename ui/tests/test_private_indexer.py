@@ -32,7 +32,7 @@ def private_config():
     torznab._TZ_BUCKETS.clear()
     async def clear():
         db = await database.get_db()
-        for table in ("private_members", "private_releases", "private_release_aliases", "private_peers", "private_tracker_keys", "private_transfer_totals", "user_api_keys"):
+        for table in ("private_members", "private_releases", "private_release_aliases", "private_peers", "private_tracker_keys", "private_transfer_totals", "user_api_keys", "account_usage"):
             await db.execute("DELETE FROM " + table)
         await db.commit()
     asyncio.run(clear())
@@ -161,6 +161,47 @@ def test_suspend_removes_peers_and_invalidates_existing_download_and_announce(cl
     assert client.get("/torznab/api?t=caps", params={"apikey": key}).status_code == 401
     assert client.put("/api/private/members/member", json={"active": True}, headers=identity("owner", "OWNER")).status_code == 200
     assert b"failure reason" in announce(client, path)
+
+
+def test_suspended_public_member_can_revoke_only_their_key(client):
+    key, release_id = setup_release(client)
+    owner = identity("owner", "OWNER")
+    assert client.put("/api/private/members/other", json={"active": True}, headers=owner).status_code == 200
+    other_key = client.post("/api/account/api-key", headers=identity("other")).json()["apiKeySecret"]
+    assert client.put("/api/private/members/member", json={"active": False}, headers=owner).status_code == 200
+    public = {**identity(), "host": "library.example.org"}
+    assert client.delete("/api/account/api-key", headers={"host": "library.example.org"}).status_code == 401
+    assert client.delete("/api/account/api-key", headers={**public, "sec-fetch-site": "cross-site"}).status_code == 403
+    assert client.post("/api/account/api-key", headers=public).status_code == 403
+    response = client.delete("/api/account/api-key", headers=public)
+    assert response.status_code == 200
+    assert response.json()["apiKey"] is None
+    assert client.post("/api/account/api-key", headers=public).status_code == 403
+    assert client.get("/torznab/private/api", params={"t": "caps", "apikey": key}).status_code == 401
+    assert client.get("/torznab/private/api", params={"t": "caps", "apikey": other_key}).status_code == 200
+
+
+def test_private_searches_update_account_usage_only_for_successful_gets(client):
+    key, release_id = setup_release(client)
+
+    def count():
+        return client.get("/api/account", headers=identity()).json()["usage"]["apiSearches"]
+
+    assert count() == 0
+    params = {"apikey": key}
+    assert client.get("/torznab/private/api", params={**params, "t": "caps"}).status_code == 200
+    assert client.get("/torznab/private/api", params={**params, "t": "get", "id": release_id}).status_code == 200
+    assert client.head("/torznab/private/api", params={**params, "t": "search"}).status_code == 200
+    assert client.get("/torznab/private/api", params={**params, "t": "search", "cat": "invalid"}).status_code == 400
+    assert client.get("/torznab/private/api", params={**params, "t": "music"}).status_code == 400
+    assert client.get("/torznab/private/api", params={"t": "search", "apikey": "invalid"}).status_code == 401
+    assert count() == 0
+    for function in ("search", "movie", "tvsearch"):
+        assert client.get("/torznab/private/api", params={**params, "t": function}).status_code == 200
+    assert count() == 3  # Empty successful TV feeds are search requests too.
+    assert client.put("/api/private/members/member", json={"active": False}, headers=identity("owner", "OWNER")).status_code == 200
+    assert client.get("/torznab/private/api", params={**params, "t": "search"}).status_code == 401
+    assert count() == 3
 
 
 def test_tracker_delta_accounting_baselines_and_self_only_metrics(client):

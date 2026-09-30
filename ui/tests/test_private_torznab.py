@@ -17,7 +17,7 @@ import torznab
 def private_feed(monkeypatch):
     monkeypatch.setattr(config.settings, "private_indexer_enabled", True)
     monkeypatch.setattr(config.settings, "torznab_rate_limit_per_min", 0)
-    state = {"active": True, "searched": [], "downloads": [], "touched": []}
+    state = {"active": True, "searched": [], "downloads": [], "touched": [], "usage": []}
     key_row = {"id": 901, "user_id": "synthetic-member"}
 
     async def lookup(key_hash):
@@ -29,6 +29,9 @@ def private_feed(monkeypatch):
 
     async def touch(key_id):
         state["touched"].append(key_id)
+
+    async def usage(user_id):
+        state["usage"].append(user_id)
 
     async def search(params):
         state["searched"].append(params)
@@ -49,6 +52,7 @@ def private_feed(monkeypatch):
 
     monkeypatch.setattr(torznab, "lookup_user_api_key", lookup)
     monkeypatch.setattr(torznab, "touch_user_api_key", touch)
+    monkeypatch.setattr(torznab, "record_api_search", usage)
     monkeypatch.setattr(private_indexer, "member_active", member)
     monkeypatch.setattr(private_indexer, "search_releases", search)
     monkeypatch.setattr(private_indexer, "torrent_response", torrent)
@@ -103,6 +107,19 @@ def test_private_feed_torrent_download_and_pagination(client, private_feed):
     assert "magneturl" not in attrs
     assert b"magnet:" not in response.content
     assert not private_feed["downloads"]
+    assert private_feed["usage"] == ["synthetic-member"]
+
+
+def test_private_usage_failure_preserves_feed_and_redacts_log(client, private_feed, monkeypatch, caplog):
+    async def failed_usage(user_id):
+        raise RuntimeError("https://synthetic.example.org/?apikey=synthetic-secret")
+
+    monkeypatch.setattr(torznab, "record_api_search", failed_usage)
+    response = client.get("/torznab/private/api?t=search&apikey=ba_test")
+    assert response.status_code == 200
+    assert ET.fromstring(response.content).tag == "rss"
+    assert "RuntimeError" in caplog.text
+    assert "synthetic-secret" not in caplog.text
 
 
 def test_private_alias_guids_distinguish_one_shared_swarm():

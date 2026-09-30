@@ -242,6 +242,13 @@ async def private_torznab(request: Request):
     else:
         return _torznab_error(400, 202, "Function not available")
     await touch_user_api_key(row["id"])
+    if request.method == "GET" and function in {"search", "movie", "tvsearch"}:
+        try:
+            await record_api_search(row["user_id"])
+        except Exception as exc:
+            # Match the DHT proxy: optional usage accounting cannot fail the
+            # search, and exception URLs/credentials never enter the log.
+            logger.warning("account usage recording failed (%s)", type(exc).__name__)
     return Response(
         b"" if request.method == "HEAD" else body,
         media_type="application/xml",
