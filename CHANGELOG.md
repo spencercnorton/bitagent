@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 2.12.1 — 2026-09-30
+
+- Recognize qBittorrent 5.2 login responses and session cookies when checking
+  private seeder readiness. Keep failed authentication, unusable cookies and
+  incomplete seed copies unavailable.
+
 ## 2.12.0 — 2026-09-30
 
 - Add an optional private media catalog alongside the public DHT catalog, with
