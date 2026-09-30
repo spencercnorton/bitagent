@@ -25,7 +25,7 @@ pushing: public history, logs and uploaded screenshots are public data.
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.26.8+ (the version in `go.mod` also drives CI and the container build)
 - Postgres 14+ (16 recommended)
 - Docker + Docker Compose (for the local stack)
 - `task` (https://taskfile.dev) — used as the build entrypoint

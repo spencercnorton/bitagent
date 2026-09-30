@@ -19,6 +19,13 @@
   stale readiness after process restart; require verified seed registration before
   advertising private releases.
 
+### Security
+
+- Update pgx, CEL, mapstructure, Ed25519, compression and Go crypto/network/Unicode
+  dependencies to their fixed releases, with required transitive module updates.
+  Use the supported Go 1.26.8 toolchain in development, CI and the pinned container
+  build.
+
 ## 2.11.0 — 2026-09-30
 
 - Redesign the public library with colorful discovery navigation, animated cards,
