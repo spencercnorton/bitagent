@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add optional short-lived device address ownership for private tracker
+  credentials, with authenticated seed snapshots, expiry and replay checks,
+  and current-member filtering of advertised peers and swarm counts.
+
 ## 2.12.1 — 2026-09-30
 
 - Recognize qBittorrent 5.2 login responses and session cookies when checking

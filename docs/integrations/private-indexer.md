@@ -57,6 +57,15 @@ transfer and seeding counters; client-reported counters can be inaccurate and
 must not be presented as independently verified byte measurements. Public DHT
 magnets do not identify who downloads from their public swarm.
 
+An operator can optionally require fresh address ownership with
+`PRIVATE_PEER_BINDINGS_REQUIRED`. The tracker then rejects a copied credential
+when the announcing approved address belongs to another SSO account, and
+filters peers and counts through the same current bindings. See
+[tracker address ownership](../operations/private-media.md#optional-tracker-address-ownership)
+for the authenticated snapshot contract and expiry behavior. The option
+defaults to `false`; it does not make counters independently trustworthy or
+prevent approved members from sharing files directly.
+
 Private torrents reduce redistribution through DHT and let the operator revoke
 announce credentials. A copied, still-valid credential is a bearer credential;
 it cannot be guaranteed unshareable. Private torrents cannot prevent an

@@ -7,3 +7,11 @@
 - Capture demos in a disposable environment with synthetic data. Review every animation frame.
 - Keep unreleased changes in `CHANGELOG.md`; never rewrite published tags.
 - Use a GitHub noreply commit identity. Document behavior and relevant validation in the pull request.
+
+## Session notes
+
+- Optional private tracker address ownership uses a separate bounded,
+  authenticated seed snapshot. Keep transfer metrics labeled client-reported,
+  preserve the disabled default, and cover authorization and expiry with real
+  ASGI/SQLite regressions. Public-content checks exclude operation journals;
+  record only generic implementation and validation here.
