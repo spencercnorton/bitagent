@@ -52,6 +52,7 @@
     </div>
 
     <div class="lib-actions">
+      {% if private_indexer_enabled %}<a href="/library/private">Private media</a>{% endif %}
       <div id="ge-switcher-mount"></div>
       <button class="lib-magnet-nav" onclick="openMagnetCollection()" aria-label="Review magnet collection" title="Your magnet collection"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 4h4v8a2 2 0 004 0V4h4v8a6 6 0 01-12 0V4z"/><path d="M6 8h4M14 8h4"/></svg><span class="lib-magnet-label">Magnets</span><span data-magnet-count>0</span></button>
       <button class="lib-iconbtn" id="themeToggle" onclick="toggleTheme()"

@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## 2.12.0 — 2026-09-30
+
+- Add an optional private media catalog alongside the public DHT catalog, with
+  grants for existing SSO identities, revocable member tracker credentials,
+  personalized private torrents and separate client-reported transfer metrics.
+- Prepare and verify real movie, episode, season and show torrents from a
+  read-only Plex inventory or explicit file manifest; advertise only freshly
+  verified seed copies and retain separate metadata aliases for shared swarms.
+- Add a private library and membership administration page, private Torznab
+  feed, and candidate Jackett definitions for both catalog sources.
+- Keep credential-bearing request URLs out of application access logs.
+- Stream large Plex inventories into bounded catalog shards with resumable hashing,
+  atomic publication generations, and independent full-file verification.
+- Add optional shared read-rate limits for publication and verification hashing,
+  without throttling metadata, file-stat checks, or unchanged cache reuse.
+- Fail closed on interrupted inventory pagination, unavailable seed copies, and
+  stale readiness after process restart; require verified seed registration before
+  advertising private releases.
+
+### Security
+
+- Update pgx, CEL, mapstructure, Ed25519, compression and Go crypto/network/Unicode
+  dependencies to their fixed releases, with required transitive module updates.
+  Use the supported Go 1.26.8 toolchain in development, CI and the pinned container
+  build; check called Go dependencies for known vulnerabilities in public CI.
+
 ## 2.11.0 — 2026-09-30
 
 - Redesign the public library with colorful discovery navigation, animated cards,

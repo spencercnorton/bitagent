@@ -27,6 +27,19 @@ class Settings(BaseSettings):
     dashboard_api_key: str = ""
     torznab_api_key: str = ""
     torznab_rate_limit_per_min: int = 120
+    # Optional member catalog. Separate from the public DHT corpus; all settings
+    # are startup-only and disabling this feature closes every private route.
+    private_indexer_enabled: bool = False
+    private_indexer_secret: str = ""
+    private_indexer_url: str = ""
+    private_seeder_url: str = ""
+    private_seeder_username: str = ""
+    private_seeder_password: str = ""
+    private_seed_verification_ttl: int = 1800
+    private_tracker_rate_limit_per_min: int = 10000
+    # Optional peer network allowlist (for a member VPN deployment). The seed
+    # client firewall must enforce the same boundary on BitTorrent peer ports.
+    private_peer_cidrs: str = ""
     # Proxy identity is accepted only from these transport-peer CIDRs. Uvicorn
     # proxy-header rewriting must stay disabled so Request.client is the peer,
     # not a client-controlled X-Forwarded-For value.

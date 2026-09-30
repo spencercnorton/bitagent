@@ -131,6 +131,8 @@ async def bump_block_phrase_hits(counts: dict[int, int]) -> None:
 
 
 async def _init_tables(db: aiosqlite.Connection):
+    from private_indexer import init_schema
+    await init_schema(db)
     await db.executescript("""
         CREATE TABLE IF NOT EXISTS settings_overrides (
             key TEXT PRIMARY KEY,

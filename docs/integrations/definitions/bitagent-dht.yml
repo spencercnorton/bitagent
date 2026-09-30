@@ -1,0 +1,90 @@
+---
+id: bitagent-dht
+name: BitAgent DHT Catalog
+description: "BitAgent member-access indexer of public DHT torrents"
+language: en-US
+type: private
+encoding: UTF-8
+links:
+  - https://bitagent.example.org/
+caps:
+  categorymappings:
+    - {id: 2000, cat: Movies}
+    - {id: 2030, cat: Movies/SD}
+    - {id: 2040, cat: Movies/HD}
+    - {id: 2045, cat: Movies/UHD}
+    - {id: 2060, cat: Movies/3D}
+    - {id: 3000, cat: Audio}
+    - {id: 3030, cat: Audio/Audiobook}
+    - {id: 4000, cat: PC}
+    - {id: 4050, cat: PC/Games}
+    - {id: 5000, cat: TV}
+    - {id: 5030, cat: TV/SD}
+    - {id: 5040, cat: TV/HD}
+    - {id: 5045, cat: TV/UHD}
+    - {id: 5070, cat: TV/Anime}
+    - {id: 6000, cat: XXX}
+    - {id: 6070, cat: XXX/Other}
+    - {id: 7000, cat: Books}
+    - {id: 7020, cat: Books/EBook}
+    - {id: 7030, cat: Books/Comics}
+    - {id: 8000, cat: Other}
+  modes:
+    search: [q]
+    movie-search: [q, imdbid, tmdbid]
+    tv-search: [q, imdbid, tmdbid, tvdbid, season, ep]
+    music-search: [q]
+    book-search: [q]
+settings:
+  - name: apikey
+    type: password
+    label: API Key
+search:
+  paths:
+    - path: torznab/api
+      response:
+        type: xml
+  inputs:
+    apikey: "{{ .Config.apikey }}"
+    t: "{{ .Query.Type }}"
+    q: "{{ .Keywords }}"
+    cat: "{{ join .Categories \",\" }}"
+    imdbid: "{{ .Query.IMDBIDShort }}"
+    tmdbid: "{{ .Query.TMDBID }}"
+    tvdbid: "{{ .Query.TVDBID }}"
+    season: "{{ .Query.Season }}"
+    ep: "{{ .Query.Ep }}"
+    limit: 100
+  error:
+    - selector: error
+      message:
+        selector: error
+        attribute: description
+  rows:
+    selector: rss > channel > item
+  fields:
+    category:
+      selector: "[name=category]"
+      attribute: value
+    title:
+      selector: title
+    details:
+      text: /library
+    date:
+      selector: pubDate
+    size:
+      selector: "[name=size]"
+      attribute: value
+    download:
+      selector: enclosure
+      attribute: url
+    seeders:
+      selector: "[name=seeders]"
+      attribute: value
+      optional: true
+    leechers:
+      selector: "[name=leechers]"
+      attribute: value
+      optional: true
+# Membership controls this site's API access. These DHT-origin torrent magnets
+# remain public and must never be classified as private library releases.

@@ -65,6 +65,7 @@ from deps import (
     require_public_library,
 )
 from torznab import router as torznab_router
+import private_indexer
 from infisical import hydrate_settings
 from telemetry import (
     MetricEnvelope,
@@ -89,9 +90,13 @@ async def lifespan(app: FastAPI):
     hydrate_settings(settings)
     validate_auth_settings()
     _validate_host_settings()
+    private_indexer.validate_settings()
     _app_switcher_origin()  # a malformed APP_SWITCHER_SCRIPT_URL fails startup, not every request
     await get_db()
+    await private_indexer.reset_readiness()
+    private_indexer.start_readiness_worker()
     yield
+    await private_indexer.stop_readiness_worker()
     _reset_stats_snapshot_cache()
     _reset_library_stats_cache()
     _reset_indexer_stats_cache()
@@ -105,6 +110,7 @@ app = FastAPI(title="BitAgent Console", version=__version__, lifespan=lifespan)
 
 # Torznab proxy lives in its own module (ba_-key auth, not the SSO gate).
 app.include_router(torznab_router)
+app.include_router(private_indexer.router)
 app.include_router(discovery.router)
 
 # CSRF is otherwise mitigated only by our routes being JSON-only (a simple
@@ -149,7 +155,43 @@ async def _security_headers(request: Request, call_next):
     ):
         resp = JSONResponse(status_code=403, content={"detail": "Cross-site request blocked"})
     else:
-        resp = await call_next(request)
+        # Private deployments restrict the whole member-facing discovery site,
+        # including its existing public DHT catalog. Account identity/status can
+        # be read before approval so the owner can grant the existing SSO ID.
+        # Machine Torznab/download/announce routes enforce their own credentials.
+        path = request.scope.get("path", "")
+        if path == "/api/private/catalog/import":
+            try:
+                require_operator(request)
+            except HTTPException as exc:
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers={"Cache-Control": "no-store"})
+            # Bound the body before FastAPI loads/decodes JSON or base64. The
+            # cached request body is replayed by Starlette's middleware receive.
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > 8 * 1024 * 1024:
+                    return JSONResponse(status_code=413, content={"detail": "Catalog batch too large"}, headers={"Cache-Control": "no-store"})
+                body.extend(chunk)
+            request._body = bytes(body)
+        membership_required = (
+            settings.private_indexer_enabled and _host_scope(request) == "public"
+            and not path.startswith(("/static/", "/torznab/", "/private/", "/api/private/"))
+            and path not in {"/healthz", "/api/me", "/api/account", "/api/account/private", "/private-admin"}
+            # A suspended member must still be able to revoke their own
+            # credentials. The route retains SSO identity and CSRF checks.
+            and not (path == "/api/account/api-key" and request.method == "DELETE")
+        )
+        if membership_required:
+            try:
+                identity = require_auth(request)
+                if not await private_indexer.member_active(str(identity["id"])):
+                    raise HTTPException(403, "Approved membership required")
+            except HTTPException as exc:
+                resp = JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            else:
+                resp = await call_next(request)
+        else:
+            resp = await call_next(request)
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -408,6 +450,8 @@ async def api_account_create_key(
     body: AccountApiKeyRequest | None = None,
     identity: dict = Depends(require_auth),
 ):
+    if settings.private_indexer_enabled and not await private_indexer.member_active(_account_user_id(identity)):
+        raise HTTPException(403, "Approved membership required")
     api_key = _new_user_api_key()
     row = await create_user_api_key(
         _account_user_id(identity),
@@ -445,6 +489,7 @@ def _library_response(request: Request, identity: dict):
             "app_switcher_script_url": settings.app_switcher_script_url.strip(),
             "library_brand": settings.library_brand,
             "app_version": __version__,
+            "private_indexer_enabled": settings.private_indexer_enabled,
             # `/library` remains a convenient library-shell link on the
             # operator host, but public-only data widgets must stay absent
             # there because their API deliberately returns 404.
@@ -463,6 +508,7 @@ def _dashboard_response(request: Request, identity: dict):
             "asset_version": ASSET_VERSION,
             "app_switcher_script_url": settings.app_switcher_script_url.strip(),
             "app_version": __version__,
+            "private_indexer_enabled": settings.private_indexer_enabled,
         },
     )
 
