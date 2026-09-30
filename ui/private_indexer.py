@@ -119,11 +119,12 @@ def validate_settings():
         raise RuntimeError("PRIVATE_INDEXER_URL must be a canonical HTTPS origin")
     if parts.hostname not in _configured_hosts(settings.public_library_hosts, "PUBLIC_LIBRARY_HOSTS"):
         raise RuntimeError("PRIVATE_INDEXER_URL must name a PUBLIC_LIBRARY_HOSTS entry")
-    if settings.private_seeder_url:
-        parts = urlsplit(settings.private_seeder_url)
-        if (parts.scheme not in {"http", "https"} or not parts.hostname
-                or parts.username or parts.password or parts.query or parts.fragment):
-            raise RuntimeError("PRIVATE_SEEDER_URL must be a fixed HTTP(S) URL")
+    if not settings.private_seeder_url:
+        raise RuntimeError("PRIVATE_SEEDER_URL is required when the private indexer is enabled")
+    parts = urlsplit(settings.private_seeder_url)
+    if (parts.scheme not in {"http", "https"} or not parts.hostname
+            or parts.username or parts.password or parts.query or parts.fragment):
+        raise RuntimeError("PRIVATE_SEEDER_URL must be a fixed HTTP(S) URL")
 
 
 def enabled():
@@ -327,6 +328,13 @@ def _ready_cutoff():
     return time.time() - settings.private_seed_verification_ttl
 
 
+async def reset_readiness():
+    """Require a fresh seed probe after every enabled application startup."""
+    if settings.private_indexer_enabled:
+        async with private_write() as db:
+            await db.execute("UPDATE private_releases SET ready=0,verified_at=NULL")
+
+
 async def refresh_readiness():
     """One bounded probe of the configured seeder, shared by the startup worker.
 
@@ -359,7 +367,10 @@ async def refresh_readiness():
                     row = by_hash.get(info_hash)
                     if row and torrent.get("size") == row["size"] and torrent.get("progress") == 1 and torrent.get("amount_left") == 0 and torrent.get("state") in {"uploading", "stalledUP", "forcedUP"}:
                         verified[info_hash] = time.time()
-    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+    except Exception:
+        # Every ordinary probe failure invalidates cached readiness. Do not
+        # include upstream exception text or URLs in logs; cancellation still
+        # propagates because CancelledError is a BaseException.
         verified.clear()
     async with private_write() as db:
         for row in rows:
@@ -370,7 +381,7 @@ async def refresh_readiness():
 
 def start_readiness_worker():
     global _READINESS_TASK
-    if not settings.private_indexer_enabled or not settings.private_seeder_url:
+    if not settings.private_indexer_enabled:
         return
     async def refresh_loop():
         while True:

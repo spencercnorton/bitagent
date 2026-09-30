@@ -6,11 +6,14 @@ import time
 from urllib.parse import urlencode, urlsplit
 
 import pytest
+from fastapi.testclient import TestClient
 
+import app as app_module
 import config
 import database
 import private_indexer as private
 import torznab
+from conftest import _with_transport_peer
 
 
 PROOF = "p" * 40
@@ -25,6 +28,7 @@ def private_config():
     config.settings.private_indexer_enabled = True
     config.settings.private_indexer_secret = "s" * 40
     config.settings.private_indexer_url = "https://library.example.org"
+    config.settings.private_seeder_url = "http://seeder.example.org"
     config.settings.require_auth = True
     config.settings.trust_npm_headers = True
     config.settings.proxy_auth_secret = PROOF
@@ -100,12 +104,57 @@ def test_startup_requires_auth_strong_secret_and_https_origin():
     for key, value in (("require_auth", False), ("private_indexer_secret", "weak"),
                        ("private_indexer_url", "https://user:secret@library.example.org"),
                        ("private_indexer_url", "http://library.example.org"),
+                       ("private_seeder_url", ""),
                        ("private_indexer_url", "https://library.example.org/path")):
         old = getattr(config.settings, key)
         setattr(config.settings, key, value)
         with pytest.raises(RuntimeError):
             private.validate_settings()
         setattr(config.settings, key, old)
+
+
+def test_startup_missing_seeder_url_refuses_enabled_application():
+    config.settings.private_seeder_url = ""
+    with pytest.raises(RuntimeError, match="PRIVATE_SEEDER_URL is required"):
+        with TestClient(_with_transport_peer(app_module.app, "127.0.0.1")):
+            pytest.fail("An enabled private application must not start without its seeder")
+
+
+def test_startup_withdraws_cached_readiness_before_initial_probe(monkeypatch):
+    from torrent_metainfo import bdecode, bencode
+
+    with TestClient(_with_transport_peer(app_module.app, "127.0.0.1")) as first:
+        key, release_id = setup_release(first)
+        download(first, key, release_id)
+        withdrawn = metainfo()
+        info = bdecode(base64.b64decode(withdrawn["metainfo_base64"]))[b"info"]
+        info[b"name"] = b"Withdrawn.mkv"
+        withdrawn.update(source_id="synthetic:withdrawn:1", title="Withdrawn Synthetic Movie",
+                         info_hash=hashlib.sha1(bencode(info)).hexdigest(),
+                         metainfo_base64=base64.b64encode(bencode({b"info": info})).decode())
+        assert first.post("/api/private/catalog/import", json={"releases": [withdrawn]}, headers=identity("owner", "OWNER")).status_code == 200
+
+        async def mark_withdrawn():
+            async with private.private_write() as db:
+                await db.execute("UPDATE private_releases SET ready=1,verified_at=?,withdrawn=1 WHERE source_id=?",
+                                 (time.time(), withdrawn["source_id"]))
+        asyncio.run(mark_withdrawn())
+        before = {row["id"]: row for row in first.get("/api/private/catalog", headers=identity("owner", "OWNER")).json()}
+        assert all(row["ready"] == 1 for row in before.values())
+
+    async def pending_probe():
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(private, "refresh_readiness", pending_probe)
+    with TestClient(_with_transport_peer(app_module.app, "127.0.0.1")) as restarted:
+        assert restarted.get("/api/library/private", headers=identity()).json()["total"] == 0
+        assert restarted.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 404
+        after = {row["id"]: row for row in restarted.get("/api/private/catalog", headers=identity("owner", "OWNER")).json()}
+        assert after.keys() == before.keys()
+        for release_id, row in after.items():
+            assert row == {**before[release_id], "ready": 0, "verified_at": None}
+        history = restarted.get("/api/account/private/metrics", headers=identity()).json()["items"]
+        assert len(history) == 1 and history[0]["issued"] == 1
 
 
 def test_membership_restricts_site_account_mint_and_operator_management(client):
@@ -250,6 +299,7 @@ def test_import_rejects_public_metainfo_and_preserves_readiness_on_same_hash(cli
 
 def test_seeder_verification_does_not_trust_manifest_or_network_failure(client, monkeypatch):
     key, release_id = setup_release(client, ready=False)
+    config.settings.private_seeder_url = ""
     assert client.post(f"/api/private/catalog/{release_id}/verify", headers=identity("owner", "OWNER")).status_code == 409
     config.settings.private_seeder_url = "http://seeder.example.org"
     class Result:
@@ -357,9 +407,60 @@ def test_private_pages_and_member_torrent_download(client):
 def test_failed_background_seeder_probe_withdraws_readiness(client):
     key, release_id = setup_release(client)
     # No seed client configured; the known failure invalidates the old proof.
+    config.settings.private_seeder_url = ""
     asyncio.run(private.refresh_readiness())
     assert client.get("/api/library/private", headers=identity()).json()["total"] == 0
     assert client.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 404
+
+
+def test_enabled_worker_withdraws_cache_when_seeder_url_disappears(client, monkeypatch):
+    key, release_id = setup_release(client)
+    refresh = private.refresh_readiness
+
+    async def restart_worker():
+        await private.stop_readiness_worker()
+        config.settings.private_seeder_url = ""
+        finished = asyncio.Event()
+
+        async def observed_refresh():
+            await refresh()
+            finished.set()
+
+        monkeypatch.setattr(private, "refresh_readiness", observed_refresh)
+        private.start_readiness_worker()
+        try:
+            assert private._READINESS_TASK is not None
+            await asyncio.wait_for(finished.wait(), timeout=2)
+        finally:
+            await private.stop_readiness_worker()
+
+    client.portal.call(restart_worker)
+    assert client.get("/api/library/private", headers=identity()).json()["total"] == 0
+    assert client.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 404
+
+
+def test_unexpected_probe_failure_withdraws_cached_readiness(client, monkeypatch, caplog):
+    key, release_id = setup_release(client)
+
+    def failed_client(**kwargs):
+        raise RuntimeError("https://synthetic-seeder.example.org/?secret=synthetic-secret")
+
+    monkeypatch.setattr(private.httpx, "AsyncClient", failed_client)
+    asyncio.run(private.refresh_readiness())
+    assert client.get("/api/library/private", headers=identity()).json()["total"] == 0
+    assert client.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 404
+    assert "synthetic-secret" not in caplog.text
+
+
+def test_probe_cancellation_propagates(client, monkeypatch):
+    key, release_id = setup_release(client)
+
+    def cancelled_client(**kwargs):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(private.httpx, "AsyncClient", cancelled_client)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(private.refresh_readiness())
 
 
 def test_member_network_policy_rejects_outside_peers(client):

@@ -93,6 +93,7 @@ async def lifespan(app: FastAPI):
     private_indexer.validate_settings()
     _app_switcher_origin()  # a malformed APP_SWITCHER_SCRIPT_URL fails startup, not every request
     await get_db()
+    await private_indexer.reset_readiness()
     private_indexer.start_readiness_worker()
     yield
     await private_indexer.stop_readiness_worker()
