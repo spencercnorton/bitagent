@@ -246,8 +246,9 @@ def _compute_asset_version() -> str:
     and identical content stays cached.
     """
     h = hashlib.sha256()
-    for rel in ("css/tokens.css", "css/app.css", "css/library.css",
-                "js/torrent-kind.js", "js/norm-title.js", "js/app.js", "js/library.js"):
+    for rel in ("css/tokens.css", "css/app.css", "css/library.css", "css/library-next.css",
+                "js/torrent-kind.js", "js/norm-title.js", "js/app.js", "js/library.js",
+                "js/library-tools.js", "js/library-next.js"):
         try:
             h.update((BASE / "static" / rel).read_bytes())
         except OSError:
@@ -2984,25 +2985,24 @@ async def api_title_releases(
     content_type: str = "",
     content_source: str = "",
     content_id: str = "",
+    limit: int = Query(500, ge=1, le=500),
+    offset: int = Query(0, ge=0, le=100_000),
     identity: dict = Depends(require_auth),
 ):
-    """Every torrent release for a single library title.
-
-    The library grid groups torrents client-side over a capped 500-item batch,
-    so a poster's detail view only ever saw the releases that happened to be
-    co-loaded in that page — usually one. This endpoint re-queries the backend
-    for *all* releases of one title so the detail view can present the full set
-    of editions / seasons / episodes.
+    """A bounded page of available releases for a single library title.
 
     Match strategy:
       - mapped titles (content_source + content_id present): search by the title
         queryString + contentType facet, then keep items whose
         (contentSource, contentId) equal the requested identity. This captures
-        every edition, season and episode of that exact title.
+        editions, seasons and episodes of that exact title in the search window.
       - unmapped titles: keep items whose normalised name matches the request.
 
-    Results are ordered by seeders desc so, if the 500-item cap is hit on a huge
-    title, the best-seeded releases are the ones retained.
+    The core has no content-identity search facet, so limit/offset address RAW
+    search rows before identity/block-phrase filtering. A page can be empty and
+    still have a next page. Follow nextOffset and hasNextPage, never the number
+    of surviving releases. Results are ordered by seeders desc. totalCount is
+    exact only when a first window exhausts the search; otherwise it is unknown.
     """
     q = (title or "").strip()
     if not q:
@@ -3010,15 +3010,24 @@ async def api_title_releases(
 
     search_input: dict = {
         "queryString": q,
-        "limit": 500,
-        "offset": 0,
+        "limit": limit,
+        "offset": offset,
         "totalCount": False,
+        "hasNextPage": True,
         "orderBy": [{"field": "seeders", "descending": True}],
     }
     if content_type:
         search_input["facets"] = {"contentType": {"filter": [content_type]}}
     result = await gql.query(gql.SEARCH_TORRENTS, {"input": search_input})
+    if result.get("errors"):
+        raise HTTPException(502, "Could not load title releases")
     block = ((result.get("data") or {}).get("torrentContent") or {}).get("search") or {}
+    if not isinstance(block.get("items"), list):
+        raise HTTPException(502, "Could not load title releases")
+    raw_items = block["items"]
+    # Older cores may omit the flag. A full raw window cannot prove exhaustion.
+    upstream_has_next = block.get("hasNextPage")
+    has_next = upstream_has_next if isinstance(upstream_has_next, bool) else len(raw_items) >= limit
 
     want_id = str(content_id or "").strip()
     want_source = (content_source or "").strip()
@@ -3029,7 +3038,7 @@ async def api_title_releases(
     items: list[dict] = []
     seen: set[str] = set()
     hit_counter: Counter = Counter()
-    for it in block.get("items") or []:
+    for it in raw_items:
         torrent = it.get("torrent") or {}
         info_hash = it.get("infoHash")
         if not info_hash or info_hash in seen:
@@ -3048,6 +3057,10 @@ async def api_title_releases(
 
         it_source = it.get("contentSource") or ""
         it_id = str(it.get("contentId") or "")
+        # IDs are namespaced by type: movie 99 and tv_show 99 are different
+        # titles even when an older backend ignores its contentType facet.
+        if content_type and it.get("contentType") != content_type:
+            continue
         if mapped_match:
             if not (it_source == want_source and it_id == want_id):
                 continue
@@ -3082,7 +3095,15 @@ async def api_title_releases(
         })
 
     await bump_block_phrase_hits(hit_counter)
-    return {"totalCount": len(items), "items": items}
+    return {
+        "totalCount": len(items) if offset == 0 and not has_next else -1,
+        "items": items,
+        "scannedCount": len(raw_items),
+        "offset": offset,
+        "nextOffset": offset + limit if has_next else None,
+        "hasNextPage": has_next,
+        "truncated": has_next,
+    }
 
 
 # ── API: Evidence ─────────────────────────────────────────────────────

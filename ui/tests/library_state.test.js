@@ -1,5 +1,9 @@
 'use strict';
 
+// Keep release/magnet regression checks in the existing CI Node entrypoint.
+require('./library_tools.test.js');
+require('./library_interactions.test.js');
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 

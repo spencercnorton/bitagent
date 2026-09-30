@@ -72,3 +72,38 @@ The proxy tiers are honoured only when the transport peer is inside `TRUSTED_PRO
 ## Theming and accessibility
 
 The **Dark mode** toggle flips the theme instantly and persists it in `localStorage`; the browser's `theme-color` follows. `prefers-reduced-motion` is honoured.
+
+## Public library
+
+The library is a separate discovery surface selected by `PUBLIC_LIBRARY_HOSTS`.
+It uses the existing authentication boundary; internet accessibility does not
+enable anonymous access or operator controls.
+
+Use Discover, Movies, and Series to browse, or focus search with `/` or
+`Ctrl/Cmd+K`. Combine genre, year range, quality, source, language, and technical
+features in Filters. On smaller screens the Filters button opens these controls.
+Active filters appear above results; remove one chip or choose Clear all.
+The URL preserves search, filters, sorting, and the current page for sharing.
+
+Open a title to inspect releases and seasons. Every release has a checkbox,
+**Copy** magnet action, and **Open** link for the system's torrent client.
+**Select title**, **Select show**, and **Select active season** add releases to
+the magnet collection using the current quality/source filters. Recommended
+selection favors packs and seed counts; **All matching versions** retains
+alternate releases. Filename parsing cannot establish that a pack is complete,
+and overlapping packs may include duplicate episodes. Review the selected
+release names before copying them.
+
+The **Magnets** button opens the collection, including links selected from
+different titles. Remove individual releases, copy the newline-separated
+magnet list, save a `.txt` file, or expand View magnet links for manual copying.
+Each line identifies one torrent; a list of links is not a new combined torrent.
+The collection stays in the current tab and clears on refresh.
+
+Title detail scans at most 12 pages of 250 raw search rows (3,000 rows).
+An empty filtered page does not end pagination. When further rows remain, the
+detail page explicitly reports a partial selection; recommendations describe
+available indexed releases and do not guarantee a whole season or show.
+Closing or switching the title cancels the pending scan. Metadata failure does
+not prevent using loaded releases. Motion respects the browser preference,
+and dialogs contain keyboard focus and restore it on close.

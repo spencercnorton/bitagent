@@ -166,11 +166,11 @@ function _applyModalInert() {
   const anyOpen = _modalStack.length > 0;
   [document.querySelector('.lib-topbar'), document.getElementById('libBrowse')]
     .forEach(el => { if (el) el.toggleAttribute('inert', anyOpen); });
-  const detailEl = document.getElementById('libDetail');
-  if (detailEl) {
-    const idx = _modalStack.findIndex(m => m.panel === detailEl);
-    detailEl.toggleAttribute('inert', idx !== -1 && idx < _modalStack.length - 1);
-  }
+  document.querySelector('.lib-skiplink')?.toggleAttribute('inert', anyOpen);
+  const topPanel = anyOpen ? _modalStack[_modalStack.length - 1].panel : null;
+  document.querySelectorAll('.lib-app > [role="dialog"]').forEach(panel => {
+    panel.toggleAttribute('inert', !panel.classList.contains('open') || panel !== topPanel);
+  });
 }
 function openModal(panel) {
   _modalStack.push({ panel, ret: document.activeElement });
@@ -1189,7 +1189,10 @@ function rowScroll(btn, dir) {
 /* ── Detail view ────────────────────────────────────────────────────────── */
 const detail = { group: null, ct: '', title: '', tmdbId: null, meta: null,
   releases: [], activeSeason: null, quality: 'all', source: 'all', edition: 'all',
-  seasonCache: new Map() };
+  seasonCache: new Map(), loading: false, truncated: false, loadError: false, bulkMode: 'best' };
+let _detailAbortController = null;
+const magnetSelection = new Map();
+const MAGNET_SELECTION_LIMIT = 1000;
 
 function _star(rating) {
   return `<span class="lib-rating"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>${(rating || 0).toFixed(1)}</span>`;
@@ -1206,6 +1209,10 @@ async function openDetail(key) {
   detail.group = g; detail.ct = ct; detail.title = displayTitle(t.name);
   detail.tmdbId = (t.contentSource === 'tmdb' && t.contentId) ? String(t.contentId) : null;
   detail.meta = null; detail.releases = g.items.slice();
+  if (_detailAbortController) _detailAbortController.abort();
+  _detailAbortController = new AbortController();
+  const signal = _detailAbortController.signal;
+  detail.loading = true; detail.truncated = false; detail.loadError = false;
   detail.activeSeason = null; detail.quality = 'all'; detail.source = 'all'; detail.edition = 'all'; detail.seasonCache = new Map();
 
   const view = document.getElementById('libDetail');
@@ -1221,19 +1228,25 @@ async function openDetail(key) {
   document.getElementById('libDetailScroll').scrollTop = 0;
 
   renderDetailShell();  // instant paint from cached data
+  renderDetailBody();
 
   // Fetch full release set + enriched metadata in parallel.
-  const params = new URLSearchParams({
+  const identity = {
     title: detail.title, content_type: ct,
     content_source: g.contentSource || '', content_id: g.contentId || '',
-  });
-  const [releases, meta] = await Promise.all([
-    api(`/api/titles/releases?${params}`),
-    detail.tmdbId ? api(`/api/meta/${mediaTypeFor(ct)}/${encodeURIComponent(detail.tmdbId)}`) : Promise.resolve(null),
+  };
+  const [releaseResult, meta] = await Promise.allSettled([
+    BitAgentLibraryTools.collectTitleReleases(identity, { request: api, signal, maxPages: 12, maxItems: 3000 }),
+    detail.tmdbId ? api(`/api/meta/${mediaTypeFor(ct)}/${encodeURIComponent(detail.tmdbId)}`, { signal }) : Promise.resolve(null),
   ]);
-  if (detail.group !== g) return;  // a newer openDetail superseded this fetch
-  if (releases && releases.items) detail.releases = releases.items;
-  detail.meta = meta;
+  if (signal.aborted || detail.group !== g) return;
+  detail.loading = false;
+  detail.loadError = releaseResult.status !== 'fulfilled';
+  if (!detail.loadError) {
+    detail.releases = releaseResult.value.items;
+    detail.truncated = releaseResult.value.truncated;
+  }
+  detail.meta = meta.status === 'fulfilled' ? meta.value : null;
   renderDetailShell();
   renderDetailBody();
 }
@@ -1245,6 +1258,7 @@ function closeDetail(fromPop) {
   // do the visual close, so exactly one overlay closes per Back.
   if (!fromPop && history.state && history.state.lib === 'detail') { history.back(); return; }
   view.classList.remove('open');
+  if (_detailAbortController) _detailAbortController.abort();
   view.setAttribute('aria-hidden', 'true');
   closeModal(view);
 }
@@ -1320,7 +1334,103 @@ function renderDetailBody() {
           ${c.character ? `<div class="lib-cast-role">${escHtml(c.character)}</div>` : ''}
         </div>`).join('')}</div></div>`;
   }
-  body.innerHTML = html;
+  body.innerHTML = magnetGroupToolbar() + html;
+  updateMagnetSelection();
+}
+
+/* A collection contains explicit releases; bulk shortcuts never start clients. */
+function magnetGroupToolbar() {
+  const status = detail.loading ? 'Loading indexed releases…'
+    : detail.loadError ? 'Releases could not be refreshed. Showing cached releases; retry by reopening the title.'
+      : detail.truncated ? 'Showing a bounded set of indexed releases. More may be available; this selection is partial.'
+        : `${fmtNum(detail.releases.length)} indexed releases available. Quality and source filters apply to selection.`;
+  const disabled = detail.loading ? 'disabled' : '';
+  return `<section class="lib-bulk-tools" aria-label="Select magnet links">
+    <div class="lib-bulk-intro"><strong>Build your magnet collection</strong><p role="status">${escHtml(status)}</p></div>
+    <div class="lib-bulk-actions">
+      <label class="lib-bulk-mode">Versions <select id="libBulkMode" onchange="setMagnetMode(this.value)"><option value="best" ${detail.bulkMode === 'best' ? 'selected' : ''}>Recommended (packs + seed counts)</option><option value="all" ${detail.bulkMode === 'all' ? 'selected' : ''}>All matching versions</option></select></label>
+      <button class="lib-btn primary" ${disabled} onclick="selectMagnetGroup('${detail.ct === 'tv_show' ? 'show' : 'title'}')">Select ${detail.ct === 'tv_show' ? 'show' : 'title'}</button>
+      ${detail.ct === 'tv_show' ? `<button class="lib-btn" ${detail.loading || !Number.isInteger(detail.activeSeason) ? 'disabled' : ''} onclick="selectMagnetGroup('season')">Select active season</button>` : ''}
+      <button class="lib-btn" onclick="openMagnetCollection()">Review magnets <span data-magnet-count>0</span></button>
+    </div>
+    <p class="lib-bulk-hint">Recommended picks favor packs and seed counts. Packs may contain overlapping episodes. Review selected links before copying.</p>
+  </section>`;
+}
+
+function toggleMagnetSelection(infoHash) {
+  const hash = BitAgentLibraryTools.normalizeInfoHash(infoHash);
+  if (!hash) return;
+  if (magnetSelection.has(hash)) magnetSelection.delete(hash);
+  else {
+    const release = detail.releases.find(t => BitAgentLibraryTools.normalizeInfoHash(t.infoHash) === hash);
+    if (!release || !BitAgentLibraryTools.magnetFor(release)) return;
+    if (magnetSelection.size >= MAGNET_SELECTION_LIMIT) { toast('Collection limit reached. Copy or save your current links first.'); return; }
+    magnetSelection.set(hash, release);
+  }
+  updateMagnetSelection();
+}
+
+function selectMagnetGroup(scope) {
+  if (detail.loading) return;
+  if (scope === 'season' && !Number.isInteger(detail.activeSeason)) { toast('Choose a season with indexed releases first'); return; }
+  const mode = detail.bulkMode;
+  const releases = BitAgentLibraryTools.selectReleaseGroup(filteredReleases(), { scope, season: detail.activeSeason, mode });
+  let added = 0, limited = false;
+  for (const release of releases) {
+    const hash = BitAgentLibraryTools.normalizeInfoHash(release.infoHash);
+    if (!hash || !BitAgentLibraryTools.magnetFor(release) || magnetSelection.has(hash)) continue;
+    if (magnetSelection.size >= MAGNET_SELECTION_LIMIT) { limited = true; break; }
+    magnetSelection.set(hash, release); added++;
+  }
+  updateMagnetSelection();
+  toast(limited ? 'Collection limit reached; review the selected links.' : added ? `${added} magnet${added === 1 ? '' : 's'} added` : 'No additional matching releases to select');
+}
+function setMagnetMode(mode) { if (mode === 'best' || mode === 'all') detail.bulkMode = mode; }
+
+function updateMagnetSelection() {
+  document.querySelectorAll('[data-magnet-count]').forEach(el => { el.textContent = String(magnetSelection.size); });
+  document.querySelectorAll('[data-magnet-select]').forEach(el => { el.checked = magnetSelection.has(el.dataset.magnetSelect); });
+  const panel = document.getElementById('libCollection');
+  if (!panel || !panel.classList.contains('open')) return;
+  const list = document.getElementById('libCollectionList');
+  list.innerHTML = [...magnetSelection.entries()].map(([hash, t]) => `<li><span>${escHtml(_rname(t))}</span><button class="lib-iconbtn" onclick="removeCollectedMagnet('${hash}')" aria-label="${escAttr('Remove ' + _rname(t))}">×</button></li>`).join('') || '<li class="lib-rel-empty">Your collection is empty. Select a release, season, or show to get started.</li>';
+  document.getElementById('libCollectionText').value = collectionText();
+  panel.querySelectorAll('[data-needs-magnets]').forEach(el => { el.disabled = !magnetSelection.size; });
+}
+
+function removeCollectedMagnet(hash) { magnetSelection.delete(hash); updateMagnetSelection(); }
+function clearMagnetCollection() { magnetSelection.clear(); updateMagnetSelection(); }
+function collectionText() { return [...magnetSelection.values()].map(BitAgentLibraryTools.magnetFor).filter(Boolean).join('\n'); }
+function copyMagnetCollection() { const text = collectionText(); if (text) copyText(text, `${magnetSelection.size} magnet links copied`); }
+function saveMagnetCollection() {
+  const text = collectionText();
+  if (!text) return;
+  const url = URL.createObjectURL(new Blob([text + '\n'], { type: 'text/plain;charset=utf-8' }));
+  const link = document.createElement('a'); link.href = url; link.download = 'bitagent-magnets.txt';
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function openMagnetCollection(fromPop = false) {
+  let panel = document.getElementById('libCollection');
+  if (!panel) {
+    panel = document.createElement('section'); panel.id = 'libCollection'; panel.className = 'lib-collection';
+    panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true'); panel.setAttribute('aria-labelledby', 'libCollectionTitle');
+    panel.innerHTML = `<div class="lib-collection-head"><div><span class="lib-drawer-eyebrow">Your selection</span><h2 id="libCollectionTitle">Magnet collection · <span data-magnet-count>0</span></h2></div><button class="lib-iconbtn" onclick="closeMagnetCollection()" aria-label="Close magnet collection">×</button></div>
+      <p>Each link is a separate release. Copy the list or save it for your torrent client. Your collection stays in this tab until you refresh.</p>
+      <ul id="libCollectionList"></ul><div class="lib-collection-actions"><button class="lib-btn primary" data-needs-magnets onclick="copyMagnetCollection()">Copy magnets</button><button class="lib-btn" data-needs-magnets onclick="saveMagnetCollection()">Save .txt</button><button class="lib-btn" data-needs-magnets onclick="clearMagnetCollection()">Clear collection</button></div>
+      <details class="lib-collection-raw"><summary>View magnet links</summary><label class="lib-sr-only" for="libCollectionText">Selected magnet links</label><textarea id="libCollectionText" readonly rows="4" spellcheck="false" onclick="this.select()"></textarea></details>`;
+    document.querySelector('.lib-app').appendChild(panel);
+  }
+  if (panel.classList.contains('open')) return;
+  panel.classList.add('open'); panel.setAttribute('aria-hidden', 'false');
+  if (!fromPop) history.pushState({ lib: 'collection' }, '', window.location.href);
+  openModal(panel); updateMagnetSelection();
+}
+function closeMagnetCollection(fromPop) {
+  const panel = document.getElementById('libCollection');
+  if (!panel || !panel.classList.contains('open')) return;
+  if (!fromPop && history.state && history.state.lib === 'collection') { history.back(); return; }
+  panel.classList.remove('open'); panel.setAttribute('aria-hidden', 'true'); closeModal(panel);
 }
 
 /* Release filters shared by movie + TV */
@@ -1362,7 +1472,7 @@ function relRow(t) {
   const res = resOf(t), flags = flagsOf(t), src = srcOf(t);
   const langs = (t.languages || []).filter(l => l && l !== 'en');
   const rn = _rname(t);
-  const magnet = `magnet:?xt=urn:btih:${t.infoHash}&dn=${encodeURIComponent(rn)}`;
+  const magnet = BitAgentLibraryTools.magnetFor(t);
   const tags = [];
   if (res) tags.push(`<span class="lib-tag res">${escHtml(res)}</span>`);
   flags.forEach(f => tags.push(`<span class="lib-tag ${f === 'HDR' ? 'hdr' : 'flag-' + f.toLowerCase()}">${f}</span>`));
@@ -1370,19 +1480,22 @@ function relRow(t) {
   if (t.releaseGroup) tags.push(`<span class="lib-tag grp">${escHtml(t.releaseGroup)}</span>`);
   if (langs.length) tags.push(`<span class="lib-tag lang">${escHtml(langs.slice(0, 2).join(', '))}</span>`);
   const ih = escAttr(jsStringArg(t.infoHash));
-  return `<div class="lib-rel" role="button" tabindex="0" aria-label="${escAttr('Open details for ' + rn)}"
+  return `<div class="lib-rel" role="group" aria-label="${escAttr(rn)}">
+    <label class="lib-release-select"><input type="checkbox" data-magnet-select="${escAttr(BitAgentLibraryTools.normalizeInfoHash(t.infoHash) || '')}" ${magnetSelection.has(BitAgentLibraryTools.normalizeInfoHash(t.infoHash)) ? 'checked' : ''} ${magnet ? '' : 'disabled'} onchange="toggleMagnetSelection('${ih}')" aria-label="${escAttr('Select ' + rn)}"></label>
+    <button class="lib-rel-main" aria-label="${escAttr('Open details for ' + rn)}"
     onclick="openTorrentDrawer('${ih}')"
-    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTorrentDrawer('${ih}')}">
-    <div class="lib-rel-main">
+    type="button">
       <div class="lib-rel-name">${escHtml(rn)}</div>
       <div class="lib-rel-tags">${tags.join('')}</div>
-    </div>
+    </button>
     <div class="lib-rel-meta">
       <span class="lib-rel-size">${fmtBytes(t.size)}</span>
       <span class="lib-rel-seed" title="${t.seeders || 0} seeders / ${t.leechers || 0} leechers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="18 15 12 9 6 15"/></svg>${fmtNum(t.seeders || 0)}</span>
-      <button class="lib-copybtn" title="Copy magnet link" onclick="event.stopPropagation();copyMagnet('${escAttr(jsStringArg(magnet))}')">
+      <button class="lib-copybtn" ${magnet ? '' : 'disabled'} title="Copy magnet link" aria-label="${escAttr('Copy magnet for ' + rn)}" onclick="copyMagnet('${escAttr(jsStringArg(magnet))}')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        <span>Copy</span>
       </button>
+      ${magnet ? `<a class="lib-openmagnet" href="${escAttr(magnet)}" aria-label="${escAttr('Open magnet for ' + rn)}">Open ↗</a>` : ''}
     </div>
   </div>`;
 }
@@ -1578,7 +1691,12 @@ async function maybeLoadSeasonMeta() {
   const s = detail.activeSeason;
   if (s == null || !detail.tmdbId) return;
   if (detail.seasonCache.has(String(s))) return;
-  const data = await api(`/api/meta/tv/${encodeURIComponent(detail.tmdbId)}/season/${s}`);
+  const group = detail.group, tmdbId = detail.tmdbId, cache = detail.seasonCache;
+  const signal = _detailAbortController ? _detailAbortController.signal : undefined;
+  // Deduplicate in-flight catalog requests for the same title and season.
+  cache.set(String(s), { episodes: [] });
+  const data = await api(`/api/meta/tv/${encodeURIComponent(tmdbId)}/season/${s}`, { signal });
+  if ((signal && signal.aborted) || group !== detail.group || cache !== detail.seasonCache) return;
   detail.seasonCache.set(String(s), data || { episodes: [] });
   if (String(detail.activeSeason) !== String(s)) return; // user moved on
   const block = document.getElementById('libSeasonBlock');
@@ -1590,7 +1708,7 @@ async function maybeLoadSeasonMeta() {
 
 /* ── Torrent drawer ─────────────────────────────────────────────────────── */
 let _drawerSeq = 0;
-async function openTorrentDrawer(infoHash) {
+async function openTorrentDrawer(infoHash, fromPop = false) {
   const drawer = document.getElementById('libDrawer');
   const scrim = document.getElementById('libDrawerScrim');
   const bodyEl = document.getElementById('libDrawerBody');
@@ -1598,7 +1716,7 @@ async function openTorrentDrawer(infoHash) {
   drawer.setAttribute('aria-hidden', 'false');
   openModal(drawer);
   // Own history entry (over the detail entry) so Back closes just the drawer.
-  history.pushState({ lib: 'drawer', infoHash }, '');
+  if (!fromPop) history.pushState({ lib: 'drawer', infoHash }, '');
   const seq = ++_drawerSeq;
   bodyEl.innerHTML = `<div class="lib-rel-empty">Loading…</div>`;
 
@@ -1669,29 +1787,32 @@ function toast(msg) {
   _toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
 }
 function copyMagnet(magnet) {
-  const done = () => toast('Magnet link copied');
+  if (magnet) copyText(magnet, 'Magnet link copied');
+}
+function copyText(text, message) {
+  const done = () => toast(message);
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(magnet).then(done).catch(() => fallbackCopy(magnet, done));
-  } else fallbackCopy(magnet, done);
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else fallbackCopy(text, done);
 }
 function fallbackCopy(text, done) {
   const ta = document.createElement('textarea');
   ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
   document.body.appendChild(ta); ta.select();
-  try { document.execCommand('copy'); done(); } catch (_) { toast('Copy failed'); }
+  try { if (document.execCommand('copy')) done(); else toast('Copy failed. Use Save .txt from your magnet collection.'); } catch (_) { toast('Copy failed'); }
   document.body.removeChild(ta);
 }
 
 /* ── Account / API key panel ───────────────────────────────────────────── */
 let accountState = null;
-function openAccount() {
+function openAccount(fromPop = false) {
   const panel = document.getElementById('libAccount');
   const scrim = document.getElementById('libAccountScrim');
   panel.classList.add('open'); scrim.classList.add('open');
   panel.setAttribute('aria-hidden', 'false');
   openModal(panel);
   // Own history entry so Back closes the account panel (was previously orphaned).
-  history.pushState({ lib: 'account' }, '');
+  if (!fromPop) history.pushState({ lib: 'account' }, '');
   loadAccount();
 }
 function closeAccount(fromPop) {
@@ -1780,7 +1901,16 @@ function copyAccountField(id) {
 /* ── Global keys + history ──────────────────────────────────────────────── */
 if (typeof document !== 'undefined') {
   document.addEventListener('keydown', e => {
+    if (e.key === 'Tab' && _modalStack.length) {
+      const panel = _modalStack[_modalStack.length - 1].panel;
+      const focusable = [...panel.querySelectorAll('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')]
+        .filter(el => el.getClientRects().length && !el.closest('[inert]'));
+      if (focusable.length && ((e.shiftKey && document.activeElement === focusable[0]) || (!e.shiftKey && document.activeElement === focusable[focusable.length - 1]))) {
+        e.preventDefault(); (e.shiftKey ? focusable[focusable.length - 1] : focusable[0]).focus();
+      }
+    }
     if (e.key === 'Escape') {
+      if (document.getElementById('libCollection')?.classList.contains('open')) { closeMagnetCollection(); return; }
       if (document.getElementById('libAccount').classList.contains('open')) { closeAccount(); return; }
       if (document.getElementById('libDrawer').classList.contains('open')) { closeTorrentDrawer(); return; }
       if (document.getElementById('libDetail').classList.contains('open')) { closeDetail(); return; }
@@ -1790,15 +1920,28 @@ if (typeof document !== 'undefined') {
       e.preventDefault(); document.getElementById('libSearch').focus();
     }
   });
-  window.addEventListener('popstate', () => {
-    // Close only the topmost open overlay (each pushed exactly one entry).
-    if (document.getElementById('libAccount').classList.contains('open')) { closeAccount(true); return; }
-    if (document.getElementById('libDrawer').classList.contains('open')) { closeTorrentDrawer(true); return; }
-    if (document.getElementById('libDetail').classList.contains('open')) { closeDetail(true); return; }
-    // No overlay open → a browse-history navigation; re-hydrate and reload.
-    applyStateFromUrl();
-    loadLibrary({ fromPop: true });
-  });
+  window.addEventListener('popstate', event => restoreLibraryHistory(event.state));
+}
+
+function restoreLibraryHistory(destination) {
+  const target = destination && destination.lib;
+  const isOpen = id => document.getElementById(id)?.classList.contains('open');
+  if (target !== 'collection') closeMagnetCollection(true);
+  if (target !== 'account') closeAccount(true);
+  if (target !== 'drawer') closeTorrentDrawer(true);
+  if (target === 'collection') { if (!isOpen('libCollection')) openMagnetCollection(true); return; }
+  if (target === 'account') { if (!isOpen('libAccount')) openAccount(true); return; }
+  if (target === 'drawer') { if (!isOpen('libDrawer')) openTorrentDrawer(destination.infoHash, true); return; }
+  if (target === 'detail') {
+    if (detail.group && detail.group.key === destination.key && isOpen('libDetail')) return;
+    closeDetail(true);
+    if (groupCache.has(destination.key)) openDetail(destination.key);
+    else { const permalink = _readPermalink(); if (permalink) resolvePermalink(permalink); }
+    return;
+  }
+  closeDetail(true);
+  applyStateFromUrl();
+  loadLibrary({ fromPop: true });
 }
 
 /* When the active season changes we also want its TMDB episode catalog. The
@@ -1808,6 +1951,7 @@ renderDetailBody = function () { _origRenderDetailBody(); if (detail.ct === 'tv_
 
 /* ── Boot ───────────────────────────────────────────────────────────────── */
 if (typeof document !== 'undefined') {
+  _applyModalInert();
   applyStateFromUrl();
   const _bootPermalink = _readPermalink();
   // Establish a clean browse entry as the history base (strips any title params),
