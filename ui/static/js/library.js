@@ -1235,20 +1235,46 @@ async function openDetail(key) {
     title: detail.title, content_type: ct,
     content_source: g.contentSource || '', content_id: g.contentId || '',
   };
-  const [releaseResult, meta] = await Promise.allSettled([
-    BitAgentLibraryTools.collectTitleReleases(identity, { request: api, signal, maxPages: 12, maxItems: 3000 }),
-    detail.tmdbId ? api(`/api/meta/${mediaTypeFor(ct)}/${encodeURIComponent(detail.tmdbId)}`, { signal }) : Promise.resolve(null),
-  ]);
-  if (signal.aborted || detail.group !== g) return;
-  detail.loading = false;
-  detail.loadError = releaseResult.status !== 'fulfilled';
-  if (!detail.loadError) {
-    detail.releases = releaseResult.value.items;
-    detail.truncated = releaseResult.value.truncated;
-  }
-  detail.meta = meta.status === 'fulfilled' ? meta.value : null;
-  renderDetailShell();
+  const current = () => !signal.aborted && detail.group === g;
+  // Optional metadata must never hold usable magnet links behind a slow
+  // provider. Publish each result as soon as its own request finishes.
+  const releaseRequest = BitAgentLibraryTools.collectTitleReleases(identity,
+    { request: api, signal, maxPages: 12, maxItems: 3000 }).then(result => {
+    if (!current()) return;
+    detail.loading = false;
+    detail.releases = result.items; detail.truncated = result.truncated;
+    refreshDetailContent(false);
+  }).catch(() => {
+    if (!current()) return;
+    detail.loading = false; detail.loadError = true;
+    refreshDetailContent(false);
+  });
+  const metadataRequest = (detail.tmdbId
+    ? api(`/api/meta/${mediaTypeFor(ct)}/${encodeURIComponent(detail.tmdbId)}`, { signal })
+    : Promise.resolve(null)).then(meta => {
+    if (!current() || !meta) return;
+    detail.meta = meta;
+    refreshDetailContent(true);
+  });
+  await Promise.allSettled([releaseRequest, metadataRequest]);
+}
+
+function refreshDetailContent(shell) {
+  const view = document.getElementById('libDetail');
+  const active = document.activeElement;
+  const label = active && view.contains(active) ? active.getAttribute('aria-label') : null;
+  const opened = [...view.querySelectorAll('.lib-disclosure.open, .lib-episode.open')].map(el => el.id);
+  if (shell) renderDetailShell();
   renderDetailBody();
+  opened.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || el.classList.contains('open')) return;
+    if (el.classList.contains('lib-episode')) toggleEpisode(id); else toggleDisclosure(id);
+  });
+  if (label) {
+    const next = [...view.querySelectorAll('[aria-label]')].find(el => el.getAttribute('aria-label') === label);
+    if (next && next.getClientRects().length && !next.closest('[inert]')) next.focus({ preventScroll: true });
+  }
 }
 
 function closeDetail(fromPop) {
