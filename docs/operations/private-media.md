@@ -208,6 +208,55 @@ torrents, opens peer ports or modifies the seed client.
 8. Verify a synthetic download from a separate approved client, its announce
    accounting and key revocation before publishing the real media catalog.
 
+### Reconcile a large catalog
+
+The legacy `GET /api/private/catalog` response remains an array of at most
+1,000 canonical releases. Use the following operator-only APIs for a complete
+inventory; a successful partial import does not prove complete library coverage.
+
+Import each verified shard with `POST /api/private/catalog/import?ack=1`. The
+usual `imported` count and `readiness` message remain, with `results` containing
+one `{source_id, id, info_hash, size}` record per input, in input order, and a
+`catalog_snapshot` containing the database `instance_id` and `revision_token`.
+An acknowledgment is returned only after the whole transaction commits.
+Unchanged retries preserve the mapping and readiness. Input source IDs are
+unique; multiple aliases of the same bytes share one canonical `id`. An import
+accepts at most 1,000 records and its acknowledgment is bounded to 512 KiB.
+Omit `ack` for the existing count-only response.
+
+Use `GET /api/private/catalog/page?view=aliases&limit=100` to enumerate each
+source alias, including its semantic metadata and canonical ID, hash and size.
+Use `view=releases` for each canonical swarm. Both views include unready and
+withdrawn entries. Responses contain `version`, `view`, `snapshot`, `items`
+and `next_cursor`. The snapshot also reports `alias_total` and `release_total`.
+Continue with `?cursor=...` until `next_cursor` is null. Pages contain at most
+100 records and 2 MiB; they omit torrent bytes, media paths and member keys.
+Each request still requires operator authorization.
+
+The signed cursor fixes the view, page limit, immutable ordering and metadata
+revision for one hour from the first page. A metadata import or visibility
+change invalidates it with HTTP 409; restart the scan without discarding
+committed import mappings. Readiness checks do not change the revision, so
+`ready` and `verified_at` are current observations per page, not a promise of
+later availability. An expired cursor returns HTTP 410. Normal restart with
+the same protected signing secret preserves valid cursors. A consistent
+database restore preserves its instance and revision; an unchanged restored
+catalog may resume, while subsequent metadata edits mint new random revision
+tokens. Replacing the database or rotating the signing secret invalidates
+old cursors.
+
+After all shards are imported, compare every expected source version, hash,
+size and alias metadata against acknowledgments and both complete page views.
+Check unique source IDs and exact totals; report missing, unexpected or stale
+aliases explicitly. The offline seeding map's catalog ID is its versioned
+source ID; use the acknowledged canonical `id` in seed-torrent and verification
+requests. Do not create duplicate seed sessions for aliases of the same swarm.
+Do not automatically delete a stale alias or withdraw a shared swarm that
+still has current aliases. This API does not promote a generation or retire
+aliases automatically. Complete metadata reconciliation and measured seed
+capacity are separate steps; downloads still require a freshly verified
+complete active seed copy for their individual canonical release.
+
 The worker refreshes availability at most every five minutes, with per-batch
 observation timestamps. Failed probes withdraw availability; stale proofs
 never satisfy search, downloads or announce. Withdraw a release with
