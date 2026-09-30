@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.11.0 — 2026-09-30
+
 - Redesign the public library with colorful discovery navigation, animated cards,
   responsive filters, light/dark themes, and reduced-motion support.
 - Surface advanced search as removable filters and preserve shareable browse URLs.
@@ -17,6 +19,8 @@
 - Avoid retaining Torznab query-string credentials in raw UI access/error logs.
 - Page title releases within explicit bounds and disclose partial results.
 - Preserve collection history, dialog focus, and title identity during async metadata loads.
+- Verify Linux amd64 release images against their source revision and UI version;
+  exclude local credentials, environments, and state from Docker builds.
 
 ## 2.10.9 — 2026-09-27
 

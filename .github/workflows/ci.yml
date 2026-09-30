@@ -79,4 +79,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - run: docker build --tag bitagent:ci .
+      - name: Build supported container with source identity
+        env:
+          BUILD_SOURCE: https://github.com/${{ github.repository }}
+        run: |
+          VERSION="v$(sed -n 's/^__version__ = "\([^"]*\)"/\1/p' ui/version.py)"
+          COMMIT=$(git rev-parse HEAD)
+          BUILD_DATE=$(git show -s --format=%cI HEAD)
+          docker build --platform linux/amd64 --build-arg VERSION="$VERSION" \
+            --build-arg COMMIT="$COMMIT" --build-arg BUILD_DATE="$BUILD_DATE" \
+            --build-arg SOURCE="$BUILD_SOURCE" --tag bitagent:ci .
+          test "$(docker image inspect bitagent:ci --format '{{.Os}}/{{.Architecture}}')" = 'linux/amd64'
+          test "$(docker image inspect bitagent:ci --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" = "$VERSION"
+          test "$(docker image inspect bitagent:ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$COMMIT"
+          test "$(docker image inspect bitagent:ci --format '{{index .Config.Labels "org.opencontainers.image.created"}}')" = "$BUILD_DATE"
+          test "$(docker image inspect bitagent:ci --format '{{index .Config.Labels "org.opencontainers.image.source"}}')" = "$BUILD_SOURCE"
+          docker run --rm --network none --read-only --tmpfs /data:uid=10001,gid=10001 \
+            --user 10001:10001 --entrypoint python3 --workdir /app/ui \
+            --env EXPECTED_VERSION="${VERSION#v}" bitagent:ci \
+            -c 'import os; import app, account_usage, discovery; from version import __version__; assert __version__ == os.environ["EXPECTED_VERSION"]'

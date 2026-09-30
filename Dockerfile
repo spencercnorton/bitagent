@@ -19,13 +19,13 @@ RUN go mod download
 
 COPY . .
 
-# CI passes VERSION (.gitlab-ci.yml publish-image); local builds fall back to
-# git describe as before.
+# CI and release builds pass VERSION. Clean source archives have no Git
+# metadata; an unversioned development build reports dev in that case.
 ARG VERSION
 # CGO_ENABLED=0 is load-bearing: the alpine toolchain defaults to 1 and links
 # the binary against musl, which the Debian runtime does not have.
 RUN CGO_ENABLED=0 go build \
-    -ldflags "-s -w -X github.com/spencercnorton/bitagent/internal/version.GitTag=${VERSION:-$(git describe --tags --always --dirty)}" \
+    -ldflags "-s -w -X github.com/spencercnorton/bitagent/internal/version.GitTag=${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || printf dev)}" \
     -o /build/bitagent .
 
 
@@ -46,6 +46,17 @@ RUN python -m pip install --no-cache-dir --require-hashes -r requirements.lock \
 
 
 FROM python:3.12.13-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=1970-01-01T00:00:00Z
+ARG SOURCE=https://github.com/spencercnorton/bitagent
+# The epoch marks an unspecified development build date. Published images
+# always receive the checked source commit's timestamp and full revision.
+LABEL org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.source="${SOURCE}"
 
 # PYTHONUNBUFFERED: the core reads uvicorn's stdout/stderr line by line into
 # its own logger, so the child must not block-buffer.
