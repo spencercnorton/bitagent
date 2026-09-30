@@ -303,27 +303,18 @@ def test_seeder_verification_does_not_trust_manifest_or_network_failure(client, 
     config.settings.private_seeder_url = ""
     assert client.post(f"/api/private/catalog/{release_id}/verify", headers=identity("owner", "OWNER")).status_code == 409
     config.settings.private_seeder_url = "http://seeder.example.org"
-    class Result:
-        status_code = 200
-        text = "Ok."
-        def raise_for_status(self):
-            pass
-        def json(self):
-            return [{"hash": metainfo()["info_hash"], "size": metainfo()["size"], "progress": 1,
-                     "amount_left": 0, "state": "stalledUP"}]
-    class Client:
-        def __init__(self, **kw):
-            self.headers = {}
-            assert kw["follow_redirects"] is False
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *args):
-            pass
-        async def post(self, *args, **kw):
-            return Result()
-        async def get(self, *args, **kw):
-            return Result()
-    monkeypatch.setattr(private.httpx, "AsyncClient", Client)
+    import httpx
+    async_client = httpx.AsyncClient
+    def seeder(request):
+        if request.url.path.endswith("auth/login"):
+            return httpx.Response(200, content=b"Ok.", headers={"set-cookie": "SID=" + "a" * 32 + "; Path=/; HttpOnly"})
+        assert request.headers["cookie"] == "SID=" + "a" * 32
+        return httpx.Response(200, json=[{"hash": metainfo()["info_hash"], "size": metainfo()["size"], "progress": 1,
+                                       "amount_left": 0, "state": "stalledUP"}])
+    def seeder_client(**kwargs):
+        assert kwargs["follow_redirects"] is False
+        return async_client(transport=httpx.MockTransport(seeder), **kwargs)
+    monkeypatch.setattr(private.httpx, "AsyncClient", seeder_client)
     assert client.post(f"/api/private/catalog/{release_id}/verify", headers=identity("owner", "OWNER")).json()["ready"] is True
     assert client.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 200
 
@@ -496,3 +487,88 @@ def test_signing_secret_rotation_retires_old_tokens_and_issues_working_new_token
     assert old != new
     assert b"failure reason" not in announce(client, new)
     assert b"failure reason" in announce(client, old)
+
+
+@pytest.mark.parametrize("probe", ["background", "operator"])
+@pytest.mark.parametrize("status,body,cookie,accepted", [
+    (200, b"Ok.", "SID=" + "a" * 32 + "; Path=/; HttpOnly", True),
+    (204, b"", "QBT_SID_8080=" + "ab+/" * 8 + "; Path=/; HttpOnly", True),
+    (204, b"", "SID=" + "b" * 32 + "; Path=/; HttpOnly", True),
+    (200, b"Ok.", "QBT_SID_8080=" + "ab+/" * 8 + "; Path=/; HttpOnly", True),
+    (201, b"Ok.", "SID=" + "a" * 32 + "; Path=/", False),
+    (202, b"", "SID=" + "a" * 32 + "; Path=/", False),
+    (204, b"Ok.", "SID=" + "a" * 32 + "; Path=/", False),
+    (204, b" ", "SID=" + "a" * 32 + "; Path=/", False),
+    (200, b"", "SID=" + "a" * 32 + "; Path=/", False),
+    (200, b"Ok.\n", "SID=" + "a" * 32 + "; Path=/", False),
+    (200, b"Fails.", "SID=" + "a" * 32 + "; Path=/", False),
+    (403, b"Ok.", "SID=" + "a" * 32 + "; Path=/", False),
+    (302, b"", "SID=" + "a" * 32 + "; Path=/", False),
+    (204, b"", None, False),
+    (200, b"Ok.", None, False),
+    (204, b"", "SID=; Path=/", False),
+    (204, b"", "SID=short; Path=/", False),
+    (204, b"", "sid=" + "a" * 32 + "; Path=/", False),
+    (204, b"", "unrelated=" + "a" * 32 + "; Path=/", False),
+    (204, b"", "QBT_SID_65536=" + "a" * 32 + "; Path=/", False),
+    (204, b"", "QBT_SID_0=" + "a" * 32 + "; Path=/", False),
+    (204, b"", "QBT_SID_bad=" + "a" * 32 + "; Path=/", False),
+    (204, b"", "SID=" + "a" * 32 + "; Domain=elsewhere.example.org; Path=/", False),
+    (204, b"", "SID=" + "a" * 32 + "; Path=/api/v2/auth", False),
+    (204, b"", "SID=" + "a" * 32 + "; Path=/; Secure", False),
+    (204, b"", "SID=" + "a" * 32 + "; Path=/; Max-Age=0", False),
+    (204, b"", [("set-cookie", "SID=" + "a" * 32 + "; Path=/"),
+                 ("set-cookie", "SID=" + "b" * 32 + "; Path=/")], False),
+    (204, b"", [("set-cookie", "SID=" + "a" * 32 + "; Path=/"),
+                 ("set-cookie", "QBT_SID_8080=" + "b" * 32 + "; Path=/")], False),
+])
+def test_seeder_login_cookie_contract_for_both_readiness_paths(client, monkeypatch, probe, status, body, cookie, accepted):
+    import httpx
+    key, release_id = setup_release(client)
+    async_client = httpx.AsyncClient
+    get_calls = []
+    def seeder(request):
+        assert request.headers["referer"] == config.settings.private_seeder_url + "/"
+        if request.url.path.endswith("auth/login"):
+            return httpx.Response(status, content=body, headers=cookie if isinstance(cookie, list) else {"set-cookie": cookie} if cookie else {})
+        get_calls.append(request)
+        assert request.url.params["hashes"] == metainfo()["info_hash"]
+        assert cookie.split(";", 1)[0] in request.headers["cookie"]
+        return httpx.Response(200, json=[{"hash": metainfo()["info_hash"], "size": metainfo()["size"], "progress": 1,
+                                       "amount_left": 0, "state": "stalledUP"}])
+    monkeypatch.setattr(private.httpx, "AsyncClient", lambda **kwargs: async_client(transport=httpx.MockTransport(seeder), **kwargs))
+    if probe == "background":
+        asyncio.run(private.refresh_readiness())
+    else:
+        response = client.post(f"/api/private/catalog/{release_id}/verify", headers=identity("owner", "OWNER"))
+        assert response.status_code == (200 if accepted else 409)
+    assert len(get_calls) == int(accepted)
+    assert client.get("/api/library/private", headers=identity()).json()["total"] == int(accepted)
+    assert client.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == (200 if accepted else 404)
+
+
+@pytest.mark.parametrize("probe", ["background", "operator"])
+@pytest.mark.parametrize("failure", ["forbidden", "redirect", "server-error", "malformed-json", "incomplete", "wrong-hash", "wrong-size", "paused"])
+def test_successful_seeder_login_still_requires_verified_information(client, monkeypatch, probe, failure):
+    import httpx
+    key, release_id = setup_release(client)
+    async_client = httpx.AsyncClient
+    def seeder(request):
+        if request.url.path.endswith("auth/login"):
+            return httpx.Response(204, headers={"set-cookie": "QBT_SID_8080=" + "c" * 32 + "; Path=/; HttpOnly"})
+        assert request.headers["cookie"] == "QBT_SID_8080=" + "c" * 32
+        if failure in {"forbidden", "redirect", "server-error"}:
+            return httpx.Response({"forbidden": 403, "redirect": 302, "server-error": 500}[failure])
+        if failure == "malformed-json":
+            return httpx.Response(200, content=b"not-json")
+        torrent = {"hash": metainfo()["info_hash"], "size": metainfo()["size"], "progress": 1, "amount_left": 0, "state": "stalledUP"}
+        torrent.update({"incomplete": {"progress": .5, "amount_left": 1}, "wrong-hash": {"hash": "f" * 40},
+                        "wrong-size": {"size": 1}, "paused": {"state": "pausedUP"}}[failure])
+        return httpx.Response(200, json=[torrent])
+    monkeypatch.setattr(private.httpx, "AsyncClient", lambda **kwargs: async_client(transport=httpx.MockTransport(seeder), **kwargs))
+    if probe == "background":
+        asyncio.run(private.refresh_readiness())
+    else:
+        assert client.post(f"/api/private/catalog/{release_id}/verify", headers=identity("owner", "OWNER")).status_code == 409
+    assert client.get("/api/library/private", headers=identity()).json()["total"] == 0
+    assert client.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 404

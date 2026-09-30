@@ -18,6 +18,7 @@ import secrets
 import struct
 import time
 from contextlib import asynccontextmanager
+from http.cookies import CookieError, SimpleCookie
 from urllib.parse import parse_qsl, quote, urlsplit
 
 import httpx
@@ -335,6 +336,42 @@ async def reset_readiness():
             await db.execute("UPDATE private_releases SET ready=0,verified_at=NULL")
 
 
+def _seeder_login_ok(login, client, base):
+    """Require a recognized login response and a usable qBittorrent session.
+
+    qBittorrent 5.2 uses an empty 204 response and a QBT_SID_<WebUI port>
+    cookie; older releases return 200/Ok. with SID. Let the cookie jar enforce
+    origin, path, expiry and Secure rules for the subsequent information GET.
+    """
+    if (login.status_code, login.content) not in {(200, b"Ok."), (204, b"")}:
+        return False
+    def session_name(name):
+        match = re.fullmatch(r"QBT_SID_([1-9][0-9]{0,4})", name)
+        return name == "SID" or bool(match and int(match[1]) <= 65535)
+    # Reject duplicate or conflicting session issuance before the jar can
+    # collapse same-name Set-Cookie fields into an apparently valid session.
+    issued = []
+    sent = SimpleCookie()
+    try:
+        for header in login.headers.get_list("Set-Cookie"):
+            parsed = SimpleCookie()
+            parsed.load(header)
+            issued.extend(name for name in parsed if session_name(name))
+        sent.load(client.build_request("GET", base + "/api/v2/torrents/info").headers.get("Cookie", ""))
+    except CookieError:
+        return False
+    if len(issued) != 1:
+        return False
+    for cookie in login.cookies.jar:
+        if cookie.name != issued[0]:
+            continue
+        # Both legacy hexadecimal IDs and current 24-byte Base64 IDs fit.
+        if (re.fullmatch(r"[A-Za-z0-9+/]{32}", cookie.value or "")
+                and cookie.name in sent and sent[cookie.name].value == cookie.value):
+            return True
+    return False
+
+
 async def refresh_readiness():
     """One bounded probe of the configured seeder, shared by the startup worker.
 
@@ -353,7 +390,7 @@ async def refresh_readiness():
             base = settings.private_seeder_url.rstrip("/")
             client.headers["Referer"] = base + "/"
             login = await client.post(base + "/api/v2/auth/login", data={"username": settings.private_seeder_username, "password": settings.private_seeder_password})
-            if login.status_code != 200 or login.text.strip() != "Ok.":
+            if not _seeder_login_ok(login, client, base):
                 raise ValueError("Seeder authentication failed")
             by_hash = {row["info_hash"]: row for row in rows}
             # Each request is bounded to 100 hashes rather than reading an
@@ -430,7 +467,7 @@ async def verify_release(release_id: str, identity=Depends(require_operator)):
             client.headers["Referer"] = base + "/"
             login = await client.post(base + "/api/v2/auth/login", data={
                 "username": settings.private_seeder_username, "password": settings.private_seeder_password})
-            if login.status_code != 200 or login.text.strip() != "Ok.":
+            if not _seeder_login_ok(login, client, base):
                 raise ValueError("Seeder authentication failed")
             resp = await client.get(base + "/api/v2/torrents/info", params={"hashes": release["info_hash"]})
             resp.raise_for_status()
