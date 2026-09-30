@@ -123,6 +123,11 @@ def test_startup_missing_seeder_url_refuses_enabled_application():
 def test_startup_withdraws_cached_readiness_before_initial_probe(monkeypatch):
     from torrent_metainfo import bdecode, bencode
 
+    async def pending_probe():
+        await asyncio.Event().wait()
+
+    # Both lifespans are hermetic, including the first cache preparation.
+    monkeypatch.setattr(private, "refresh_readiness", pending_probe)
     with TestClient(_with_transport_peer(app_module.app, "127.0.0.1")) as first:
         key, release_id = setup_release(first)
         download(first, key, release_id)
@@ -142,10 +147,6 @@ def test_startup_withdraws_cached_readiness_before_initial_probe(monkeypatch):
         before = {row["id"]: row for row in first.get("/api/private/catalog", headers=identity("owner", "OWNER")).json()}
         assert all(row["ready"] == 1 for row in before.values())
 
-    async def pending_probe():
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(private, "refresh_readiness", pending_probe)
     with TestClient(_with_transport_peer(app_module.app, "127.0.0.1")) as restarted:
         assert restarted.get("/api/library/private", headers=identity()).json()["total"] == 0
         assert restarted.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 404
