@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add bounded operator catalogue pages and optional import acknowledgments
+  that reconcile every source alias with its canonical private torrent.
+- Keep catalogue scans consistent across readiness refreshes, metadata edits,
+  process restarts and restored database snapshots.
 - Add optional short-lived device address ownership for private tracker
   credentials, with authenticated seed snapshots, expiry and replay checks,
   and current-member filtering of advertised peers and swarm counts.

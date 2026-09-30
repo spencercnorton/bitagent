@@ -24,6 +24,7 @@ from urllib.parse import parse_qsl, quote, urlsplit
 import httpx
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -33,6 +34,7 @@ from config import settings
 from database import get_db, get_user_api_key, lookup_user_api_key, _hash_user_api_key
 from deps import require_operator, _configured_hosts
 import privatebindings
+import privatecatalog
 
 router = APIRouter()
 _WRITE_LOCK = asyncio.Lock()
@@ -79,6 +81,7 @@ async def init_schema(db):
             PRIMARY KEY(user_id, release_id)
         );
     """)
+    await privatecatalog.initialize()
 
 
 @asynccontextmanager
@@ -296,35 +299,52 @@ def _validate_release(item: dict) -> dict:
 
 
 @router.post("/api/private/catalog/import")
-async def import_catalog(body: CatalogImport, identity=Depends(require_operator)):
+async def import_catalog(body: CatalogImport, request: Request, identity=Depends(require_operator)):
     enabled()
+    acknowledge = privatecatalog.acknowledgment_requested(request.query_params)
     if body.version != 1:
         raise HTTPException(422, "Unsupported manifest version")
     releases = [_validate_release(item) for item in body.releases]
     if len({r["source_id"] for r in releases}) != len(releases):
         raise HTTPException(422, "Duplicate release")
+    response = {"imported": len(releases), "readiness": "Seeder verification required"}
     async with private_write() as db:
         # Aliases share one immutable swarm; an episode/season/show pointing to
         # the same bytes must not manufacture new torrent hashes.
         try:
+            changed = False
             for item in releases:
-                existing = await db.execute_fetchall("SELECT r.info_hash FROM private_release_aliases a JOIN private_releases r ON r.id=a.release_id WHERE a.source_id=?", (item["source_id"],))
-                if existing and existing[0]["info_hash"] != item["info_hash"]:
+                existing = await db.execute_fetchall("""SELECT a.title,a.kind,a.metadata,r.id,r.info_hash,r.size
+                    FROM private_release_aliases a LEFT JOIN private_releases r ON r.id=a.release_id
+                    WHERE a.source_id=?""", (item["source_id"],))
+                if existing and (existing[0]["id"] is None or existing[0]["info_hash"] != item["info_hash"]
+                                 or existing[0]["size"] != item["size"]):
                     raise ValueError("Release IDs are immutable; use a versioned source ID")
-                swarm = await db.execute_fetchall("SELECT id FROM private_releases WHERE info_hash=?", (item["info_hash"],))
+                swarm = await db.execute_fetchall("SELECT id,size FROM private_releases WHERE info_hash=?", (item["info_hash"],))
+                if swarm and swarm[0]["size"] != item["size"]:
+                    raise ValueError("Canonical torrent size conflicts")
                 release_id = swarm[0]["id"] if swarm else secrets.token_hex(16)
                 if not swarm:
+                    changed = True
                     await db.execute("""INSERT INTO private_releases
                         (id,source_id,title,kind,info_hash,size,metadata,metainfo,created_at)
                         VALUES (?,?,?,?,?,?,?,?,?)""",
                         (release_id, item["source_id"], item["title"], item["kind"],
                      item["info_hash"], item["size"], item["metadata"], item["metainfo"], time.time()))
+                changed = changed or not existing or any(existing[0][key] != item[key] for key in ("title", "kind", "metadata"))
                 await db.execute("""INSERT INTO private_release_aliases VALUES (?,?,?,?,?)
                     ON CONFLICT(source_id) DO UPDATE SET title=excluded.title,kind=excluded.kind,metadata=excluded.metadata""",
                     (item["source_id"], release_id, item["title"], item["kind"], item["metadata"]))
         except (ValueError, aiosqlite.IntegrityError):
             raise HTTPException(409, "Catalog conflicts with an existing release") from None
-    return {"imported": len(releases), "readiness": "Seeder verification required"}
+        if changed:
+            await privatecatalog.changed(db)
+        if acknowledge:
+            response.update(await privatecatalog.acknowledgment(db, releases))
+            privatecatalog.bounded_body(response, privatecatalog.ACK_BYTES)
+    if acknowledge:
+        return JSONResponse(response, headers={"Cache-Control": "no-store"})
+    return response
 
 
 def _ready_cutoff():
@@ -456,6 +476,13 @@ async def operator_catalog(identity=Depends(require_operator)):
     )]
 
 
+@router.get("/api/private/catalog/page")
+async def operator_catalog_page(request: Request, identity=Depends(require_operator)):
+    enabled()
+    await get_db()
+    return JSONResponse(await privatecatalog.page(request.query_params), headers={"Cache-Control": "no-store"})
+
+
 @router.post("/api/private/catalog/{release_id}/verify")
 async def verify_release(release_id: str, identity=Depends(require_operator)):
     enabled()
@@ -500,9 +527,12 @@ class CatalogVisibility(BaseModel):
 async def catalog_visibility(release_id: str, body: CatalogVisibility, identity=Depends(require_operator)):
     enabled()
     async with private_write() as db:
+        prior = await db.execute_fetchall("SELECT withdrawn FROM private_releases WHERE id=?", (release_id,))
         cur = await db.execute("UPDATE private_releases SET withdrawn=?,ready=0,verified_at=NULL WHERE id=?", (int(not body.published), release_id))
         if not cur.rowcount:
             raise HTTPException(404, "Not found")
+        if prior[0]["withdrawn"] != int(not body.published):
+            await privatecatalog.changed(db)
     return {"id": release_id, "published": body.published, "ready": False}
 
 

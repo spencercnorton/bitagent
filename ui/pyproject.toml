@@ -18,7 +18,7 @@ test = ["pytest==9.1.1", "httpx2==2.12.0"]
 # Flat-layout app: the modules live at the repo root (matches the Dockerfile
 # COPY list). Declared so `pip install -e .` works for local dev + CI.
 [tool.setuptools]
-py-modules = ["app", "auth", "config", "database", "deps", "graphql_client", "media_publish", "private_indexer", "privatebindings", "prom_metrics", "search_input", "telemetry", "tmdb", "torrent_metainfo", "torznab", "version", "account_usage", "discovery"]
+py-modules = ["app", "auth", "config", "database", "deps", "graphql_client", "media_publish", "private_indexer", "privatebindings", "privatecatalog", "prom_metrics", "search_input", "telemetry", "tmdb", "torrent_metainfo", "torznab", "version", "account_usage", "discovery"]
 
 [tool.setuptools.dynamic]
 version = { attr = "version.__version__" }
