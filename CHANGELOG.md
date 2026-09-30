@@ -24,7 +24,7 @@
 - Update pgx, CEL, mapstructure, Ed25519, compression and Go crypto/network/Unicode
   dependencies to their fixed releases, with required transitive module updates.
   Use the supported Go 1.26.8 toolchain in development, CI and the pinned container
-  build.
+  build; check called Go dependencies for known vulnerabilities in public CI.
 
 ## 2.11.0 — 2026-09-30
 
