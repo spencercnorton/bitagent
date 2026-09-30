@@ -11,7 +11,7 @@ function controller() {
   // Import with no DOM, then attach only the UI primitives required by each
   // interaction. Exercise the production functions, including async races.
   const source = fs.readFileSync(path.join(__dirname, '../static/js/library.js'), 'utf8');
-  vm.runInContext(source + '\nthis.controller = { detail, maybeLoadSeasonMeta, fallbackCopy, magnetGroupToolbar, setMagnetMode, restoreLibraryHistory };', context);
+  vm.runInContext(source + '\nthis.controller = { detail, groupCache, openDetail, maybeLoadSeasonMeta, fallbackCopy, magnetGroupToolbar, setMagnetMode, restoreLibraryHistory };', context);
   return context;
 }
 
@@ -81,4 +81,30 @@ test('Forward reopens the magnet collection without closing its title', () => {
   assert.equal(calls.includes('restore collection'), true);
   assert.equal(calls.includes('close title'), false);
   assert.equal(calls.includes('push collection'), false);
+});
+
+test('magnet actions become ready while optional title metadata is still pending', async () => {
+  const c = controller();
+  const g = { key: 'synthetic', contentType: 'movie', contentSource: 'tmdb', contentId: '100',
+    best: { name: 'Synthetic Film', contentSource: 'tmdb', contentId: '100' }, items: [] };
+  c.controller.groupCache.set(g.key, g);
+  const view = { classList: { add() {} }, setAttribute() {} };
+  c.document = { getElementById(id) { return id === 'libDetail' ? view : { scrollTop: 0 }; } };
+  c.history = { state: { lib: 'browse' }, pushState() {}, replaceState() {} };
+  c.openModal = () => {};
+  c._detailUrl = () => '/library?title=Synthetic';
+  c.renderDetailShell = () => {};
+  c.renderDetailBody = () => {};
+  c.refreshDetailContent = () => {};
+  let finishMetadata;
+  c.api = () => new Promise(resolve => { finishMetadata = resolve; });
+  c.BitAgentLibraryTools = { collectTitleReleases: async () => ({ items: [{ infoHash: 'a'.repeat(40) }], truncated: false }) };
+  const pending = c.controller.openDetail(g.key);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(c.controller.detail.loading, false);
+  assert.equal(c.controller.detail.releases.length, 1);
+  assert.equal(c.controller.detail.meta, null);
+  finishMetadata({ overview: 'Synthetic metadata' });
+  await pending;
+  assert.equal(c.controller.detail.meta.overview, 'Synthetic metadata');
 });
