@@ -6,8 +6,10 @@ peer discovery in conforming clients; it is not encryption or a sharing barrier.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import stat
+import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
@@ -17,10 +19,39 @@ MAX_FILES = 10_000
 MIN_PIECE_LENGTH = 64 * 1024
 MAX_PIECE_LENGTH = 16 * 1024 * 1024
 DEFAULT_PIECE_LENGTH = 4 * 1024 * 1024
+HASH_READ_BYTES = 1024 * 1024
 
 
 class TorrentError(ValueError):
     """An unsafe input or unstable media file prevented metainfo generation."""
+
+
+class HashPacer:
+    """Limit source reads with one MiB bursts and no accumulated idle credit."""
+
+    def __init__(self, mib_per_second: float, *, clock=None, sleep=None):
+        try:
+            rate = float(mib_per_second)
+        except (TypeError, ValueError) as exc:
+            raise TorrentError("hash speed must be finite and positive") from exc
+        if not math.isfinite(rate) or rate <= 0 or not math.isfinite(1.0 / rate):
+            raise TorrentError("hash speed must be finite and positive")
+        self.rate = rate
+        self._clock = clock or time.monotonic
+        self._sleep = sleep or time.sleep
+        self._deadline = None
+
+    def read(self, stream, size: int) -> bytes:
+        """Account for actual bytes and elapsed read time before the next read."""
+        if type(size) is not int or size <= 0:
+            raise TorrentError("hash read size must be a positive integer")
+        started = self._clock()
+        while self._deadline is not None and self._deadline > started:
+            self._sleep(min(self._deadline - started, 1.0))
+            started = self._clock()
+        chunk = stream.read(min(size, HASH_READ_BYTES))
+        self._deadline = started + len(chunk) / HASH_READ_BYTES / self.rate
+        return chunk
 
 
 def bencode(value) -> bytes:
@@ -203,7 +234,8 @@ class BuiltTorrent:
 
 
 def build_private_torrent(root: Path, files: list[str], name: str, announce_url: str,
-                          piece_length: int = DEFAULT_PIECE_LENGTH, path_prefix: tuple[str, ...] = ()) -> BuiltTorrent:
+                          piece_length: int = DEFAULT_PIECE_LENGTH, path_prefix: tuple[str, ...] = (),
+                          pacer: HashPacer | None = None) -> BuiltTorrent:
     """Stream file pieces across boundaries, refusing symlinks and mutation.
 
     The configured root is resolved once. Descendants are opened relative to
@@ -233,12 +265,16 @@ def build_private_torrent(root: Path, files: list[str], name: str, announce_url:
     try:
         for parts in paths:
             file_fd = _open_media(root_fd, parts)
-            with os.fdopen(file_fd, "rb") as stream:
+            with os.fdopen(file_fd, "rb", buffering=0) as stream:
                 before = os.fstat(stream.fileno())
                 if not stat.S_ISREG(before.st_mode):
                     raise TorrentError("only regular media files can be published")
                 read_bytes = 0
-                while chunk := stream.read(min(1024 * 1024, remaining)):
+                while True:
+                    read_size = min(HASH_READ_BYTES, remaining)
+                    chunk = stream.read(read_size) if pacer is None else pacer.read(stream, read_size)
+                    if not chunk:
+                        break
                     current.update(chunk)
                     remaining -= len(chunk)
                     read_bytes += len(chunk)
@@ -327,14 +363,15 @@ def source_snapshot(root: Path, files: list[str]) -> dict:
     return result
 
 
-def verify_torrent_files(root: Path, files: list[str], data: bytes, path_prefix: tuple[str, ...] = ()) -> BuiltTorrent:
+def verify_torrent_files(root: Path, files: list[str], data: bytes, path_prefix: tuple[str, ...] = (),
+                         pacer: HashPacer | None = None) -> BuiltTorrent:
     """Rehash source files and compare every info byte to an offline artifact."""
     meta = parse_metainfo(data)
     if set(meta) != {"announce", "info"} or meta["info"].get("private") != 1:
         raise TorrentError("verification accepts only controlled private artifacts")
     try:
         rebuilt = build_private_torrent(root, files, meta["info"]["name"].decode("utf-8"),
-                                        meta["announce"].decode("ascii"), meta["info"]["piece length"], path_prefix)
+                                        meta["announce"].decode("ascii"), meta["info"]["piece length"], path_prefix, pacer)
     except (KeyError, AttributeError, UnicodeDecodeError) as exc:
         raise TorrentError("invalid private metainfo fields") from exc
     if bencode(parse_metainfo(rebuilt.metainfo)["info"]) != bencode(meta["info"]):

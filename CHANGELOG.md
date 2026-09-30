@@ -15,6 +15,8 @@
 - Keep credential-bearing request URLs out of application access logs.
 - Stream large Plex inventories into bounded catalog shards with resumable hashing,
   atomic publication generations, and independent full-file verification.
+- Add optional shared read-rate limits for publication and verification hashing,
+  without throttling metadata, file-stat checks, or unchanged cache reuse.
 - Fail closed on interrupted inventory pagination, unavailable seed copies, and
   stale readiness after process restart; require verified seed registration before
   advertising private releases.

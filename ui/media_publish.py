@@ -25,7 +25,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 from torrent_metainfo import (
     DEFAULT_PIECE_LENGTH, MAX_FILES, TorrentError, build_private_torrent,
     relative_media_path, safe_component, validate_announce_url, verify_torrent_files,
-    BuiltTorrent, source_snapshot, parse_metainfo, info_hash, adaptive_piece_length,
+    BuiltTorrent, HashPacer, source_snapshot, parse_metainfo, info_hash, adaptive_piece_length,
 )
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
@@ -578,7 +578,7 @@ def _checkpoint(output: Path, resume: bool) -> tuple[sqlite3.Connection, int]:
         raise
 
 
-def _cached_build(db, root, release, name, prefix, announce_url, piece_length, output):
+def _cached_build(db, root, release, name, prefix, announce_url, piece_length, output, pacer=None):
     snapshot = source_snapshot(root, release["files"])
     piece_length = adaptive_piece_length(sum(file["stat"][2] for file in snapshot["files"]), piece_length)
     context = json.dumps({"root": str(Path(root).resolve(strict=True)), "files": sorted(release["files"]),
@@ -593,7 +593,7 @@ def _cached_build(db, root, release, name, prefix, announce_url, piece_length, o
                 or sum(file["stat"][2] for file in snapshot["files"]) != row["size"]):
             raise TorrentError("checkpoint artifact does not match its verified cache")
         return BuiltTorrent(data, row["info_hash"], row["size"], tuple(json.loads(row["files"])), snapshot), True
-    built = build_private_torrent(root, release["files"], name, announce_url, piece_length, prefix)
+    built = build_private_torrent(root, release["files"], name, announce_url, piece_length, prefix, pacer)
     if source_snapshot(root, release["files"]) != built.source_fingerprint:
         raise TorrentError("source changed after its hash was prepared")
     filename = output / (built.info_hash + ".torrent")
@@ -638,7 +638,7 @@ def _install_private(path, data):
 
 def publish_stream(releases, root: Path, announce_url: str, output: Path,
                    piece_length: int = DEFAULT_PIECE_LENGTH, resume: bool = False,
-                   full_catalog: bool = False) -> dict:
+                   full_catalog: bool = False, pacer: HashPacer | None = None) -> dict:
     """Checkpoint hashes and emit bounded shards without retaining torrent blobs.
 
     Unchanged cache reuse requires safe regular-file descriptor fingerprints.
@@ -690,7 +690,7 @@ def publish_stream(releases, root: Path, announce_url: str, output: Path,
                         if db.execute("SELECT 1 FROM published_releases WHERE input_source_id=? AND run_id=?", (release["source_id"], run_id)).fetchone():
                             raise TorrentError("duplicate source_id in current inventory")
                         name, prefix, save_path, save_parent = _release_layout(root, release)
-                        built, reused = _cached_build(db, root, release, name, prefix, announce_url, piece_length, output)
+                        built, reused = _cached_build(db, root, release, name, prefix, announce_url, piece_length, output, pacer)
                         item = _catalog_item(release, built)
                         if len(json.dumps(item, ensure_ascii=False).encode("utf-8")) + 64 > MAX_IMPORT_BYTES:
                             raise TorrentError("release metainfo is too large for an import batch")
@@ -747,12 +747,12 @@ def _manifest_records(inventory):
 
 def publish_offline(inventory: dict, root: Path, announce_url: str, output: Path,
                     piece_length: int = DEFAULT_PIECE_LENGTH, resume: bool = False,
-                    full_catalog: bool = False) -> dict:
+                    full_catalog: bool = False, pacer: HashPacer | None = None) -> dict:
     """Stream a version-one manifest into resumable private preparation artifacts."""
-    return publish_stream(_manifest_records(inventory), root, announce_url, output, piece_length, resume, full_catalog)
+    return publish_stream(_manifest_records(inventory), root, announce_url, output, piece_length, resume, full_catalog, pacer)
 
 
-def verify_offline(inventory: dict | None, root: Path, output: Path) -> int:
+def verify_offline(inventory: dict | None, root: Path, output: Path, pacer: HashPacer | None = None) -> int:
     """Rehash indexed shards against sources, independent of cache change detection."""
     index = json.loads(_read_bounded(output / "catalog-index.json", MAX_MANIFEST_BYTES))
     filename = output / "publisher-checkpoint.sqlite3"
@@ -785,7 +785,7 @@ def verify_offline(inventory: dict | None, root: Path, output: Path) -> int:
                 if base64.b64decode(item["metainfo_base64"], validate=True) != data:
                     raise TorrentError("catalog metainfo differs from its artifact")
                 _, prefix, _, _ = _release_layout(root, release)
-                built = verify_torrent_files(root, release["files"], data, prefix)
+                built = verify_torrent_files(root, release["files"], data, prefix, pacer)
                 if (built.info_hash != item["info_hash"] or built.size != item["size"]
                         or item["source_id"] != release["source_id"] + ":" + built.info_hash):
                     raise TorrentError("catalog hash or size differs from its artifact")
@@ -815,14 +815,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--announce")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--piece-length", type=int, default=DEFAULT_PIECE_LENGTH)
+    parser.add_argument("--hash-mib-per-second", type=float,
+                        help="Optional source hashing read limit in MiB/s, shared across releases (default: unlimited)")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--full-catalog", action="store_true", help="Optional bounded monolithic catalog for small exports")
     args = parser.parse_args(argv)
     try:
+        pacer = HashPacer(args.hash_mib_per_second) if args.hash_mib_per_second is not None else None
         if args.verify:
             inventory = json.loads(_read_bounded(args.manifest, MAX_MANIFEST_BYTES)) if args.manifest else None
-            count = verify_offline(inventory, args.root, args.output)
+            count = verify_offline(inventory, args.root, args.output, pacer)
             index = json.loads(_read_bounded(args.output / "catalog-index.json", MAX_MANIFEST_BYTES))
             print(f"Verified {count} private release artifacts; catalog {index['completeness']}; live seeding remains unverified.")
             return 0 if index["completeness"] == "complete" else 3
@@ -839,7 +842,7 @@ def main(argv: list[str] | None = None) -> int:
                 maps.append(tuple(mapping.split("=", 1)))
             releases = iter_plex_releases(args.plex_url, os.environ.get(args.plex_token_env, ""), args.root,
                                           maps or None, not args.no_packs, set(args.sections.split(",")) if args.sections else None)
-        report = publish_stream(releases, args.root, args.announce, args.output, args.piece_length, args.resume, args.full_catalog)
+        report = publish_stream(releases, args.root, args.announce, args.output, args.piece_length, args.resume, args.full_catalog, pacer)
         print(f"Prepared {report['release_count']} private releases; reused {report['cache_reused']} verified hash checkpoints; rejected {report['rejected']}. Live seeding remains unverified.")
         return 0 if report["completeness"] == "complete" else 3
     except (OSError, ValueError, KeyError, TypeError, sqlite3.Error):

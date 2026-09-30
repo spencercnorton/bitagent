@@ -110,6 +110,16 @@ Verify bytes independently of the cache before seeding:
 python media_publish.py --root /media/library --output /private/prepared --verify
 ```
 
+Preparation, resumed preparation and verification accept an optional
+`--hash-mib-per-second 50` to cap source-file hashing reads at that example
+budget. Choose a budget appropriate for the media host before starting a full
+library run, and pass it to both preparation and `--verify`. The default is
+unlimited. One shared limiter covers all files and releases, with at most a
+1 MiB read burst. It uses monotonic deadlines, includes time spent reading and
+does not bank idle credit. Metadata/stat reads and unchanged hash-cache hits
+are unpaced. The limit controls this publisher's reads; other processes,
+filesystem caching and a seed client's separate full recheck have their own I/O.
+
 This rehashes every indexed artifact using its checkpointed source mapping,
 without requesting Plex metadata again. An optional `--manifest` also checks
 coverage against that input. Cache fingerprints are change detection, not proof
