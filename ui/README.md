@@ -14,8 +14,8 @@ the app itself reads.
 One small FastAPI app, two surfaces selected by hostname:
 
 - **Operator console** — health, crawl throughput, the `*arr` want-bridge, evidence
-  feeds, the junk-purge quarantine, LLM stage scorecards with measured spend, and a
-  read-only view of the configuration the running container actually sees.
+  feeds, the junk-purge quarantine, LLM stage observations with estimated token
+  cost, and Settings with runtime overrides and deployment references.
 - **Public library** — a poster grid with search and facets, rich title pages, and
   a per-user account panel for personal Torznab API keys.
 
@@ -30,7 +30,10 @@ crawler's corpus. Its own state — settings overrides, block phrases,
 notifications, hashed user API keys — lives in one SQLite file under `/data`;
 mount a volume there.
 
-![The operator dashboard: indexer win rate, match rate, grab liveness, crawl throughput, category breakdown and recent activity](docs/screenshots/dashboard.png)
+![The operator dashboard: source status, observation times, indexer win rate, match rate, grab liveness and crawl throughput](docs/screenshots/dashboard.png)
+
+The screenshots use synthetic demo observations. The library example shows
+unavailable enrichment and provider browsing with no matched titles.
 
 ## Running it
 
@@ -68,17 +71,19 @@ and this is exactly the command the core spawns (minus `--reload`).
 | **Wants** | The crawler's *wantbridge*: what Sonarr/Radarr/Lidarr are still missing, exact matches found, fingerprint keys and poll health — reported as observations, never as inferences about configuration the console cannot see. |
 | **Evidence** | Per-source received/persisted counters first, then the raw evidence stream. |
 | **Quarantine** | The junk-purge hold: days left, **Restore** (re-insert and re-queue a rematch) or **Delete now**, and **Spot-check 25** — a random offset, the honest way to sample a queue nobody will read through. |
-| **AI** | One scorecard per LLM stage the crawler runs (TMDB matcher, content filter, junk judge) on shared axes: model, throughput, latency, a quality *proxy* (there is no ground truth, so nothing is called accuracy), and a spend row. Money is never guessed: an unpriced model makes the total a floor (`≥ $x`), and an idle stage is *still measuring*, not free. |
-| **Settings** | Read-only: the configuration the running container sees, split into Configuration / Auth & Security / Integrations / Retention / Classifier / Liveness / Filters / Block Lists / Audit Log. Secrets render as `🔒 •••••• <n> chars`. |
+| **AI** | Observations for the TMDB matcher, content filter, junk-purge judge and type classifier, with source status and observation time. Reported configuration, calls, outcomes and token usage are separate; absent counters are unknown, reported zeros remain zero, and ratios or latency without samples are unmeasured. Request success and verdict mixes do not measure accuracy. Token cost is a price-table estimate, not a provider invoice: entirely unpriced usage has unknown cost, while mixed priced/unpriced usage is a partial lower bound. The 30-day rate projection needs two samples at least ten seconds apart. |
+| **Settings** | Four groups: **General**, **Connections**, **Content rules** and **Access & history**. Typed controls save or reset console logging and integration overrides; deployment-managed settings are references. Secrets expose configured/source state only, never values or lengths. Drafts survive section changes and saves within the page, but disappear on a full browser reload. See the [Settings guide](../docs/ui-guide.md#settings-tab) for save, reset and failure behavior. |
 | **System** | Per-endpoint reachability and the process view. |
 
 Every explainable thing — stat cards, section headers, table columns — carries a
 small ⓘ with a plain-English, code-grounded explanation of what it measures and
 where the number comes from.
 
-![The AI tab: projected monthly spend against the budget, tokens, spend by model, and one scorecard per LLM stage](docs/screenshots/ai.png)
+![The AI tab: source observation status, four LLM stages, estimated token cost, partial usage and a rate projection awaiting samples](docs/screenshots/ai.png)
 
-![The public library: poster grid with search and facets](docs/screenshots/library.png)
+![Settings: four groups, a typed console logging control and deployment-managed references](docs/screenshots/settings.png)
+
+![The public library: Admin navigation and empty-state fallbacks for enrichment and provider browsing](docs/screenshots/library.png)
 
 ## Streaming services and TV networks
 
@@ -122,7 +127,7 @@ Settings are environment variables named after the fields in [`config.py`](confi
 | `OPERATOR_ROLES` | `OWNER` | Verified `X-Auth-Priv` values that grant the operator surface |
 | `TMDB_API_KEY` | empty | Posters and title metadata. Same name as the core's key — set once |
 | `SONARR_*`, `RADARR_*`, `LIDARR_*` | empty | `_BASE_URL` + `_API_KEY` enable *push to* that \*arr from the library |
-| `LLM_MONTHLY_BUDGET_USD` | `10.0` | The provider cap the AI tab measures spend against |
+| `LLM_MONTHLY_BUDGET_USD` | `10.0` | Reference budget for the AI tab's estimated 30-day token cost projection |
 | `LIBRARY_BRAND` | `BitAgent` | The name in the public library's title and web-app manifest |
 | `APP_SWITCHER_SCRIPT_URL` | empty | Optional cross-origin script for a shared app switcher; its origin is added to the CSP |
 | `INFISICAL_*` | empty | Optional secret hydration at startup from an [Infisical](https://infisical.com) project; `_URL`, `_ENV`, `_PROJECT_ID`, `_CLIENT_ID`, `_CLIENT_SECRET` and `_PATH` are all explicit. Fails open |
@@ -130,9 +135,11 @@ Settings are environment variables named after the fields in [`config.py`](confi
 | `HOST` / `PORT` | `0.0.0.0` / `8080` | Bind address when run standalone; the core passes `UI_LISTEN_ADDRESS` as `--host`/`--port` when it spawns the worker |
 
 Host lists, proxy trust, proxy CIDRs, the proof, operator roles and the upstream
-and navigation URLs are **startup-only**; they are never editable from the UI. Integration
-credentials can be overridden from the Settings tab, are never echoed back, and
-their audit rows store `[redacted]`.
+and navigation URLs are **startup-only**; they are never editable from the UI.
+Console logging and integration URLs and credentials can be overridden from
+the Settings tab. Logging changes apply to the console application; core and
+web-server logging remain deployment-managed. Secrets expose configured/source
+state only, and their audit rows store `[redacted]`.
 
 Without canonical URLs, navigation uses the first non-local hostname in the
 corresponding allowlist and the browser's current protocol. It does not copy a
@@ -189,7 +196,7 @@ node --test tests/library_state.test.js
 No crawler at hand? `python tools/demo_core.py` serves the GraphQL documents and
 metric families the console reads from synthetic data (public-domain films with
 real TMDB IDs for the poster-matching demo, invented release groups), on `:3333` — the quick-start command above then runs
-the whole console against it. The screenshots on this page were taken that way.
+the whole console against it. Use invented observations for demos and captures.
 
 The layout is flat — the Python modules live in this directory and the image
 copies them, with `static/` and `templates/`, to `/app/ui`, where the core runs
