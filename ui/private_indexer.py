@@ -201,6 +201,8 @@ async def grant_member(user_id: str, body: MemberGrant, identity=Depends(require
             (user_id, int(body.active), str(identity["id"]), time.time()),
         )
         if not body.active:
+            from invitations import revoke_pending
+            await revoke_pending(db, user_id, time.time())
             await db.execute("DELETE FROM private_peers WHERE user_id=?", (user_id,))
             await db.execute("UPDATE user_api_keys SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", (time.time(), user_id))
     return {"userId": user_id, "active": body.active}

@@ -295,6 +295,14 @@
         </div>
       </section>
 
+      {% if private_invitations_enabled %}
+      <section class="lib-account-section stack" aria-labelledby="acctInvitationsTitle">
+        <h3 id="acctInvitationsTitle">Invitations</h3>
+        <p class="lib-account-sub">Manage your invitation allowance and invite someone to the private library.</p>
+        <a class="lib-btn" href="/invitations">Manage invitations</a>
+      </section>
+      {% endif %}
+
       <section class="lib-account-section stack lib-account-activity" aria-labelledby="acctUsageTitle">
         <div class="lib-section-head compact">
           <h3 id="acctUsageTitle">Your activity</h3>

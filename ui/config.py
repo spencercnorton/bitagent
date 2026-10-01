@@ -43,6 +43,26 @@ class Settings(BaseSettings):
     # Optionally bind tracker credentials to a freshly approved address owned
     # by the same SSO identity, using the seed management snapshot endpoint.
     private_peer_bindings_required: bool = False
+    # Invitations grant application membership only. Billing adapters and peer
+    # enrollment remain separate; these settings are startup-only.
+    private_invitations_enabled: bool = False
+    invitation_annual_allowance: int = 3
+    invitation_owner_ids: str = ""
+    invitation_price_usd_cents: int = 5000
+    # A separate, disabled machine bridge can bootstrap verified provider
+    # principals. Its key never authorizes dashboard or human invitation APIs.
+    private_invitation_bridge_enabled: bool = False
+    invitation_bridge_url: str = ""
+    invitation_bridge_secret_file: str = ""
+    invitation_sign_in_url: str = ""
+    # Hosted Checkout and signed reconciliation require separately scoped keys.
+    # They remain disabled until an operator validates the exact Stripe account.
+    private_invitation_checkout_enabled: bool = False
+    invitation_stripe_api_key_file: str = ""
+    invitation_stripe_webhook_secret_file: str = ""
+    invitation_stripe_account_id: str = ""
+    invitation_stripe_price_id: str = ""
+    invitation_stripe_live_mode: bool = False
     # Proxy identity is accepted only from these transport-peer CIDRs. Uvicorn
     # proxy-header rewriting must stay disabled so Request.client is the peer,
     # not a client-controlled X-Forwarded-For value.

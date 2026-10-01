@@ -29,7 +29,7 @@ from version import __version__
 from config import settings, MUTABLE_FIELDS, SENSITIVE_FIELDS, ARR_BASE_URL_FIELDS
 from auth import (
     require_auth, describe_active_tiers, validate_auth_settings,
-    proxy_provenance_valid,
+    proxy_provenance_valid, require_human_sso,
 )
 from database import (
     get_db, get_all_overrides, set_override, get_audit_log,
@@ -68,6 +68,9 @@ from deps import (
 )
 from torznab import router as torznab_router
 import private_indexer
+import invitations
+import invitation_bridge
+import invitation_payments
 from infisical import hydrate_settings
 from telemetry import (
     MetricEnvelope,
@@ -93,16 +96,23 @@ async def lifespan(app: FastAPI):
     validate_auth_settings()
     _validate_host_settings()
     private_indexer.validate_settings()
+    invitations.validate_settings()
+    invitation_bridge.validate_settings()
+    invitation_payments.validate_settings()
     _app_switcher_origin()  # a malformed APP_SWITCHER_SCRIPT_URL fails startup, not every request
     private_indexer.readiness.acquire_owner()
     try:
         await get_db()
         await private_indexer.reset_readiness()
         private_indexer.start_readiness_worker()
+        invitation_payments.start_worker()
         yield
     finally:
         try:
-            await private_indexer.stop_readiness_worker()
+            try:
+                await invitation_payments.stop_worker()
+            finally:
+                await private_indexer.stop_readiness_worker()
         finally:
             private_indexer.readiness.release_owner()
             _reset_stats_snapshot_cache()
@@ -119,6 +129,9 @@ app = FastAPI(title="BitAgent Console", version=__version__, lifespan=lifespan)
 # Torznab proxy lives in its own module (ba_-key auth, not the SSO gate).
 app.include_router(torznab_router)
 app.include_router(private_indexer.router)
+app.include_router(invitations.router)
+app.include_router(invitation_bridge.router)
+app.include_router(invitation_payments.router)
 app.include_router(discovery.router)
 
 # CSRF is otherwise mitigated only by our routes being JSON-only (a simple
@@ -147,6 +160,7 @@ async def _security_headers(request: Request, call_next):
     event handlers + a pre-paint inline theme script, so script/style-src still
     need 'unsafe-inline' (removing that needs the inline-handler refactor). Even
     so this restricts img/connect sources, forbids framing, and pins base/form."""
+    path = request.scope.get("path", "")
     # `/healthz` is the only host-agnostic endpoint so local container health
     # checks keep working. Every other path must name one of the two configured
     # surfaces; an unknown/malformed Host never falls through to operator.
@@ -168,6 +182,32 @@ async def _security_headers(request: Request, call_next):
         # be read before approval so the owner can grant the existing SSO ID.
         # Machine Torznab/download/announce routes enforce their own credentials.
         path = request.scope.get("path", "")
+        if path.startswith(invitation_bridge.PATH):
+            try:
+                invitation_bridge.check_ingress(request)
+            except HTTPException as exc:
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+        if path.startswith(invitation_payments.WEBHOOK):
+            try:
+                invitation_payments.check_webhook_ingress(request)
+            except HTTPException as exc:
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+        if (path.startswith("/api/account/invitations") or path.startswith("/api/invitations/")) and path not in {invitation_bridge.PATH, invitation_payments.WEBHOOK} and request.method not in _CSRF_SAFE_METHODS:
+            try:
+                invitations.enabled()
+                invitations.check_request(request)
+            except HTTPException as exc:
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+            body = bytearray()
+            try:
+                async with asyncio.timeout(invitations.BODY_TIMEOUT):
+                    async for chunk in request.stream():
+                        if len(body) + len(chunk) > 8192:
+                            return JSONResponse(status_code=413, content={"detail": "Invitation request too large"}, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+                        body.extend(chunk)
+            except TimeoutError:
+                return JSONResponse(status_code=408, content={"detail": "Invitation request deadline exceeded"}, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+            request._body = bytes(body)
         if path == "/api/private/catalog/import":
             try:
                 require_operator(request)
@@ -185,6 +225,7 @@ async def _security_headers(request: Request, call_next):
             settings.private_indexer_enabled and _host_scope(request) == "public"
             and not path.startswith(("/static/", "/torznab/", "/private/", "/api/private/"))
             and path not in {"/healthz", "/api/me", "/api/account", "/api/account/private", "/private-admin"}
+            and path not in {"/invite", "/api/invitations/preview", "/api/invitations/redeem", invitation_payments.WEBHOOK}
             # A suspended member must still be able to revoke their own
             # credentials. The route retains SSO identity and CSRF checks.
             and not (path == "/api/account/api-key" and request.method == "DELETE")
@@ -214,7 +255,10 @@ async def _security_headers(request: Request, call_next):
         f"script-src 'self' 'unsafe-inline'{_app_switcher_origin()}; "
         "style-src 'self' 'unsafe-inline'; "
         "font-src 'self'; connect-src 'self'; "
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        + (" " + _urlparse_url(invitation_bridge.sign_in_url()).scheme + "://"
+           + _urlparse_url(invitation_bridge.sign_in_url()).netloc
+           if path == "/invite" and invitation_bridge.sign_in_url() else ""),
     )
     # Cache policy: versioned static assets (served with ?v=<content-hash>) are
     # safe to cache forever; everything else (HTML shells, and especially authed
@@ -224,6 +268,8 @@ async def _security_headers(request: Request, call_next):
         resp.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
     else:
         resp.headers.setdefault("Cache-Control", "no-store")
+    if path == "/invite" or path == "/invitations" or path.startswith(("/api/invitations/", "/api/account/invitations")):
+        resp.headers["Referrer-Policy"] = "no-referrer"
     return resp
 
 
@@ -303,6 +349,7 @@ def _compute_asset_version() -> str:
     """
     h = hashlib.sha256()
     for rel in ("css/tokens.css", "css/app.css", "css/library.css", "css/library-next.css",
+                "css/invitations.css", "js/invitations.js",
                 "js/torrent-kind.js", "js/norm-title.js", "js/app.js", "js/library.js",
                 "js/library-tools.js", "js/library-next.js", "js/library-discovery.js"):
         try:
@@ -533,6 +580,7 @@ def _library_response(request: Request, identity: dict):
             "library_brand": settings.library_brand,
             "app_version": __version__,
             "private_indexer_enabled": settings.private_indexer_enabled,
+            "private_invitations_enabled": settings.private_invitations_enabled,
             # `/library` remains a convenient library-shell link on the
             # operator host, but public-only data widgets must stay absent
             # there because their API deliberately returns 404.
@@ -554,6 +602,34 @@ def _dashboard_response(request: Request, identity: dict):
             "private_indexer_enabled": settings.private_indexer_enabled,
         },
     )
+
+
+def _invitation_response(request: Request, name: str, identity: dict):
+    return templates.TemplateResponse(
+        request=request, name=name,
+        context={"identity": identity, "asset_version": ASSET_VERSION,
+                 "library_brand": settings.library_brand, "app_version": __version__,
+                 "private_invitations_enabled": settings.private_invitations_enabled,
+                 "invitation_sign_in_url": invitation_bridge.sign_in_url() if name == "invite.html" else "",
+                 "app_switcher_script_url": settings.app_switcher_script_url.strip()},
+        headers={"Referrer-Policy": "no-referrer"},
+    )
+
+
+@app.get("/invite")
+async def invitation_landing(request: Request):
+    invitations.enabled()
+    invitations._public(request)
+    if request.query_params:
+        raise HTTPException(404, "Not found")
+    return _invitation_response(request, "invite.html", {"id": "", "method": ""})
+
+
+@app.get("/invitations")
+async def invitation_management(request: Request, identity=Depends(require_human_sso)):
+    invitations.enabled()
+    invitations._public(request)
+    return _invitation_response(request, "invitations.html", identity)
 
 
 @app.get("/")

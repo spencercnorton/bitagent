@@ -133,6 +133,12 @@ async def bump_block_phrase_hits(counts: dict[int, int]) -> None:
 async def _init_tables(db: aiosqlite.Connection):
     from private_indexer import init_schema
     await init_schema(db)
+    from invitations import init_schema as init_invitations
+    await init_invitations(db)
+    from invitation_bridge import init_schema as init_invitation_bridge
+    await init_invitation_bridge(db)
+    from invitation_payments import init_schema as init_invitation_payments
+    await init_invitation_payments(db)
     await db.executescript("""
         CREATE TABLE IF NOT EXISTS settings_overrides (
             key TEXT PRIMARY KEY,

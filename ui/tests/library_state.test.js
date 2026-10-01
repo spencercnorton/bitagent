@@ -5,6 +5,7 @@ require('./library_tools.test.js');
 require('./library_interactions.test.js');
 require('./library_discovery.test.js');
 require('./library_preferences.test.js');
+require('./invitations.test.js');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
