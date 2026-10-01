@@ -298,8 +298,8 @@ func (s *Stage) cacheKey(t model.Torrent) string {
 // Per feedback_openai_gpt5_temperature.md we do NOT send the
 // temperature field — gpt-5.* models 400 when it is set.
 // chatRequest + chatResponse are the minimal shape we need for
-// gpt-5.4-nano via /v1/chat/completions. No temperature. No
-// reasoning field requested — wastes tokens and leaks context.
+// gpt-5.4-nano via /v1/chat/completions. No temperature. The legacy
+// default leaves reasoning unspecified; explicit Ollama mode disables it.
 type chatRequest struct {
 	Model    string    `json:"model"`
 	Messages []message `json:"messages"`
@@ -309,7 +309,8 @@ type chatRequest struct {
 	} `json:"response_format"`
 	// max_completion_tokens is the current OpenAI name; small
 	// number because the response is only {category, confidence}.
-	MaxCompletionTokens int             `json:"max_completion_tokens"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
+	MaxTokens           int             `json:"max_tokens,omitempty"`
 	Provider            *providerPolicy `json:"provider,omitempty"`
 	ReasoningEffort     string          `json:"reasoning_effort,omitempty"`
 	Store               *bool           `json:"store,omitempty"`
@@ -376,6 +377,11 @@ func buildBoundedRequestBody(cfg Config, t model.Torrent) []byte {
 		MaxCompletionTokens: cfg.MaxOutputTokens,
 	}
 	req.ResponseFormat.Type = "json_object"
+	if cfg.ChatBackend.Effective() == llmprovider.ChatBackendOllama {
+		req.MaxCompletionTokens = 0
+		req.MaxTokens = cfg.MaxOutputTokens
+		req.ReasoningEffort = "none"
+	}
 	if cfg.OpenaiDataSharing {
 		req.ReasoningEffort = llmprovider.OpenAIReasoningEffort
 		store := false

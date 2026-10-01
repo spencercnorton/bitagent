@@ -64,6 +64,64 @@ The classifier runs locally with no external dependencies. TMDB enrichment is op
 |---|---|---|
 | `TMDB_API_KEY` | *(none)* | Free TMDB v3 API key. Enriches movie + TV records with title, release year, and episode metadata. Empty disables the TMDB stage; the rest of the classifier still works. Get a key at <https://www.themoviedb.org/settings/api>. |
 
+## Optional LLM chat backends
+
+The TMDB matcher and type fallback each select their chat request contract
+explicitly. Supported values are `openai` and `ollama`; an empty value keeps
+the `openai` default. Endpoint addresses and model names never select a backend
+automatically.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CLASSIFIER_LLM_MATCH_CHAT_BACKEND` | `openai` | Chat contract for the matcher's extraction and candidate reranking calls. |
+| `CLASSIFIER_LLM_CHAT_BACKEND` | `openai` | Chat contract for the type fallback classifier. |
+
+For an Ollama server reachable on the same host, configure its full
+OpenAI-compatible chat endpoint and an installed model explicitly:
+
+```dotenv
+CLASSIFIER_LLM_MATCH_CHAT_BACKEND=ollama
+CLASSIFIER_LLM_MATCH_ENDPOINT=http://127.0.0.1:11434/v1/chat/completions
+CLASSIFIER_LLM_MATCH_MODEL=qwen3.6:35b
+CLASSIFIER_LLM_CHAT_BACKEND=ollama
+CLASSIFIER_LLM_ENDPOINT=http://127.0.0.1:11434/v1/chat/completions
+CLASSIFIER_LLM_MODEL=qwen3.6:35b
+```
+
+Use an endpoint reachable from the BitAgent process; container loopback names
+the container itself. Existing API-key requirements still apply: the type
+fallback requires a nonempty configured key. Backend selection leaves both
+stages disabled by default and does not change their separate shadow/live
+switches, budgets, privacy checks, source gates or evaluation capture.
+
+The `openai` contract preserves existing `max_completion_tokens` requests and
+provider controls. The `ollama` contract instead sends the same requested
+limit as `max_tokens`, plus `reasoning_effort: "none"`. Native matcher calls
+still request 120 tokens for single-item extraction and 60 for reranking;
+uncaptured grouped extraction retains its existing per-item scaling. The type fallback
+still uses its configured output cap (64 by default). Ollama's compatibility
+API documents `max_tokens` and reasoning control; its v0.30.7 implementation
+maps those fields to the generation limit and disabled thinking request.
+See [Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)
+and the [v0.30.7 request conversion](https://raw.githubusercontent.com/ollama/ollama/v0.30.7/openai/openai.go).
+
+Ollama mode rejects OpenAI/OpenRouter hosts, a configured provider pin,
+data-sharing flags, and endpoint userinfo, query strings or fragments. It requires
+the plain `/v1/chat/completions` path and refuses HTTP redirects. Select
+`openai` for the existing hosted-provider contracts. These selectors cover
+the matcher and type fallback; the content-filter and junk clients retain
+their existing configuration.
+
+Captures identify the selected Ollama contract and retain the exact dispatched
+request. Existing deployed-wire evaluation manifests continue to describe their
+historical OpenAI contract: Ollama controls fail those fidelity checks. Use the
+configured native clients to validate Ollama; do not relabel an old manifest as
+Ollama fidelity evidence.
+
+Validate the chosen server and model independently before enabling live
+decisions. Request compatibility and a parsed response do not establish model
+accuracy, calibrated confidence, provider billing or production acceptance.
+
 ## Crawler
 
 A single multiplicative knob covers DHT worker concurrency. Higher values mean more peers, more memory, more CPU.
