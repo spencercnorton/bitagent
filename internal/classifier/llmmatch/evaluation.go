@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/spencercnorton/bitagent/internal/llmprovider"
 )
 
 // ExtractPrompt returns the exact stage-1 policy used by production.
@@ -75,6 +77,9 @@ func EvaluationChatRequestJSON(
 // EvaluationConfiguredChatRequestJSON includes the same provider pin/privacy
 // policy as production, so a route canary evaluates the bytes we will send.
 func EvaluationConfiguredChatRequestJSON(cfg Config, system, user string, maxTokens int) ([]byte, error) {
+	if err := llmprovider.ValidateChatBackend(cfg.ChatBackend, cfg.Endpoint, cfg.OpenrouterProvider, cfg.OpenaiDataSharing); err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/junkpurge"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/llmprovider"
 	"github.com/spencercnorton/bitagent/internal/logging"
 	"github.com/spencercnorton/bitagent/internal/retention"
 	"github.com/spencercnorton/bitagent/internal/seeds"
@@ -24,6 +25,29 @@ import (
 	"github.com/spencercnorton/bitagent/internal/torznab"
 	"github.com/spencercnorton/bitagent/internal/ui"
 )
+
+func TestEnvBinding_ChatBackendsAreExplicitAndIndependent(t *testing.T) {
+	for _, backend := range []string{"openai", "ollama", ""} {
+		env := map[string]string{
+			"CLASSIFIER_LLM_MATCH_CHAT_BACKEND": backend,
+			"CLASSIFIER_LLM_CHAT_BACKEND":       "openai",
+		}
+		matcher := resolveSectionFromEnv(t, "classifier_llm_match", llmmatch.NewDefaultConfig(), env).(llmmatch.Config)
+		fallback := resolveSectionFromEnv(t, "classifier_llm", llmstage.NewDefaultConfig(), env).(llmstage.Config)
+		if matcher.ChatBackend.Effective() != llmprovider.ChatBackend(backend).Effective() || fallback.ChatBackend.Effective() != llmprovider.ChatBackendOpenAI {
+			t.Fatalf("documented independent backend env vars did not bind")
+		}
+		if matcher.Enabled || matcher.EnableLive || fallback.Enabled || fallback.EnableLive {
+			t.Fatal("selecting a backend enabled an optional stage")
+		}
+	}
+	env := map[string]string{"CLASSIFIER_LLM_CHAT_BACKEND": "ollama"}
+	matcher := resolveSectionFromEnv(t, "classifier_llm_match", llmmatch.NewDefaultConfig(), env).(llmmatch.Config)
+	fallback := resolveSectionFromEnv(t, "classifier_llm", llmstage.NewDefaultConfig(), env).(llmstage.Config)
+	if matcher.ChatBackend != llmprovider.ChatBackendOpenAI || fallback.ChatBackend != llmprovider.ChatBackendOllama {
+		t.Fatal("type-only backend env value leaked into matcher config")
+	}
+}
 
 // The config env resolver derives env keys from the Go STRUCT FIELD NAME via
 // strcase.ToSnake (see resolveStructNode -> fieldKey), NOT from the yaml tag.

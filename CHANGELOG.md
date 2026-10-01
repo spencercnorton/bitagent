@@ -6,6 +6,18 @@
   invitation issuer before private indexing. Bind it to the verified account
   on the canonical operator origin; retain suspended memberships and all
   existing account, key and private permissions.
+
+## 3.3.0 — 2026-10-01
+
+- Add explicit `openai`/`ollama` chat backend selection for the TMDB matcher
+  and type fallback. Keep `openai` as the default; Ollama requests use
+  `max_tokens` and `reasoning_effort: "none"` with the existing requested caps.
+  Reject incompatible provider and endpoint settings without changing stage
+  enablement, live gates, budgets or privacy checks. Backend compatibility does
+  not establish model accuracy or calibrated confidence.
+
+## 3.2.1 — 2026-10-01
+
 - Add manual invite-code entry and an explicit, disabled-by-default site
   registration mode so profile enrollment can run before private indexing.
   Preserve signed enrollment, issuer membership and suspension checks, while

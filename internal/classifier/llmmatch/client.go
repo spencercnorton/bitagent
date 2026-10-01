@@ -207,7 +207,7 @@ func (c *Client) Allow(ctx context.Context, t model.Torrent) bool {
 // extractKey is the cache key for a stage-1 decision. ExtractMany must write
 // under exactly this key so a later Extract for the same name is a pure hit.
 func (c *Client) extractKey(name string) string {
-	return "extract|" + c.cfg.Model + "|" + c.cfg.PromptVersion + "|" + strings.ToLower(name)
+	return "extract|" + string(c.cfg.ChatBackend.Effective()) + "|" + c.cfg.Model + "|" + c.cfg.PromptVersion + "|" + strings.ToLower(name)
 }
 
 // Extract is stage 1: read the canonical identity from the release name.
@@ -292,7 +292,8 @@ func (c *Client) RerankForMediaType(
 	// Cache evidence may be replayed after a failed final-decision write. Bind
 	// it to the complete source/policy context, never just name and candidate IDs.
 	keyContext := map[string]any{
-		"name": name, "info_hash": t.InfoHash.Bytes(), "extraction": ext,
+		"chat_backend": c.cfg.ChatBackend.Effective(),
+		"name":         name, "info_hash": t.InfoHash.Bytes(), "extraction": ext,
 		"parsed_title": parsedTitle, "is_tv": isTV, "source": source,
 		"candidates": rerankCaptureCandidates(cands), "model": c.cfg.Model,
 		"prompt_version": c.cfg.PromptVersion, "endpoint": c.cfg.Endpoint,
@@ -393,7 +394,8 @@ type chatRequest struct {
 	ResponseFormat struct {
 		Type string `json:"type"`
 	} `json:"response_format"`
-	MaxCompletionTokens int             `json:"max_completion_tokens"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
+	MaxTokens           int             `json:"max_tokens,omitempty"`
 	Provider            *providerPolicy `json:"provider,omitempty"`
 	ReasoningEffort     string          `json:"reasoning_effort,omitempty"`
 	Store               *bool           `json:"store,omitempty"`
@@ -663,6 +665,13 @@ func (c *Client) newChatRequest(
 
 func newConfiguredChatRequest(cfg Config, system, user string, maxTokens int) chatRequest {
 	req := newChatRequest(cfg.Model, system, user, maxTokens)
+	if cfg.ChatBackend.Effective() == llmprovider.ChatBackendOllama {
+		// Ollama's chat compatibility API maps max_tokens to num_predict and
+		// reasoning_effort=none to think=false. A prompt hint is not that control.
+		req.MaxCompletionTokens = 0
+		req.MaxTokens = maxTokens
+		req.ReasoningEffort = "none"
+	}
 	if cfg.OpenaiDataSharing {
 		// The direct OpenAI route has a real reasoning control; do not send the
 		// Ollama-only prompt hint as part of the production contract.
@@ -681,6 +690,9 @@ func newConfiguredChatRequest(cfg Config, system, user string, maxTokens int) ch
 }
 
 func matcherContractID(cfg Config, legacy string) string {
+	if cfg.ChatBackend.Effective() == llmprovider.ChatBackendOllama {
+		return legacy + "-ollama-chat-v1"
+	}
 	if cfg.OpenaiDataSharing {
 		return legacy + "-openai-data-sharing-v1"
 	}
@@ -719,6 +731,9 @@ func (c *Client) captureRequest(
 	maxTokens int,
 	taskInput map[string]any,
 ) error {
+	if err := llmprovider.ValidateChatBackend(c.cfg.ChatBackend, c.cfg.Endpoint, c.cfg.OpenrouterProvider, c.cfg.OpenaiDataSharing); err != nil {
+		return err
+	}
 	if c.capture == nil || !c.capture.Enabled() {
 		return nil
 	}
@@ -753,6 +768,14 @@ func (c *Client) captureRequest(
 		}
 		withRoute["openai_data_sharing"] = true
 		taskInput = withRoute
+	}
+	if c.cfg.ChatBackend.Effective() == llmprovider.ChatBackendOllama {
+		withBackend := make(map[string]any, len(taskInput)+1)
+		for key, value := range taskInput {
+			withBackend[key] = value
+		}
+		withBackend["chat_backend"] = llmprovider.ChatBackendOllama
+		taskInput = withBackend
 	}
 	taskInputJSON, err := json.Marshal(taskInput)
 	if err != nil {
@@ -865,6 +888,13 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, u
 	}
 	c.metrics.calls.WithLabelValues(c.cfg.Model, stage).Inc()
 
+	if c.cfg.ChatBackend.Effective() == llmprovider.ChatBackendOllama {
+		// Keep both ordinary and long batch requests on the validated route.
+		// Copy the client so the legacy provider redirect policy is unchanged.
+		boundedClient := *hc
+		boundedClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		hc = &boundedClient
+	}
 	start := time.Now()
 	resp, err := hc.Do(httpReq)
 	c.metrics.callDuration.WithLabelValues(stage).Observe(time.Since(start).Seconds())
