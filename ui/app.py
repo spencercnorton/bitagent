@@ -14,6 +14,7 @@ import socket
 import time
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 from urllib.parse import quote as _urlquote, urlparse as _urlparse_url
 from contextlib import asynccontextmanager
 
@@ -21,7 +22,7 @@ from fastapi import FastAPI, Request, Depends, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, Response
-from pydantic import BaseModel, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
 import httpx
 from version import __version__
@@ -39,7 +40,8 @@ from database import (
 import graphql_client as gql
 import tmdb
 import discovery
-from account_usage import get_account_usage, record_magnet_grab
+from account_usage import get_account_usage, record_magnet_grab, personal_account, UsageEventConflict
+from account_preferences import get_account_preferences, patch_account_preferences, PreferenceChanges
 from prom_metrics import (
     _parse_prometheus_snapshot,
     _nonnegative_int,
@@ -363,15 +365,33 @@ async def me(identity: dict = Depends(require_auth)):
 
 class AccountApiKeyRequest(BaseModel):
     name: str = "default"
+    expectedAccountId: StrictStr | None = Field(default=None, min_length=1, max_length=200)
 
 
 class AccountGrabRequest(BaseModel):
     count: StrictInt = Field(ge=1, le=1000)
     action: Literal["copy", "open", "export"]
+    eventId: UUID | None = None
+    expectedAccountId: StrictStr | None = Field(default=None, min_length=1, max_length=200)
+
+
+class AccountPreferencesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expectedAccountId: StrictStr = Field(min_length=1, max_length=200)
+    changes: PreferenceChanges
 
 
 def _account_user_id(identity: dict) -> str:
     return str(identity.get("id") or identity.get("username") or identity.get("email") or "anonymous")
+
+
+def _expected_account(identity: dict, expected: str | None, *, personal=False) -> str:
+    user_id = _account_user_id(identity)
+    if expected is not None and expected != user_id:
+        raise HTTPException(409, "Account changed; refresh your account before trying again")
+    if personal and not personal_account(user_id):
+        raise HTTPException(403, "A named authenticated account is required")
+    return user_id
 
 
 def _new_user_api_key() -> str:
@@ -406,7 +426,7 @@ def _public_api_key(row: dict | None) -> dict | None:
     }
 
 
-def _account_payload(
+async def _account_payload(
     request: Request,
     identity: dict,
     row: dict | None,
@@ -428,20 +448,32 @@ def _account_payload(
     if secret:
         payload["apiKeySecret"] = secret
         payload["sampleUrl"] = f"{torznab_url}?t=caps&apikey={_urlquote(secret)}"
+    user_id = _account_user_id(identity)
+    payload["usage"] = await get_account_usage(user_id)
+    payload["preferences"] = await get_account_preferences(user_id)
     return payload
 
 
 @app.get("/api/account")
 async def api_account(request: Request, identity: dict = Depends(require_auth)):
-    row = await get_user_api_key(_account_user_id(identity))
-    payload = _account_payload(request, identity, row)
-    payload["usage"] = await get_account_usage(_account_user_id(identity))
-    return payload
+    user_id = _account_user_id(identity)
+    row = await get_user_api_key(user_id) if personal_account(user_id) else None
+    return await _account_payload(request, identity, row)
 
 
 @app.post("/api/account/usage/grab")
 async def api_account_grab(body: AccountGrabRequest, identity: dict = Depends(require_auth)):
-    return await record_magnet_grab(_account_user_id(identity), body.count, body.action)
+    user_id = _expected_account(identity, body.expectedAccountId, personal=True)
+    try:
+        return await record_magnet_grab(user_id, body.count, body.action, body.eventId)
+    except UsageEventConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.patch("/api/account/preferences")
+async def api_account_preferences(body: AccountPreferencesRequest, identity: dict = Depends(require_auth)):
+    user_id = _expected_account(identity, body.expectedAccountId, personal=True)
+    return await patch_account_preferences(user_id, body.changes.model_dump(exclude_unset=True))
 
 
 @app.post("/api/account/api-key")
@@ -450,22 +482,27 @@ async def api_account_create_key(
     body: AccountApiKeyRequest | None = None,
     identity: dict = Depends(require_auth),
 ):
-    if settings.private_indexer_enabled and not await private_indexer.member_active(_account_user_id(identity)):
+    user_id = _expected_account(identity, body.expectedAccountId if body else None, personal=True)
+    if settings.private_indexer_enabled and not await private_indexer.member_active(user_id):
         raise HTTPException(403, "Approved membership required")
     api_key = _new_user_api_key()
     row = await create_user_api_key(
-        _account_user_id(identity),
+        user_id,
         _hash_user_api_key(api_key),
         _key_prefix(api_key),
         (body.name if body else "default") or "default",
     )
-    return _account_payload(request, identity, row, secret=api_key)
+    return await _account_payload(request, identity, row, secret=api_key)
 
 
 @app.delete("/api/account/api-key")
-async def api_account_revoke_key(request: Request, identity: dict = Depends(require_auth)):
-    await revoke_user_api_key(_account_user_id(identity))
-    return _account_payload(request, identity, None)
+async def api_account_revoke_key(
+    request: Request, identity: dict = Depends(require_auth),
+    expectedAccountId: str | None = Query(default=None, min_length=1, max_length=200),
+):
+    user_id = _expected_account(identity, expectedAccountId, personal=True)
+    await revoke_user_api_key(user_id)
+    return await _account_payload(request, identity, None)
 
 
 # ── Page surfaces ─────────────────────────────────────────────────────

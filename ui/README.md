@@ -75,6 +75,27 @@ where the number comes from.
 
 ![The public library: poster grid with search and facets](docs/screenshots/library.png)
 
+## Streaming services and TV networks
+
+The public library has separate **Streaming** and **TV & cable** logo browsers.
+Streaming services are drawn from the complete movie/series provider catalogue
+for the selected country, with availability supplied by JustWatch via TMDB.
+Network names are searchable across TMDB's daily TV-network index. Only one page
+of network metadata and logos is fetched at a time; repeated requests share a
+bounded cache. The app needs outbound HTTPS access to `api.themoviedb.org`,
+`files.tmdb.org`, and the image CDN `image.tmdb.org` for this discovery feature.
+
+Choose a service or network, then search titles or page through its catalogue.
+Network selection applies to series and checks title-search results against
+their network metadata. A network's origin country describes the network;
+current streaming availability is a separate, country-specific fact. The
+selection is retained in the library URL and browser history.
+
+Discovery requires the operator's own `TMDB_API_KEY`. Logo tiles use TMDB image
+assets, try supplied alternate images, and keep a visible name if no image is
+available. Discovered titles offer **Find releases**; opening one checks its
+exact identity in the index before offering any magnet action.
+
 ## Configuration
 
 Settings are environment variables named after the fields in [`config.py`](config.py)

@@ -72,7 +72,9 @@ def test_provider_catalogue_merges_types_sorts_priorities_and_includes_regions(c
     body = response.json()
     assert body["available"] is True
     assert body["providers"] == [{"id": 8, "name": "Synthetic Stream", "logo": "https://image.tmdb.org/t/p/w92/logo.jpg",
-                                 "displayPriority": 1, "types": ["movie", "tv_show"]}]
+                                 "displayPriority": 1, "types": ["movie", "tv_show"], "logoAlternatives": [],
+                                 "providerIds": [8], "idsByType": {"movie": [8], "tv_show": [8]},
+                                 "aliases": ["Synthetic Stream"], "brandKey": "synthetic stream"}]
     assert {row["code"] for row in body["regions"]} == {"US", "GB"}
     assert body["attribution"] == "Provider availability: JustWatch via TMDB"
     client.get("/api/discovery/providers")

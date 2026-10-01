@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## 2.13.0 — 2026-09-30
+
+- Add separate, searchable streaming-service and TV/cable network browsers with
+  logo tiles, accessible selection controls, and paged network discovery.
+- Recover streaming logos across movie and series catalogues, try safe alternate
+  images, and retain named tiles when an upstream logo is unavailable.
+- Group subscription plans and storefront channels into one service option;
+  search their combined regional catalogue and retain variant-name searches
+  and existing provider links.
+- Filter network series and title searches by verified TMDB network identities;
+  preserve network selections in shareable URLs and browser history.
+- Bound complete metadata requests and network export downloads, including
+  queued work, to keep upstream failures responsive.
+- Refine library navigation, typography, spacing and responsive discovery;
+  show a compact service roster with full-catalogue search and disclosure.
+- Add clear catalogue headings and loading, empty and unavailable states;
+  retain selected brands and keyboard focus during discovery changes.
+- Keep title identity visible when artwork fails and bring mobile release
+  actions forward with expandable quality, source and edition filters.
+- Preserve the full name and separate identity of The Roku Channel.
+- Add account-scoped display, search and magnet preferences with clear save,
+  browser-storage and retry states; preserve explicit shared-link filters.
+- Show copied/opened/exported activity, tracked dates, observation time and
+  seven/thirty-day UTC windows with explicit coverage notices.
+- Deduplicate retried activity receipts and isolate delayed account responses;
+  prevent anonymous/shared credentials from becoming personal usage totals.
 - Add bounded operator catalogue pages and optional import acknowledgments
   that reconcile every source alias with its canonical private torrent.
 - Keep catalogue scans consistent across readiness refreshes, metadata edits,

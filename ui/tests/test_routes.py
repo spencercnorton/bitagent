@@ -1296,7 +1296,9 @@ def test_settings_delete_missing_override_404(client, fresh_db):
 
 # ── /api/account + /torznab proxy (real DB, fake upstream) ─────────────────
 
-def test_account_api_key_lifecycle_never_re_echoes_secret(client, fresh_db):
+def test_account_api_key_lifecycle_never_re_echoes_secret(client, fresh_db, monkeypatch):
+    monkeypatch.setitem(app_module.app.dependency_overrides, app_module.require_auth,
+                        lambda: {"id": "route-test-account", "display": "Route test", "method": "test"})
     r = client.get("/api/account")
     assert r.status_code == 200
     assert r.json()["apiKey"] is None
@@ -1326,6 +1328,8 @@ def test_torznab_proxy_rejects_missing_or_bad_key(client, fresh_db):
 
 
 def test_torznab_proxy_validates_user_key_and_swaps_core_key(client, monkeypatch, fresh_db):
+    monkeypatch.setitem(app_module.app.dependency_overrides, app_module.require_auth,
+                        lambda: {"id": "route-test-account", "display": "Route test", "method": "test"})
     config.settings.bitagent_torznab_url = "http://core:3333/torznab"
     config.settings.torznab_api_key = "core-secret"
     user_key = client.post("/api/account/api-key", json={"name": "arr"}).json()["apiKeySecret"]
@@ -1358,6 +1362,8 @@ def test_torznab_proxy_validates_user_key_and_swaps_core_key(client, monkeypatch
 
 
 def test_torznab_proxy_never_leaves_the_torznab_namespace(client, monkeypatch, fresh_db):
+    monkeypatch.setitem(app_module.app.dependency_overrides, app_module.require_auth,
+                        lambda: {"id": "route-test-account", "display": "Route test", "method": "test"})
     config.settings.bitagent_torznab_url = "http://core:3333/torznab"
     user_key = client.post("/api/account/api-key", json={"name": "arr"}).json()["apiKeySecret"]
     calls = []
@@ -1382,6 +1388,8 @@ def test_torznab_proxy_never_leaves_the_torznab_namespace(client, monkeypatch, f
 def test_torznab_proxy_ignores_legacy_frozen_upstream_overrides(
     client, monkeypatch, fresh_db
 ):
+    monkeypatch.setitem(app_module.app.dependency_overrides, app_module.require_auth,
+                        lambda: {"id": "route-test-account", "display": "Route test", "method": "test"})
     # Simulate stale rows surviving in (or being reinserted into) the database
     # after startup. Both the explicit Torznab URL and GraphQL fallback must
     # come only from startup settings.
