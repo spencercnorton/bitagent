@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 3.1.0 — 2026-10-01
+
+- Automatically open profile enrollment for every invitation recipient when the optional
+  enrollment bridge is enabled, including existing signed-in users. Require
+  that path on the backend and support a signed site-local account provider
+  alongside SSO; profile and password handling remain in the identity service.
+
 ## 3.0.0 — 2026-09-30
 
 - **Breaking:** All existing and new generic personal indexer keys default to

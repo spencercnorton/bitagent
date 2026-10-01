@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>Accept invitation · {{ library_brand }}</title>
+  <title>{{ 'Create your profile' if invitation_sign_in_url else 'Accept invitation' }} · {{ library_brand }}</title>
   <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version }}">
   <link rel="stylesheet" href="/static/css/library-next.css?v={{ asset_version }}">
   <link rel="stylesheet" href="/static/css/invitations.css?v={{ asset_version }}">
@@ -14,15 +14,21 @@
   <main class="inv-page inv-landing">
     <nav class="inv-nav"><a href="/library">{{ library_brand }} library</a></nav>
     <section class="inv-card" aria-labelledby="invWelcome">
-      <p class="inv-eyebrow">You’re invited</p><h1 id="invWelcome">Join the private library</h1>
+      <p class="inv-eyebrow">You’re invited</p>
+      {% if invitation_sign_in_url %}
+      <h1 id="invWelcome">Create your profile</h1>
+      <p>Join with an email address and a username and password. SSO is optional.</p>
+      {% else %}
+      <h1 id="invWelcome">Join the private library</h1>
       <p>Accept this invitation using your own account.</p>
+      {% endif %}
       <p id="invStatus" class="inv-status" role="status" aria-live="polite">Checking your invitation…</p>
       <p id="invRecipient" class="inv-muted" hidden></p>
       <p id="invExpiry" class="inv-muted" hidden></p>
       {% if invitation_sign_in_url %}
       <form id="invSignInForm" action="{{ invitation_sign_in_url }}" method="post" target="_top" hidden>
         <span id="invSignInToken" hidden></span>
-        <button class="inv-primary" id="invSignIn" type="submit" disabled>Sign in to accept</button>
+        <button class="inv-primary" id="invSignIn" type="submit" disabled>Create your profile</button>
       </form>
       {% endif %}
       <button class="inv-primary" id="invAccept" type="button" disabled hidden>Accept invitation</button>

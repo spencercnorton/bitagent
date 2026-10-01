@@ -334,9 +334,17 @@ async def preview_invitation(request: Request):
     return {"available": True, "expiresAt": _stamp(rows[0]["expires_at"])} if rows else {"available": False}
 
 
+def _direct_redemption_enabled():
+    enabled()
+    # An enabled enrollment service owns profile completion for every invitee,
+    # including humans who already have a verified browser identity.
+    if settings.private_invitation_bridge_enabled:
+        raise HTTPException(403, "Invitation profile enrollment required")
+
+
 @router.post("/api/invitations/redeem")
 async def redeem_invitation(request: Request, identity=Depends(require_human_sso)):
-    enabled()
+    _direct_redemption_enabled()
     _public(request)
     body = await _body(request, {"token", "expectedAccountId"})
     uid = _account(identity, body.get("expectedAccountId"))
@@ -346,7 +354,7 @@ async def redeem_invitation(request: Request, identity=Depends(require_human_sso
     _rate(("redeem", uid), 30)
     await get_db()
     async with private_write() as db:
-        enabled()
+        _direct_redemption_enabled()
         rows = await db.execute_fetchall("SELECT * FROM membership_invitations WHERE token_hash=?", (digest,))
         if not rows:
             raise HTTPException(409, "Invitation unavailable")

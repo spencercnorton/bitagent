@@ -237,50 +237,136 @@ test('sign-in target must be the exact canonical HTTPS bridge route', () => {
   for (const value of ['', undefined, 'http://sso.example.test/invitations/start', 'https://sso.example.test:443/invitations/start', 'https://user@sso.example.test/invitations/start', 'https://sso.example.test/invitations/start?token=x', 'https://sso.example.test/invitations/start#x', 'https://sso.example.test/other', ' https://sso.example.test/invitations/start']) assert.equal(invitations.signInTarget(value), null);
 });
 
-test('bridge sign-in requires an available preview and performs one explicit token-only submission', async () => {
+test('bridge enrollment automatically hands off once after preview, with one deliberate fallback', async () => {
   const submissions = [], calls = [];
   const h = harness(async path => { calls.push(path); if (path === '/api/me') throw {code:401}; return {available:true,expiresAt}; },
     {owner:'',token,signInUrl:'https://sso.example.test/invitations/start',submitSignIn:(...args) => submissions.push(args)});
   h.controller.signIn(); assert.equal(submissions.length, 0);
   await h.controller.preview();
-  assert.equal(submissions.length, 0); assert.equal(h.events.findLast(item => item[0] === 'signIn')[1], true);
-  h.controller.signIn(); h.controller.signIn();
   assert.deepEqual(submissions, [[token,'https://sso.example.test/invitations/start']]);
-  assert.deepEqual(calls, ['/api/invitations/preview','/api/me']);
+  assert.equal(h.events.findLast(item => item[0] === 'signIn')[1], true);
+  assert.match(h.events.findLast(item => item[0] === 'status')[1], /If this page stays open, select Create your profile/);
+  await h.controller.preview(); await h.controller.preview();
+  assert.equal(submissions.length, 1);
+  assert.deepEqual(calls, ['/api/invitations/preview']);
+  h.controller.signIn(); h.controller.signIn();
+  assert.deepEqual(submissions, Array(2).fill([token,'https://sso.example.test/invitations/start']));
 });
 
-test('unavailable, disabled, changed action, and pagehide cannot submit an invitation', async () => {
-  for (const changes of [{available:false}, {signInUrl:''}, {signInUrl:'https://sso.example.test/other'}, {close:true}]) {
+test('an existing authenticated recipient must complete profile enrollment through the bridge', async () => {
+  const submissions = [], calls = [];
+  const h = harness(async path => {
+    calls.push(path);
+    return path === '/api/me' ? {id:'recipient',method:'npm-header',email:'recipient@example.test'} : {available:true,expiresAt};
+  }, {owner:'recipient',token,signInUrl:'https://sso.example.test/invitations/start',submitSignIn:(...args) => submissions.push(args)});
+  await h.controller.redeem();
+  await h.controller.preview(); await h.controller.redeem();
+  assert.deepEqual(calls, ['/api/invitations/preview']);
+  assert.equal(h.events.some(event => event[0] === 'recipient' || event[0] === 'accepted'), false);
+  assert.match(h.events.findLast(event => event[0] === 'status')[1], /Create your profile.*email address is required; SSO is optional/);
+  assert.deepEqual(submissions, [[token,'https://sso.example.test/invitations/start']]);
+});
+
+test('a failed automatic handoff retains only an explicit profile fallback and never auto-retries', async () => {
+  const submissions = [];
+  const h = harness(async () => ({available:true,expiresAt}), {owner:'',token,signInUrl:'https://sso.example.test/invitations/start',submitSignIn:(...args) => {
+    submissions.push(args); if (submissions.length === 1) throw new Error('synthetic navigation block');
+  }});
+  await h.controller.preview(); await h.controller.preview();
+  assert.equal(submissions.length, 1);
+  assert.match(h.events.findLast(event => event[0] === 'status')[1], /could not open automatically.*Create your profile/);
+  assert.equal(h.events.findLast(event => event[0] === 'signIn')[1], true);
+  h.controller.signIn(); h.controller.signIn();
+  assert.deepEqual(submissions, Array(2).fill([token,'https://sso.example.test/invitations/start']));
+});
+
+test('concurrent and repeated previews cannot automatically submit twice', async () => {
+  const pending = deferred(), submissions = [], calls = [];
+  const h = harness(async path => { calls.push(path); return pending.promise; }, {owner:'recipient',token,signInUrl:'https://sso.example.test/invitations/start',submitSignIn:(...args) => submissions.push(args)});
+  const first = h.controller.preview(); await h.controller.preview();
+  assert.deepEqual(calls, ['/api/invitations/preview']); assert.equal(submissions.length, 0);
+  pending.resolve({available:true,expiresAt}); await first; await h.controller.preview();
+  assert.deepEqual(submissions, [[token,'https://sso.example.test/invitations/start']]);
+  assert.deepEqual(calls, ['/api/invitations/preview']);
+});
+
+test('a configured but invalid or unusable enrollment target cannot fall back to direct redemption', async () => {
+  for (const changes of [{signInUrl:'https://sso.example.test/other',submitSignIn() {}}, {signInUrl:'https://sso.example.test/invitations/start'}]) {
+    const calls = [];
+    const h = harness(async path => { calls.push(path); return {available:true,expiresAt}; }, {owner:'recipient',token,...changes});
+    await h.controller.preview(); await h.controller.redeem(); h.controller.signIn();
+    assert.deepEqual(calls, ['/api/invitations/preview']);
+    assert.equal(h.events.some(event => event[0] === 'signIn' && event[1]), false);
+  }
+});
+
+test('an available preview arriving after pagehide cannot reveal the enrollment action', async () => {
+  const pending = deferred(), submissions = [];
+  const h = harness(async () => pending.promise, {owner:'recipient',token,signInUrl:'https://sso.example.test/invitations/start',submitSignIn:(...args) => submissions.push(args)});
+  const previewing = h.controller.preview(); h.controller.close();
+  pending.resolve({available:true,expiresAt}); await previewing; h.controller.signIn();
+  assert.equal(h.events.some(event => event[0] === 'signIn' && event[1]), false);
+  assert.equal(submissions.length, 0);
+});
+
+test('closing before preview or while revealing enrollment changes generation and prevents handoff', async () => {
+  const calls = [], submissions = [];
+  const h = harness(async path => { calls.push(path); return {available:true,expiresAt}; }, {owner:'',token,signInUrl:'https://sso.example.test/invitations/start',submitSignIn:(...args) => submissions.push(args)});
+  h.controller.close(); await h.controller.preview();
+  assert.equal(calls.length, 0); assert.equal(submissions.length, 0);
+  let controller;
+  const view = Object.fromEntries(['status','busy','secret','manage','recipient','accepted','invalidate'].map(name => [name, () => {}]));
+  view.signIn = ready => { if (ready) controller.close(); };
+  controller = invitations.createController({owner:'',token,signInUrl:'https://sso.example.test/invitations/start',submitSignIn:(...args) => submissions.push(args),api:async () => ({available:true,expiresAt}),view});
+  await controller.preview(); controller.signIn();
+  assert.equal(submissions.length, 0);
+});
+
+test('malformed token and unavailable expired preview never hand off to profile setup', async () => {
+  for (const changes of [{token:'malformed'}, {available:false}, {expiresAt:'malformed'}]) {
     const submissions = [];
-    const h = harness(async path => { if (path === '/api/me') throw {code:401}; return {available:changes.available !== false,expiresAt}; },
-      {owner:'',token,signInUrl:changes.signInUrl ?? 'https://sso.example.test/invitations/start',submitSignIn:(...args) => submissions.push(args)});
-    await h.controller.preview(); if (changes.close) h.controller.close(); h.controller.signIn();
+    const h = harness(async () => ({available:changes.available !== false,expiresAt:changes.expiresAt ?? expiresAt}), {owner:'',token:changes.token ?? token,signInUrl:'https://sso.example.test/invitations/start',submitSignIn:(...args) => submissions.push(args)});
+    await h.controller.preview(); h.controller.signIn();
     assert.equal(submissions.length, 0);
   }
 });
 
-test('landing native form sends only token at explicit submit and clears its DOM on pagehide', async () => {
+test('unavailable, disabled, and malformed action cannot submit an invitation', async () => {
+  for (const changes of [{available:false}, {signInUrl:''}, {signInUrl:'https://sso.example.test/other'}]) {
+    const submissions = [];
+    const h = harness(async path => { if (path === '/api/me') throw {code:401}; return {available:changes.available !== false,expiresAt}; },
+      {owner:'',token,signInUrl:changes.signInUrl ?? 'https://sso.example.test/invitations/start',submitSignIn:(...args) => submissions.push(args)});
+    await h.controller.preview(); h.controller.signIn();
+    assert.equal(submissions.length, 0);
+  }
+});
+
+test('signed-in landing automatically posts only token and clears fallback secret on pagehide', async () => {
   const {document,elements} = dom('redeem'); const listeners = {}, sent = [], requests = [];
   const form = {hidden:true,listeners:{},getAttribute:() => 'https://sso.example.test/invitations/start',addEventListener(name,fn) { this.listeners[name] = fn; }};
   elements.set('invSignInForm', form);
   const win = {location:{origin,pathname:'/invite',search:'',hash:'#'+token},history:{replaceState() {}},navigator:{},addEventListener:(name,fn) => { listeners[name] = fn; },
     HTMLFormElement:{prototype:{submit() { sent.push(elements.get('invSignInToken').children.map(input => ({type:input.type,name:input.name,value:input.value}))); }}},
-    fetch:async path => { requests.push(path); return path === '/api/me' ? {ok:false,status:401} : {ok:true,text:async () => JSON.stringify({available:true,expiresAt})}; }};
+    fetch:async path => { requests.push(path); return {ok:true,text:async () => JSON.stringify(path === '/api/me' ? {id:'recipient',method:'npm-header',email:'recipient@example.test'} : {available:true,expiresAt})}; }};
   const controller = invitations.mount(win,document); await new Promise(resolve => setImmediate(resolve));
-  assert.equal(elements.get('invSignInToken').children.length, 0); assert.equal(form.hidden, false); assert.equal(sent.length, 0);
-  let prevented = false; form.listeners.submit({preventDefault() { prevented = true; }});
-  assert.equal(prevented, true); assert.deepEqual(sent, [[{type:'hidden',name:'token',value:token}]]);
+  assert.equal(elements.get('invSignInToken').children.length, 0); assert.equal(form.hidden, false);
+  assert.deepEqual(sent, [[{type:'hidden',name:'token',value:token}]]);
+  assert.equal(elements.get('invSignIn').disabled, false);
+  assert.match(elements.get('invStatus').textContent, /If this page stays open/);
+  await controller.preview(); assert.equal(sent.length, 1);
   listeners.pagehide(); assert.equal(elements.get('invSignInToken').children.length, 0); assert.equal(form.hidden,true);
-  controller.signIn(); assert.equal(sent.length,1); assert.deepEqual(requests,['/api/invitations/preview','/api/me']);
+  controller.signIn(); assert.equal(sent.length,1); assert.deepEqual(requests,['/api/invitations/preview']);
 });
 
 test('a changed rendered action fails closed before native form submission', async () => {
-  const {document,elements} = dom('redeem'); let action = 'https://sso.example.test/invitations/start', submissions = 0;
+  const {document,elements} = dom('redeem'); const pending = deferred(); let action = 'https://sso.example.test/invitations/start', submissions = 0;
   const form = {hidden:true,listeners:{},getAttribute:() => action,addEventListener(name,fn) { this.listeners[name] = fn; }}; elements.set('invSignInForm',form);
   const win = {location:{origin,pathname:'/invite',search:'',hash:'#'+token},history:{replaceState() {}},navigator:{},addEventListener() {},HTMLFormElement:{prototype:{submit() { submissions++; }}},
-    fetch:async path => path === '/api/me' ? {ok:false,status:401} : {ok:true,text:async () => JSON.stringify({available:true,expiresAt})}};
-  invitations.mount(win,document); await new Promise(resolve => setImmediate(resolve));
-  action = 'https://other.example.test/invitations/start'; form.listeners.submit({preventDefault() {}});
+    fetch:async () => pending.promise};
+  invitations.mount(win,document);
+  action = 'https://other.example.test/invitations/start';
+  pending.resolve({ok:true,text:async () => JSON.stringify({available:true,expiresAt})}); await new Promise(resolve => setImmediate(resolve));
+  form.listeners.submit({preventDefault() {}});
   assert.equal(submissions,0); assert.equal(elements.get('invSignInToken').children.length,0); assert.equal(form.hidden,true);
 });
 

@@ -1,8 +1,8 @@
 # Member invitations
 
-Invitations are optional application-membership grants for your existing SSO
-identities. They do not create an account system, enroll a VPN device, issue a
-peer lease, verify media or provision a seed. Configure and test those separate
+Invitations are optional application-membership grants for verified identities
+from your authentication service. They do not create an account system, enroll
+a VPN device, issue a peer lease, verify media or provision a seed. Configure and test those separate
 boundaries before admitting traffic to a private library.
 
 The feature defaults to disabled. These settings are startup-only:
@@ -41,8 +41,9 @@ token. The unauthenticated preview is rate-limited and returns the same
 unavailable shape for malformed, unknown, expired, revoked and consumed tokens.
 A valid preview discloses expiry only.
 
-Redemption requires a verified human SSO identity. The transaction rechecks
-that the issuer remains active and that the token is unexpired and unused,
+With the enrollment bridge disabled, direct redemption requires a verified human
+proxy identity. This existing path does not collect or enforce a profile email.
+The transaction rechecks that the issuer remains active and that the token is unexpired and unused,
 then records consumption and the exact recipient's membership together. A
 suspended identity cannot reactivate itself with an invitation; its membership
 remains operator-managed. An existing active member cannot consume an unused
@@ -57,11 +58,11 @@ SSO identities needs a separately reviewed onboarding path. The generic
 redemption endpoint does not accept a caller-supplied identity or a machine
 key as a substitute for the trusted proxy's human identity.
 
-## Optional SSO enrollment bridge
+## Optional profile enrollment bridge
 
-An SSO service can use a separate bootstrap protocol when an invitee has not
-yet acquired an approved identity. All bridge settings are startup-only and
-the feature defaults to disabled:
+An authentication service can use a separate bootstrap protocol when an invitee
+has not yet acquired an approved identity. All bridge settings are startup-only
+and the feature defaults to disabled:
 
 | Setting | Behavior |
 |---|---|
@@ -70,6 +71,24 @@ the feature defaults to disabled:
 | `INVITATION_BRIDGE_SECRET_FILE` | Distinct 32–4096-byte regular POSIX file, no symlinks/hard links or group/other permissions; exact file bytes are the HMAC key. |
 | `INVITATION_BRIDGE_SUBJECT_FORMAT` | Startup-only `legacy-negative` (default) or `principal`. Both require an exact positive integer principal; the SSO service must use the same format. |
 | `INVITATION_SIGN_IN_URL` | Fixed canonical HTTPS SSO `/invitations/start` form target; only the invitation landing page permits that origin in `form-action`. |
+
+When the bridge is enabled, `/invite` immediately prompts recipients to create
+a profile and sends every valid invitation through the token-only form,
+including recipients with an existing browser session. A successful anonymous
+preview triggers exactly one automatic top-level handoff. If browser navigation
+is blocked, an explicit Create your profile button remains available; there is
+no automatic retry. The token remains only in memory until handoff or page exit.
+Direct human
+`POST /api/invitations/redeem` returns `403` in this mode. An invalid or unavailable
+enrollment configuration cannot fall back to direct redemption.
+
+The authentication service must collect a required email before granting
+membership. It may offer site-local username/password accounts with the exact
+provider identifier `bitagent-local` alongside optional SSO. It owns credential
+validation, password hashing, profile completion and project-only login policy;
+BitAgent neither receives passwords nor treats an email as identity authority.
+The signed bridge accepts that provider only through the same protected machine
+boundary and exact principal/subject binding as the supported SSO providers.
 
 The upstream machine location must restrict its callers to the reviewed SSO
 service, preserve the verified proxy proof, and clear cookies, browser
@@ -86,9 +105,9 @@ current nonce, original expiry and bounded ten-second call before using it.
 Never save a success response as future membership authority.
 
 `start` creates a bounded ten-minute enrollment without consuming the link or
-granting membership. The SSO service must bind its host-only secure cookie,
-existing OAuth state and verified provider subject, then reserve a stable
-unapproved principal. `redeem` derives the configured account ID from that
+granting membership. The authentication service must bind its host-only secure
+cookie, existing OAuth state or site-local registration and verified account
+subject, then reserve a stable unapproved principal. `redeem` derives the configured account ID from that
 reserved positive principal and commits membership and consumption together. `status`
 reconciles an already bound enrollment; it cannot bind an arbitrary principal.
 Recovery requires the same provider/principal/subject binding and a still
