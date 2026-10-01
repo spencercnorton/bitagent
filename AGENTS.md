@@ -17,3 +17,7 @@
   preserve the disabled default, and cover authorization and expiry with real
   ASGI/SQLite regressions. Public-content checks exclude operation journals;
   record only generic implementation and validation here.
+
+- Private readiness uses a single lifespan owner and bounded observations.
+  Preserve epoch/visibility fencing, default portability and original proof
+  timestamps; functional SQLite tests do not establish deployment capacity.

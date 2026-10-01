@@ -94,16 +94,22 @@ async def lifespan(app: FastAPI):
     _validate_host_settings()
     private_indexer.validate_settings()
     _app_switcher_origin()  # a malformed APP_SWITCHER_SCRIPT_URL fails startup, not every request
-    await get_db()
-    await private_indexer.reset_readiness()
-    private_indexer.start_readiness_worker()
-    yield
-    await private_indexer.stop_readiness_worker()
-    _reset_stats_snapshot_cache()
-    _reset_library_stats_cache()
-    _reset_indexer_stats_cache()
-    discovery.reset_cache()
-    await close_all()
+    private_indexer.readiness.acquire_owner()
+    try:
+        await get_db()
+        await private_indexer.reset_readiness()
+        private_indexer.start_readiness_worker()
+        yield
+    finally:
+        try:
+            await private_indexer.stop_readiness_worker()
+        finally:
+            private_indexer.readiness.release_owner()
+            _reset_stats_snapshot_cache()
+            _reset_library_stats_cache()
+            _reset_indexer_stats_cache()
+            discovery.reset_cache()
+            await close_all()
 
 
 logger = logging.getLogger("bitagent-ui")

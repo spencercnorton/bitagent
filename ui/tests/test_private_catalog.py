@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import sqlite3
-import time
 
 import aiosqlite
 import pytest
@@ -15,7 +14,7 @@ import config
 import database
 import private_indexer as private
 import privatecatalog as catalog
-from test_private_indexer import identity, metainfo, private_config as private_config
+from test_private_indexer import identity, metainfo, mark_ready, private_config as private_config
 
 
 OWNER = identity("owner", "OWNER")
@@ -122,10 +121,7 @@ def test_readiness_changes_do_not_disrupt_enumeration_or_ack_retry(client):
     items = [{**metainfo(), "source_id": f"asset:{i}"} for i in range(3)]
     result = imported(client, items).json()
     first = page(client, limit=1).json()
-    async def readiness():
-        async with private.private_write() as db:
-            await db.execute("UPDATE private_releases SET ready=1,verified_at=?", (time.time(),))
-    asyncio.run(readiness())
+    asyncio.run(mark_ready())
     assert imported(client, items).json() == result
     second = page(client, cursor=first["next_cursor"]).json()
     assert second["items"][0]["ready"] == 1 and second["snapshot"] == first["snapshot"]
