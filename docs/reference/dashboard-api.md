@@ -230,117 +230,104 @@ Returns a paginated list of webhook evidence events.
 
 ## Settings
 
-Settings are managed through a defaults-plus-overrides model. Each
-setting has a default value defined by the system. Users can override
-individual settings, and every change is recorded in the audit log.
+These endpoints require operator authority. Runtime overrides are limited to
+`MUTABLE_FIELDS` in `ui/config.py`: console `log_level`, TMDB and Torznab keys,
+and the Sonarr, Radarr and Lidarr base URLs and keys. Host routing, proxy trust,
+operator roles and core endpoint URLs are startup-only. Every save and reset
+writes an audit row; secret values are stored as `[redacted]` in that log.
 
 ### GET /api/settings
 
-Returns all mutable settings with their default values, current
-effective values, and override status.
+Returns a `fields` object keyed by setting name and a `mutable_keys` array.
+For non-sensitive fields, `default` is the resolved startup value and `current`
+is the effective value; both are strings. Sensitive fields return only
+configured/source and override state, never values or lengths.
 
-**Response:**
+**Synthetic response example:**
 
 ```json
 {
-  "items": [
-    {
-      "key": "crawl_interval_seconds",
-      "default": 3600,
-      "value": 1800,
-      "overridden": true
-    },
-    {
-      "key": "max_concurrent_downloads",
-      "default": 5,
-      "value": 5,
-      "overridden": false
-    }
-  ]
+  "fields": {
+    "lidarr_api_key": {"sensitive": true, "configured": false, "source": "unset", "overridden": false},
+    "lidarr_base_url": {"sensitive": false, "default": "", "current": "", "source": "startup", "overridden": false},
+    "log_level": {"sensitive": false, "default": "info", "current": "warning", "source": "override", "overridden": true},
+    "radarr_api_key": {"sensitive": true, "configured": false, "source": "unset", "overridden": false},
+    "radarr_base_url": {"sensitive": false, "default": "", "current": "", "source": "startup", "overridden": false},
+    "sonarr_api_key": {"sensitive": true, "configured": true, "source": "override", "overridden": true},
+    "sonarr_base_url": {"sensitive": false, "default": "", "current": "https://sonarr.example.com", "source": "override", "overridden": true},
+    "tmdb_api_key": {"sensitive": true, "configured": false, "source": "unset", "overridden": false},
+    "torznab_api_key": {"sensitive": true, "configured": true, "source": "startup", "overridden": false}
+  },
+  "mutable_keys": ["lidarr_api_key", "lidarr_base_url", "log_level", "radarr_api_key", "radarr_base_url", "sonarr_api_key", "sonarr_base_url", "tmdb_api_key", "torznab_api_key"]
 }
 ```
 
-| Field        | Type    | Description                                       |
-|--------------|---------|---------------------------------------------------|
-| `key`        | string  | Unique setting identifier.                        |
-| `default`    | any     | System-defined default value.                     |
-| `value`      | any     | Current effective value (default or override).    |
-| `overridden` | boolean | `true` if the user has set a custom override.     |
+| Field | Type | Description |
+|---|---|---|
+| `sensitive` | boolean | Whether the field contains a credential. |
+| `default` / `current` | string | Startup/effective values; absent for sensitive fields. |
+| `configured` | boolean | Whether a sensitive field has a value; absent for non-sensitive fields. |
+| `source` | string | `startup` or `override`; an unset sensitive field reports `unset`. |
+| `overridden` | boolean | Whether a saved runtime override exists. |
 
 ### PUT /api/settings/overrides/{key}
 
-Sets a user override for a specific setting.
-
-**Path Parameters:**
-
-| Parameter | Type   | Description                   |
-|-----------|--------|-------------------------------|
-| `key`     | string | The setting key to override.  |
-
-**Request Body:**
+Saves a string override for a mutable setting. For example,
+`PUT /api/settings/overrides/log_level` accepts:
 
 ```json
 {
-  "value": 1800
+  "value": "warning"
 }
 ```
 
-| Field   | Type | Required | Description            |
-|---------|------|----------|------------------------|
-| `value` | any  | Yes      | The new override value. |
+Logging accepts `debug`, `info`, `warning`, `error` or `critical` (`warn` is
+normalized to `warning`). It changes only the console's application logger;
+core and web-server logging remain deployment-managed. Non-empty *arr URLs
+must pass HTTP/HTTPS and resolved-address validation before saving.
 
-**Response:** `200 OK` with the updated setting object.
+**Response:** `200 OK`. Non-sensitive fields return `key`, `old`, `new`,
+`actor` and `at` (Unix seconds). Sensitive fields return `key`, `sensitive`,
+`configured`, `source`, `overridden`, `actor` and `at`, without credential
+material.
 
-**Error Responses:**
-
-| Status | Description                                    |
-|--------|------------------------------------------------|
-| `400`  | Invalid value type or out-of-range value.      |
-| `404`  | No setting found with the specified `key`.     |
+| Status | Description |
+|---|---|
+| `400` | Invalid logging level or rejected *arr base URL. |
+| `403` | The key is not mutable. |
+| `422` | Request body is missing a string `value` or fails schema validation. |
 
 ### DELETE /api/settings/overrides/{key}
 
-Removes a user override, reverting the setting to its default value.
+Removes an existing runtime override and restores the resolved startup value.
+A logging reset also reapplies the startup console logging level.
 
-**Path Parameters:**
+**Response:** `200 OK` with `{"status": "deleted"}`.
 
-| Parameter | Type   | Description                          |
-|-----------|--------|--------------------------------------|
-| `key`     | string | The setting key to reset to default. |
-
-**Response:** `200 OK` with the setting restored to its default value.
-
-**Error Responses:**
-
-| Status | Description                                |
-|--------|--------------------------------------------|
-| `404`  | No setting found with the specified `key`. |
+| Status | Description |
+|---|---|
+| `403` | The key is not mutable. |
+| `404` | No saved override exists for the key. |
 
 ### GET /api/settings/audit
 
-Returns an audit log of setting changes.
+Returns an array of change records, newest first. `limit` defaults to `100`
+and accepts `1` through `1000`. Secret `old` and `new` values are redacted.
+A reset has `new: null`.
 
-**Query Parameters:**
-
-| Parameter | Type   | Default | Description                          |
-|-----------|--------|---------|--------------------------------------|
-| `limit`   | number | `100`   | Maximum entries to return (1--1000). |
-
-**Response:**
+**Synthetic response example:**
 
 ```json
-{
-  "items": [
-    {
-      "key": "crawl_interval_seconds",
-      "action": "override_set",
-      "old_value": 3600,
-      "new_value": 1800,
-      "changed_by": "operator",
-      "changed_at": "2026-04-27T11:00:00.000Z"
-    }
-  ]
-}
+[
+  {
+    "id": 1,
+    "key": "log_level",
+    "old": "info",
+    "new": "warning",
+    "actor": "demo-operator",
+    "at": 1790841600.0
+  }
+]
 ```
 
 ---

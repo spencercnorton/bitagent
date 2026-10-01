@@ -92,7 +92,7 @@ You should see `verdict=admit` lines after the first half hour.
 
 ### Fix
 
-Wait. The classifier is intentionally conservative on cold boot to avoid admitting the first wave of DHT noise. If after an hour the Library is still empty and the logs show only `verdict=reject`, your classifier is too strict — lower the admission threshold in **Settings → Classifier**.
+Wait. The classifier is intentionally conservative on cold boot to avoid admitting the first wave of DHT noise. If the Library stays empty and the logs show only `verdict=reject`, inspect the classifier policy in your deployment configuration. **Settings → Content rules → Classifier** is a reference; the console cannot change core admission thresholds. Adjust the policy only after reviewing the rejected content, then restart the core through your normal deployment workflow.
 
 ## "401 Unauthorized" on every dashboard endpoint
 
