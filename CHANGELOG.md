@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 3.0.0 — 2026-09-30
+
+- **Breaking:** All existing and new generic personal indexer keys default to
+  public-only access. Existing private-client integrations must explicitly
+  rotate to a private-enabled key through verified human membership, then
+  update their indexer connections and personalized torrent credentials.
+- Private responses and tracker peers recheck the key capability, ownership,
+  revocation and membership. Public DHT integration keys remain independent
+  of private membership.
+- Human-member private catalogue browsing retains its membership policy;
+  the additional key permission controls personal-key private Torznab and
+  personalized torrent/tracker credential issuance.
+
 ## 2.15.0 — 2026-09-30
 
 - Add an optional explicit SSO enrollment subject format while preserving

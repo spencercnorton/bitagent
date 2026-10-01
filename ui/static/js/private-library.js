@@ -90,7 +90,9 @@
       $('rotate-key').addEventListener('click', async () => {
         if (!window.confirm('Rotate your key? Existing indexer connections and torrent tracker credentials will need updating.')) return;
         try {
-          const result = await api('/api/account/api-key', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: 'private library'})});
+          const current = await api('/api/account');
+          if (!current.privateKeyAvailable || !current.identity?.id) throw new Error('Approved human membership is required.');
+          const result = await api('/api/account/api-key', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: 'private library', expectedAccountId: current.identity.id, privateAccess: true})});
           $('secret').value = result.apiKeySecret; $('secret-label').hidden = false;
           status('Personal key created. Copy it now; it cannot be displayed again.');
         } catch (error) { status(error.message); }

@@ -36,3 +36,13 @@
 - Private readiness uses a single lifespan owner and bounded observations.
   Preserve epoch/visibility fencing, default portability and original proof
   timestamps; functional SQLite tests do not establish deployment capacity.
+
+- Personal indexer keys default to public-only access. Private permission must
+  be an explicit human-member rotation; never infer it from membership, roles,
+  subject changes or old tracker records. Preserve exact-owner checks inside
+  queued writers and final responses, plus key-owner equality for peer joins.
+
+- The explicit per-key private permission is a breaking release change.
+  Existing credentials default to public-only; document the required human
+  rotation and client reconfiguration without migrating owners or enabling
+  private deployment flags. Human-member catalogue browsing is unchanged.

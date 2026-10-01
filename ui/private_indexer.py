@@ -180,8 +180,32 @@ async def require_member(identity: dict = Depends(require_auth)) -> dict:
     return identity
 
 
-async def torznab_requires_member(row: dict) -> bool:
-    return not settings.private_indexer_enabled or await member_active(str(row["user_id"]))
+async def require_private_key(key_row: dict, *, db=None, source_key_hash=None, release=None) -> dict:
+    """Read current capability, exact ownership and membership from SQLite.
+
+    A dictionary obtained before awaited work is not capability authority.
+    Call inside private_write before/after mutations, and at the final
+    authorization boundary before returning private data.
+    """
+    enabled()
+    conn = db if db is not None else await get_db()
+    clause = " AND k.key_hash=?" if source_key_hash is not None else ""
+    args = (key_row["id"], str(key_row["user_id"]))
+    if source_key_hash is not None:
+        args += (source_key_hash,)
+    query = """SELECT k.* FROM user_api_keys k
+        JOIN private_members m ON m.user_id=k.user_id AND m.active=1
+        WHERE k.id=? AND k.user_id=? AND k.revoked_at IS NULL AND k.private_access=1""" + clause
+    if release is not None:
+        ready_clause, ready_args = readiness.predicate(alias="r", gate=release["_gate"])
+        query = "WITH authorized AS (" + query + ") SELECT authorized.*, EXISTS(SELECT 1 FROM private_releases r WHERE r.id=? AND r.proof_id=? AND r.publication_nonce=? AND " + ready_clause + ") AS release_available FROM authorized"
+        args += (release["id"], release["proof_id"], release["publication_nonce"], *ready_args)
+    rows = await conn.execute_fetchall(query, args)
+    if not rows:
+        raise HTTPException(403, "Private-enabled personal key and approved membership required")
+    if release is not None and (not rows[0]["release_available"] or not readiness.effective(release, release["_gate"])):
+        raise HTTPException(404, "Not found")
+    return dict(rows[0])
 
 
 class MemberGrant(BaseModel):
@@ -579,7 +603,7 @@ async def search_releases(params) -> dict:
         item = {k: row[k] for k in ("id", "source_id", "title", "kind", "info_hash", "size", "created_at")}
         item.update(json.loads(row["metadata"]))
         peers = await db.execute_fetchall("""SELECT p.remaining,p.ip,p.user_id FROM private_peers p
-            JOIN user_api_keys k ON k.id=p.api_key_id AND k.revoked_at IS NULL
+            JOIN user_api_keys k ON k.id=p.api_key_id AND k.user_id=p.user_id AND k.revoked_at IS NULL AND k.private_access=1
             JOIN private_members m ON m.user_id=p.user_id AND m.active=1
             WHERE p.release_id=? AND p.updated_at>?""", (row["id"], time.time()-_PEER_TTL))
         peers = [p for p in peers if privatebindings.matches(p["ip"], p["user_id"])]
@@ -613,13 +637,12 @@ async def private_admin_page(request: Request, identity=Depends(require_operator
 
 
 async def _tracker_key(key_row: dict) -> str:
-    db = await get_db()
-    rows = await db.execute_fetchall("SELECT key_hash FROM user_api_keys WHERE id=? AND revoked_at IS NULL", (key_row["id"],))
-    if not rows or not await member_active(str(key_row["user_id"])):
-        raise HTTPException(403, "Approved membership required")
-    token = _derive_tracker_key(key_row["id"], rows[0]["key_hash"])
     async with private_write() as db:
-        await db.execute("INSERT INTO private_tracker_keys VALUES (?,?) ON CONFLICT(api_key_id) DO UPDATE SET key_hash=excluded.key_hash", (_hash_user_api_key(token), key_row["id"]))
+        current = await require_private_key(key_row, db=db)
+        token = _derive_tracker_key(current["id"], current["key_hash"])
+        await db.execute("INSERT INTO private_tracker_keys VALUES (?,?) ON CONFLICT(api_key_id) DO UPDATE SET key_hash=excluded.key_hash", (_hash_user_api_key(token), current["id"]))
+        await require_private_key(key_row, db=db, source_key_hash=current["key_hash"])
+    await require_private_key(key_row, source_key_hash=current["key_hash"])
     return token
 
 
@@ -630,8 +653,7 @@ def _derive_tracker_key(key_id: int, source_key_hash: str) -> str:
 
 async def _download_release(release_id: str, row: dict, *, seeding=False) -> dict:
     enabled()
-    if not await member_active(str(row["user_id"])):
-        raise HTTPException(403, "Approved membership required")
+    await require_private_key(row)
     gate = readiness.capture()
     clause, args = ("1", ()) if seeding else readiness.predicate(gate=gate)
     rows = await (await get_db()).execute_fetchall("SELECT * FROM private_releases WHERE id=? AND withdrawn=0 AND " + clause,
@@ -651,12 +673,14 @@ async def _require_release_proof(release):
 
 async def _record_issue(row: dict, release_id: str, release):
     async with private_write() as db:
+        await require_private_key(row, db=db, release=release)
         if not await readiness.recheck(db, release, release["_gate"]):
             raise HTTPException(404, "Not found")
         await db.execute("""INSERT INTO private_transfer_totals(user_id,release_id,issued)
             VALUES (?,?,1) ON CONFLICT(user_id,release_id) DO UPDATE SET issued=issued+1""", (str(row["user_id"]), release_id))
         if not await readiness.recheck(db, release, release["_gate"]):
             raise HTTPException(404, "Not found")
+        await require_private_key(row, db=db, release=release)
 
 
 async def torrent_response(release_id: str, request: Request, key_row: dict, *, seeding=False) -> Response:
@@ -669,6 +693,7 @@ async def torrent_response(release_id: str, request: Request, key_row: dict, *, 
         await _record_issue(key_row, release_id, release)
     if not seeding:
         await _require_release_proof(release)
+    await require_private_key(key_row, release=None if seeding else release)
     return Response(b"" if request.method == "HEAD" else bencode(torrent), media_type="application/x-bittorrent",
         headers={"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="{release_id}.torrent"'})
 
@@ -713,6 +738,7 @@ async def private_magnet(release_id: str, request: Request, identity=Depends(req
     announce = external_base(request) + "/private/announce/" + token
     await _record_issue(row, release_id, release)
     await _require_release_proof(release)
+    await require_private_key(row, release=release)
     return {"magnetUri": "magnet:?xt=urn:btih:" + release["info_hash"] + "&dn=" + quote(release["title"], safe="") + "&tr=" + quote(announce, safe=""),
             "private": True, "credentialNotice": "Contains your revocable tracker credential. Keep it private."}
 
@@ -777,6 +803,25 @@ def _peer_ip(request: Request):
     return str(ip)
 
 
+async def _final_announce_peers(row, release, gate, now):
+    # The last SQL authorization also selects peers using current ownership,
+    # scope and membership. No awaited work follows this response snapshot.
+    clause, args = readiness.predicate(alias="r", gate=gate)
+    peers = await (await get_db()).execute_fetchall("""SELECT caller.id AS caller_id,p.*
+        FROM user_api_keys caller JOIN private_members cm ON cm.user_id=caller.user_id AND cm.active=1
+        LEFT JOIN (SELECT p.* FROM private_peers p
+            JOIN user_api_keys k ON k.id=p.api_key_id AND k.user_id=p.user_id AND k.revoked_at IS NULL AND k.private_access=1
+            JOIN private_members m ON m.user_id=p.user_id AND m.active=1
+            WHERE p.release_id=? AND p.updated_at>?) p ON 1=1
+        WHERE caller.id=? AND caller.user_id=? AND caller.key_hash=? AND caller.revoked_at IS NULL AND caller.private_access=1
+        AND EXISTS(SELECT 1 FROM private_releases r WHERE r.id=? AND r.proof_id=? AND r.publication_nonce=? AND """ + clause + ") LIMIT 10000",
+        (release["id"], now-_PEER_TTL, row["id"], row["user_id"], row["source_key_hash"],
+         release["id"], release["proof_id"], release["publication_nonce"], *args))
+    if not peers or not readiness.effective(release, gate):
+        raise ValueError("Retired tracker credential or unavailable torrent")
+    return [p for p in peers if p["release_id"] is not None]
+
+
 @router.get("/private/announce/{passkey}")
 async def announce(passkey: str, request: Request):
     from torrent_metainfo import bencode
@@ -786,7 +831,7 @@ async def announce(passkey: str, request: Request):
             raise ValueError("Invalid tracker credential")
         db = await get_db()
         rows = await db.execute_fetchall("""SELECT k.id,k.user_id,k.key_hash AS source_key_hash FROM private_tracker_keys t
-            JOIN user_api_keys k ON t.api_key_id=k.id AND k.revoked_at IS NULL
+            JOIN user_api_keys k ON t.api_key_id=k.id AND k.revoked_at IS NULL AND k.private_access=1
             JOIN private_members m ON m.user_id=k.user_id AND m.active=1 WHERE t.key_hash=?""", (_hash_user_api_key(passkey),))
         if not rows:
             raise ValueError("Invalid tracker credential")
@@ -816,13 +861,7 @@ async def announce(passkey: str, request: Request):
             # A queued writer may outlive the snapshot checked above. Recheck
             # after taking the write transaction and before any observation.
             privatebindings.require_match(ip, row["user_id"])
-            if settings.private_peer_bindings_required:
-                current = await db.execute_fetchall("""SELECT k.id FROM user_api_keys k
-                    JOIN private_members m ON m.user_id=k.user_id AND m.active=1
-                    WHERE k.id=? AND k.user_id=? AND k.key_hash=? AND k.revoked_at IS NULL""",
-                    (row["id"], row["user_id"], row["source_key_hash"]))
-                if not current:
-                    raise ValueError("Retired tracker credential")
+            await require_private_key(row, db=db, source_key_hash=row["source_key_hash"])
             if not await readiness.recheck(db, release, gate):
                 raise ValueError("Torrent unavailable")
             # Bound persistent peer rows even for an approved member rotating
@@ -857,7 +896,7 @@ async def announce(passkey: str, request: Request):
                      int(completed or (continuing and prior["completed"])), now))
             await db.execute("DELETE FROM private_peers WHERE updated_at<?", (now-_PEER_TTL,))
             peers = await db.execute_fetchall("""SELECT p.* FROM private_peers p
-                JOIN user_api_keys k ON k.id=p.api_key_id AND k.revoked_at IS NULL
+                JOIN user_api_keys k ON k.id=p.api_key_id AND k.user_id=p.user_id AND k.revoked_at IS NULL AND k.private_access=1
                 JOIN private_members m ON m.user_id=p.user_id AND m.active=1
                 WHERE p.release_id=? AND p.updated_at>? LIMIT 10000""", (release_id, now-_PEER_TTL))
             # Expiry/revocation during awaited database I/O rolls the whole
@@ -865,8 +904,11 @@ async def announce(passkey: str, request: Request):
             privatebindings.require_match(ip, row["user_id"])
             if not await readiness.recheck(db, release, gate):
                 raise ValueError("Torrent unavailable")
+            await require_private_key(row, db=db, source_key_hash=row["source_key_hash"])
         if not await readiness.recheck(await get_db(), release, gate):
             raise ValueError("Torrent unavailable")
+        peers = await _final_announce_peers(row, release, gate, now)
+        privatebindings.require_match(ip, row["user_id"])
         peers = [p for p in peers if privatebindings.matches(p["ip"], p["user_id"])]
         peers4, peers6, count = bytearray(), bytearray(), 0
         for peer in peers:
@@ -878,7 +920,7 @@ async def announce(passkey: str, request: Request):
         result = {b"interval": 900, b"min interval": 60,
                   b"complete": sum(p["remaining"] == 0 for p in peers),
                   b"incomplete": sum(p["remaining"] > 0 for p in peers), b"peers": bytes(peers4), b"peers6": bytes(peers6)}
-    except (ValueError, KeyError, UnicodeError, OverflowError):
+    except (ValueError, KeyError, UnicodeError, OverflowError, HTTPException):
         # Stable generic failure avoids exposing credentials, titles or account
         # membership through error messages. Tracker failures use bencode/200.
         result = {b"failure reason": b"Unauthorized or invalid announce"}

@@ -18,7 +18,7 @@ def private_feed(monkeypatch):
     monkeypatch.setattr(config.settings, "private_indexer_enabled", True)
     monkeypatch.setattr(config.settings, "torznab_rate_limit_per_min", 0)
     state = {"active": True, "searched": [], "downloads": [], "touched": [], "usage": []}
-    key_row = {"id": 901, "user_id": "synthetic-member"}
+    key_row = {"id": 901, "user_id": "synthetic-member", "private_access": True}
 
     async def lookup(key_hash):
         return key_row if key_hash == hashlib.sha256(b"ba_test").hexdigest() else None
@@ -26,6 +26,11 @@ def private_feed(monkeypatch):
     async def member(user_id):
         assert user_id == key_row["user_id"]
         return state["active"]
+
+    async def require_key(row, **kwargs):
+        if not state["active"]:
+            raise HTTPException(403, "Membership required")
+        return row
 
     async def touch(key_id):
         state["touched"].append(key_id)
@@ -54,6 +59,7 @@ def private_feed(monkeypatch):
     monkeypatch.setattr(torznab, "touch_user_api_key", touch)
     monkeypatch.setattr(torznab, "record_api_search", usage)
     monkeypatch.setattr(private_indexer, "member_active", member)
+    monkeypatch.setattr(private_indexer, "require_private_key", require_key)
     monkeypatch.setattr(private_indexer, "search_releases", search)
     monkeypatch.setattr(private_indexer, "torrent_response", torrent)
     monkeypatch.setattr(private_indexer, "external_base", lambda request: "https://library.example.org")
@@ -172,13 +178,19 @@ def test_private_missing_torrent_returns_torznab_error(client, private_feed, mon
     assert ET.fromstring(response.content).get("code") == "300"
 
 
-def test_dht_proxy_honors_suspended_members_only_when_opted_in(client, private_feed, monkeypatch):
-    async def denied(row):
-        return False
-
-    monkeypatch.setattr(private_indexer, "torznab_requires_member", denied)
+def test_dht_proxy_preserves_public_key_when_private_member_is_suspended(client, private_feed, monkeypatch):
+    private_feed["active"] = False
+    class Client:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def request(self, *args, **kwargs):
+            return httpx.Response(200, content=b"<caps/>", headers={"content-type": "application/xml"})
+    monkeypatch.setattr(torznab.httpx, "AsyncClient", lambda **kwargs: Client())
     response = client.get("/torznab/api?t=caps&apikey=ba_test")
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert client.get("/torznab/private/api?t=caps&apikey=ba_test").status_code == 403
     assert not private_feed["searched"]
 
 

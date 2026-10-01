@@ -73,7 +73,7 @@ async def mark_ready(release_id=None):
 def setup_release(client, ready=True):
     owner = identity("owner", "OWNER")
     assert client.put("/api/private/members/member", json={"active": True}, headers=owner).status_code == 200
-    key = client.post("/api/account/api-key", headers=identity()).json()["apiKeySecret"]
+    key = client.post("/api/account/api-key", headers=identity(), json={"privateAccess": True, "expectedAccountId": "member"}).json()["apiKeySecret"]
     response = client.post("/api/private/catalog/import", json={"version": 1, "releases": [metainfo()]}, headers=owner)
     assert response.status_code == 200, response.text
     rows = client.get("/api/private/catalog", headers=owner).json()
@@ -172,7 +172,7 @@ def test_mapping_revocation_filters_old_peers_and_catalog_counts(client):
     key, release_id = setup_release(client)
     path = download(client, key, release_id)
     assert client.put("/api/private/members/other", json={"active": True}, headers=identity("owner", "OWNER")).status_code == 200
-    other_key = client.post("/api/account/api-key", headers=identity("other")).json()["apiKeySecret"]
+    other_key = client.post("/api/account/api-key", headers=identity("other"), json={"privateAccess": True, "expectedAccountId": "other"}).json()["apiKeySecret"]
     other_path = download(client, other_key, release_id)
     bind_peers({"192.0.2.1": "member", "192.0.2.2": "other"})
     assert b"failure reason" not in announce_from(client, other_path, "192.0.2.2", left=0)
@@ -203,7 +203,7 @@ def test_strict_snapshot_does_not_override_key_or_membership_revocation(client):
     before = peer_observations()
     assert b"failure reason" in announce(client, path, event="", uploaded=500)
     assert peer_observations() == before
-    key = client.post("/api/account/api-key", headers=identity()).json()["apiKeySecret"]
+    key = client.post("/api/account/api-key", headers=identity(), json={"privateAccess": True, "expectedAccountId": "member"}).json()["apiKeySecret"]
     path = download(client, key, release_id)
     assert b"failure reason" not in announce(client, path)
     assert client.put("/api/private/members/member", json={"active": False}, headers=identity("owner", "OWNER")).status_code == 200
@@ -369,7 +369,7 @@ def test_startup_withdraws_cached_readiness_before_initial_probe(monkeypatch):
 
 def test_membership_restricts_site_account_mint_and_operator_management(client):
     assert client.get("/api/account/private", headers=identity()).json()["approved"] is False
-    assert client.post("/api/account/api-key", headers=identity()).status_code == 403
+    assert client.post("/api/account/api-key", headers=identity(), json={"privateAccess": True, "expectedAccountId": "member"}).status_code == 403
     assert client.get("/library", headers={**identity(), "host": "library.example.org"}).status_code == 403
     assert client.get("/api/torrents", headers={**identity(), "host": "library.example.org"}).status_code == 403
     assert client.put("/api/private/members/member", json={"active": True}, headers=identity()).status_code == 403
@@ -422,7 +422,7 @@ def test_suspended_public_member_can_revoke_only_their_key(client):
     key, release_id = setup_release(client)
     owner = identity("owner", "OWNER")
     assert client.put("/api/private/members/other", json={"active": True}, headers=owner).status_code == 200
-    other_key = client.post("/api/account/api-key", headers=identity("other")).json()["apiKeySecret"]
+    other_key = client.post("/api/account/api-key", headers=identity("other"), json={"privateAccess": True, "expectedAccountId": "other"}).json()["apiKeySecret"]
     assert client.put("/api/private/members/member", json={"active": False}, headers=owner).status_code == 200
     public = {**identity(), "host": "library.example.org"}
     assert client.delete("/api/account/api-key", headers={"host": "library.example.org"}).status_code == 401
@@ -520,7 +520,7 @@ def test_tracker_observable_session_boundaries_accept_new_baselines_and_count_ne
     elif boundary == "peer-id":
         peer_id = b"-TEST02-abcdefghijkl"
     else:
-        replacement = client.post("/api/account/api-key", headers=identity()).json()["apiKeySecret"]
+        replacement = client.post("/api/account/api-key", headers=identity(), json={"privateAccess": True, "expectedAccountId": "member"}).json()["apiKeySecret"]
         path = download(client, replacement, release_id)
     assert b"failure reason" not in announce(client, path, peer_id=peer_id, uploaded=7, downloaded=9)
     assert b"failure reason" not in announce(client, path, peer_id=peer_id, event="", uploaded=10, downloaded=14)
