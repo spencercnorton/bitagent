@@ -2,12 +2,15 @@
 import asyncio
 
 import pytest
+import httpx
 
 import config
 import database
 import invitation_bridge as bridge
 import invitations
-from test_invitations import headers, member, mint, preview, redeem
+import app as app_module
+from conftest import _with_transport_peer
+from test_invitations import PROOF, headers, member, mint, preview, redeem
 from test_invitation_bridge import (
     bridge_config as _bridge_config, invitation_config as _invitation_config,
     redemption, rpc, start_body,
@@ -131,3 +134,61 @@ def test_registration_never_invents_issuer_membership_or_revives_suspension(clie
         assert not await db.execute_fetchall("SELECT * FROM private_members WHERE user_id='-12345'")
 
     asyncio.run(absent())
+
+
+def _preview_headers(peer=None, proof=PROOF):
+    value = [("Host", "library.example.org")]
+    if proof is not None:
+        value.append(("X-BitAgent-Proxy-Proof", proof))
+    if peer is not None:
+        value.append(("X-BitAgent-Peer-IP", peer))
+    return value
+
+
+def test_verified_original_peers_have_independent_preview_limits(client):
+    for peer in ("192.0.2.10", "2001:db8::20"):
+        request_headers = _preview_headers(peer)
+        for _ in range(30):
+            assert client.post("/api/invitations/preview", headers=request_headers, json={"token": "synthetic"}).status_code == 200
+        assert client.post("/api/invitations/preview", headers=request_headers, json={"token": "synthetic"}).status_code == 429
+    assert set(invitations._RATE_BUCKETS) == {("preview", "192.0.2.10"), ("preview", "2001:db8::20")}
+
+
+@pytest.mark.parametrize("request_headers", [
+    _preview_headers(), _preview_headers("192.0.2.10", proof=None),
+    _preview_headers("192.0.2.10", proof="synthetic-invalid-proof"),
+    _preview_headers("192.0.2.10") + [("X-BitAgent-Proxy-Proof", PROOF)],
+    _preview_headers("192.0.2.10") + [("X-BitAgent-Proxy-Proof", "synthetic-invalid-proof")],
+    _preview_headers("192.0.2.10") + [("X-BitAgent-Peer-IP", "192.0.2.11")],
+    *[_preview_headers(value) for value in (
+        "example.org", "192.0.2.10,192.0.2.11", "192.000.2.10", "192.0.2.10:80",
+        " 192.0.2.10", "192.0.2.10 ", "2001:0db8::10", "2001:DB8::10",
+        "fe80::1%eth0", "0.0.0.0", "::", "224.0.0.1", "ff02::1", "x" * 46,
+    )],
+])
+def test_untrusted_malformed_or_duplicate_original_peers_cannot_bypass_fallback(client, request_headers):
+    for _ in range(30):
+        assert client.post("/api/invitations/preview", headers=request_headers, json={"token": "synthetic"}).status_code == 200
+    assert client.post("/api/invitations/preview", headers=request_headers, json={"token": "synthetic"}).status_code == 429
+    assert set(invitations._RATE_BUCKETS) == {("preview", "127.0.0.1")}
+
+
+def test_valid_proof_from_untrusted_transport_cannot_select_original_peer_bucket():
+    async def run():
+        transport = httpx.ASGITransport(app=_with_transport_peer(app_module.app, "198.51.100.250"))
+        async with httpx.AsyncClient(transport=transport, base_url="https://library.example.org") as client:
+            for number in range(30):
+                assert (await client.post("/api/invitations/preview", headers=_preview_headers(f"192.0.2.{number + 1}"), json={"token": "synthetic"})).status_code == 200
+            assert (await client.post("/api/invitations/preview", headers=_preview_headers("192.0.2.99"), json={"token": "synthetic"})).status_code == 429
+        assert set(invitations._RATE_BUCKETS) == {("preview", "198.51.100.250")}
+
+    asyncio.run(run())
+
+
+def test_private_invitation_mode_retains_transport_limits(client, monkeypatch):
+    monkeypatch.setattr(config.settings, "site_registration_enabled", False)
+    monkeypatch.setattr(config.settings, "private_indexer_enabled", True)
+    for number in range(30):
+        assert client.post("/api/invitations/preview", headers=_preview_headers(f"192.0.2.{number + 1}"), json={"token": "synthetic"}).status_code == 200
+    assert client.post("/api/invitations/preview", headers=_preview_headers("192.0.2.99"), json={"token": "synthetic"}).status_code == 429
+    assert set(invitations._RATE_BUCKETS) == {("preview", "127.0.0.1")}

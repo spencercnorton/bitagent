@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from datetime import datetime, timezone
 import hashlib
+import ipaddress
 import json
 import re
 import secrets
@@ -20,7 +21,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from auth import require_human_sso
+from auth import PROXY_PROOF_HEADER, proxy_provenance_valid, require_human_sso
 from config import settings
 from database import get_db
 from deps import _host_scope, _host_sets, _normalise_hostname
@@ -217,6 +218,32 @@ def _public(request):
         raise HTTPException(404, "Not found")
 
 
+def _preview_peer(request):
+    """Partition registration limits by a proven proxy's original address.
+
+    The address controls only an anonymous rate bucket. It supplies no identity,
+    membership or private-network authority; malformed/untrusted values retain
+    the existing transport-peer fallback.
+    """
+    fallback = request.client.host if request.client else "unknown"
+    if (not settings.site_registration_enabled
+            or len(request.headers.getlist(PROXY_PROOF_HEADER)) != 1
+            or not proxy_provenance_valid(request)):
+        return fallback
+    values = request.headers.getlist("x-bitagent-peer-ip")
+    if len(values) != 1 or not 1 <= len(values[0]) <= 45:
+        return fallback
+    value = values[0]
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return fallback
+    if ("%" in value or str(address) != value
+            or address.is_multicast or address.is_unspecified):
+        return fallback
+    return value
+
+
 async def _balance(db, uid):
     # Older unmapped paid invitations remain spent; never refund them on upgrade.
     available = (await db.execute_fetchall("""SELECT COUNT(*) AS n FROM invitation_payments p
@@ -339,7 +366,7 @@ async def revoke_invitation(invite_id: str, request: Request, identity=Depends(r
 async def preview_invitation(request: Request):
     enabled()
     _public(request)
-    _rate(("preview", request.client.host if request.client else "unknown"), 30)
+    _rate(("preview", _preview_peer(request)), 30)
     try:
         body = await _body(request, {"token"})
     except HTTPException as error:

@@ -90,6 +90,12 @@ token/body logging disabled. The operator bootstrap endpoint still requires
 its existing transport/proxy proof and purpose HMAC; do not expose it as a public
 registration endpoint. An application setting does not configure proxy ingress.
 
+For registration previews the proxy must overwrite `X-BitAgent-Peer-IP` with
+the original connection address. Only a transport-allowlisted proxy carrying
+the existing shared proof can select a rate bucket this way. Require one
+canonical literal IPv4 or IPv6 address; invalid or untrusted headers use the
+transport-peer bucket. This rate-limit input grants no identity or membership.
+
 An authentication service can use a separate bootstrap protocol when an invitee
 has not yet acquired an approved identity. All bridge settings are startup-only
 and the feature defaults to disabled:
