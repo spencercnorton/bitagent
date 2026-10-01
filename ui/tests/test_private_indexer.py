@@ -15,6 +15,7 @@ import config
 import database
 import private_indexer as private
 import privatebindings as bindings
+import private_readiness as readiness
 import torznab
 from conftest import _with_transport_peer
 
@@ -39,7 +40,7 @@ def private_config():
     torznab._TZ_BUCKETS.clear()
     async def clear():
         db = await database.get_db()
-        for table in ("private_members", "private_releases", "private_release_aliases", "private_peers", "private_tracker_keys", "private_transfer_totals", "user_api_keys", "account_usage"):
+        for table in ("private_members", "private_release_order", "private_releases", "private_release_aliases", "private_peers", "private_tracker_keys", "private_transfer_totals", "user_api_keys", "account_usage"):
             await db.execute("DELETE FROM " + table)
         await db.commit()
     asyncio.run(clear())
@@ -57,6 +58,18 @@ def metainfo():
             "seed_verified": True}
 
 
+async def mark_ready(release_id=None):
+    """Install an invented current proof; production only uses seed probes."""
+    gate = readiness.capture() or readiness.Gate("f" * 32)
+    now = time.time()
+    async with private.private_write() as db:
+        await db.execute("UPDATE private_readiness_state SET epoch=?,active=1 WHERE singleton=1", (gate.epoch,))
+        await db.execute("""UPDATE private_releases SET ready=1,verified_at=?,ready_epoch=?,ready_until_mono=?,proof_id=?
+            WHERE (? IS NULL OR id=?)""", (now, gate.epoch, time.monotonic()+config.settings.private_seed_verification_ttl,
+                                           "e" * 32, release_id, release_id))
+    readiness._GATE = readiness.Gate(gate.epoch, active=True, dirty=False)
+
+
 def setup_release(client, ready=True):
     owner = identity("owner", "OWNER")
     assert client.put("/api/private/members/member", json={"active": True}, headers=owner).status_code == 200
@@ -67,11 +80,7 @@ def setup_release(client, ready=True):
     release_id = rows[0]["id"]
     assert rows[0]["ready"] == 0  # manifest cannot assert seeder readiness
     if ready:
-        async def mark():
-            db = await database.get_db()
-            await db.execute("UPDATE private_releases SET ready=1,verified_at=? WHERE id=?", (time.time(), release_id))
-            await db.commit()
-        asyncio.run(mark())
+        asyncio.run(mark_ready(release_id))
     return key, release_id
 
 
@@ -344,7 +353,8 @@ def test_startup_withdraws_cached_readiness_before_initial_probe(monkeypatch):
                                  (time.time(), withdrawn["source_id"]))
         asyncio.run(mark_withdrawn())
         before = {row["id"]: row for row in first.get("/api/private/catalog", headers=identity("owner", "OWNER")).json()}
-        assert all(row["ready"] == 1 for row in before.values())
+        assert before[release_id]["ready"] == 1
+        assert all(row["ready"] == 0 for row in before.values() if row["withdrawn"])
 
     with TestClient(_with_transport_peer(app_module.app, "127.0.0.1")) as restarted:
         assert restarted.get("/api/library/private", headers=identity()).json()["total"] == 0
@@ -371,11 +381,7 @@ def test_private_catalog_unverified_hidden_and_search_filters(client):
     key, release_id = setup_release(client, ready=False)
     assert client.get("/api/library/private", headers=identity()).json()["total"] == 0
     assert client.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 404
-    async def mark():
-        db = await database.get_db()
-        await db.execute("UPDATE private_releases SET ready=1,verified_at=?", (time.time(),))
-        await db.commit()
-    asyncio.run(mark())
+    asyncio.run(mark_ready())
     good = client.get("/api/library/private?t=movie&imdbid=1234567", headers=identity()).json()
     assert good["total"] == 1 and good["items"][0]["seeders"] == 0
     assert client.get("/api/library/private?t=tvsearch", headers=identity()).json()["total"] == 0
@@ -674,7 +680,7 @@ def test_seeder_verification_does_not_trust_manifest_or_network_failure(client, 
     def seeder_client(**kwargs):
         assert kwargs["follow_redirects"] is False
         return async_client(transport=httpx.MockTransport(seeder), **kwargs)
-    monkeypatch.setattr(private.httpx, "AsyncClient", seeder_client)
+    monkeypatch.setattr(readiness.httpx, "AsyncClient", seeder_client)
     assert client.post(f"/api/private/catalog/{release_id}/verify", headers=identity("owner", "OWNER")).json()["ready"] is True
     assert client.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 200
 
@@ -797,7 +803,7 @@ def test_unexpected_probe_failure_withdraws_cached_readiness(client, monkeypatch
     def failed_client(**kwargs):
         raise RuntimeError("https://synthetic-seeder.example.org/?secret=synthetic-secret")
 
-    monkeypatch.setattr(private.httpx, "AsyncClient", failed_client)
+    monkeypatch.setattr(readiness.httpx, "AsyncClient", failed_client)
     asyncio.run(private.refresh_readiness())
     assert client.get("/api/library/private", headers=identity()).json()["total"] == 0
     assert client.get(f"/private/torrents/{release_id}.torrent", params={"apikey": key}).status_code == 404
@@ -810,7 +816,7 @@ def test_probe_cancellation_propagates(client, monkeypatch):
     def cancelled_client(**kwargs):
         raise asyncio.CancelledError
 
-    monkeypatch.setattr(private.httpx, "AsyncClient", cancelled_client)
+    monkeypatch.setattr(readiness.httpx, "AsyncClient", cancelled_client)
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(private.refresh_readiness())
 
@@ -896,7 +902,7 @@ def test_seeder_login_cookie_contract_for_both_readiness_paths(client, monkeypat
         assert cookie.split(";", 1)[0] in request.headers["cookie"]
         return httpx.Response(200, json=[{"hash": metainfo()["info_hash"], "size": metainfo()["size"], "progress": 1,
                                        "amount_left": 0, "state": "stalledUP"}])
-    monkeypatch.setattr(private.httpx, "AsyncClient", lambda **kwargs: async_client(transport=httpx.MockTransport(seeder), **kwargs))
+    monkeypatch.setattr(readiness.httpx, "AsyncClient", lambda **kwargs: async_client(transport=httpx.MockTransport(seeder), **kwargs))
     if probe == "background":
         asyncio.run(private.refresh_readiness())
     else:
@@ -925,7 +931,7 @@ def test_successful_seeder_login_still_requires_verified_information(client, mon
         torrent.update({"incomplete": {"progress": .5, "amount_left": 1}, "wrong-hash": {"hash": "f" * 40},
                         "wrong-size": {"size": 1}, "paused": {"state": "pausedUP"}}[failure])
         return httpx.Response(200, json=[torrent])
-    monkeypatch.setattr(private.httpx, "AsyncClient", lambda **kwargs: async_client(transport=httpx.MockTransport(seeder), **kwargs))
+    monkeypatch.setattr(readiness.httpx, "AsyncClient", lambda **kwargs: async_client(transport=httpx.MockTransport(seeder), **kwargs))
     if probe == "background":
         asyncio.run(private.refresh_readiness())
     else:

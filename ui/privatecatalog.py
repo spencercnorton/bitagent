@@ -15,6 +15,7 @@ import aiosqlite
 from fastapi import HTTPException
 
 from config import settings
+import private_readiness as readiness
 
 PAGE_LIMIT = 100
 PAGE_BYTES = 2 * 1024 * 1024
@@ -215,6 +216,7 @@ def _item(row, view):
 
 async def page(params):
     cursor, view, limit = _options(params)
+    gate = readiness.capture()
     # Never borrow the shared writer for a multi-query read snapshot.
     async with aiosqlite.connect(settings.db_path, timeout=5) as db:
         db.row_factory = aiosqlite.Row
@@ -233,17 +235,22 @@ async def page(params):
             after = cursor["after"] if cursor else ""
             if view == "aliases":
                 rows = await db.execute_fetchall("""SELECT r.id,a.source_id,a.title,a.kind,r.info_hash,r.size,
-                    r.ready,r.verified_at,r.withdrawn,substr(a.metadata,1,8001) AS metadata
+                    r.ready,r.verified_at,r.withdrawn,r.ready_epoch,r.ready_until_mono,r.proof_id,r.publication_nonce,substr(a.metadata,1,8001) AS metadata
                     FROM private_release_aliases a LEFT JOIN private_releases r ON r.id=a.release_id
                     WHERE a.source_id COLLATE BINARY>? ORDER BY a.source_id COLLATE BINARY LIMIT ?""", (after, limit+1))
             else:
-                rows = await db.execute_fetchall("""SELECT id,source_id,title,kind,info_hash,size,ready,verified_at,withdrawn
+                rows = await db.execute_fetchall("""SELECT id,source_id,title,kind,info_hash,size,ready,verified_at,withdrawn,ready_epoch,ready_until_mono,proof_id,publication_nonce
                     FROM private_releases WHERE id COLLATE BINARY>? ORDER BY id COLLATE BINARY LIMIT ?""", (after, limit+1))
             items = [_item(row, view) for row in rows[:limit]]
             await db.commit()
+            matches = await readiness.matching_proofs(db, items, gate)
+            for item in items:
+                if (item["id"], item["proof_id"]) not in matches:
+                    item.update(ready=0, verified_at=None)
         except BaseException:
             await db.rollback()
             raise
+    items = readiness.display(items, gate)
     issued = cursor["issued_at"] if cursor else int(time.time())
     result = {"version": 1, "view": view, "snapshot": {**snapshot, **counts}, "items": items, "next_cursor": None}
     if len(rows) > limit:

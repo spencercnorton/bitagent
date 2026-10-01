@@ -257,9 +257,40 @@ aliases automatically. Complete metadata reconciliation and measured seed
 capacity are separate steps; downloads still require a freshly verified
 complete active seed copy for their individual canonical release.
 
-The worker refreshes availability at most every five minutes, with per-batch
-observation timestamps. Failed probes withdraw availability; stale proofs
-never satisfy search, downloads or announce. Withdraw a release with
+The worker enumerates a fixed publication cohort in batches of at most 100
+canonical hashes, without loading metainfo or the full catalog. Each batch
+records its request-start observation time and commits in a short transaction.
+The start-anchored period and complete-sweep budget are each the smaller of
+five minutes and one third of `PRIVATE_SEED_VERIFICATION_TTL`. A cycle which
+cannot finish within that budget withdraws its proof epoch; this is a capacity
+failure, not permission to increase the TTL or silently omit releases.
+
+Source/authentication/response errors and cancellation withdraw the complete
+epoch immediately. Recovery must persist a fresh epoch before opening any new
+proofs; it never makes earlier rows current again. Missing, incomplete or
+inactive torrents in an otherwise valid response lose their individual proof.
+Compressed responses are refused; login and information bodies are capped at
+8 KiB and 1 MiB respectively. Original-seed bootstrap remains available to an
+authorized seed member before availability verification.
+
+Private mode requires one application lifespan owner per local POSIX SQLite
+file. A protected advisory-lock sidecar is held until workers stop; a second
+owner, unsupported platform, unsafe lock or hard-linked database refuses
+startup. Disabled private mode keeps its portable defaults. Do not disable the
+ASGI lifespan, run multiple UI workers, replace the live database, or place its
+SQLite/lock on a shared network filesystem. Rehearse restore while the owner
+is stopped; startup invalidates all previous proof epochs.
+
+Search, operator catalog results, torrent/magnet issuance and tracker writes
+recheck the exact original proof and visibility identity after awaited work.
+Authorization takes effect at that final check; it does not promise revocation
+at the later instant bytes reach a socket, nor stop an already-connected peer.
+An already committed issuance attempt or client report remains in history if
+availability changes during commit or response preparation; a later denial
+cannot retract that record. Historical counters remain client-reported.
+Functional large SQLite fixtures
+do not establish qBittorrent throughput, complete-file rechecks, real transfers
+or the memory capacity of a deployment. Withdraw a release with
 `PATCH /api/private/catalog/{id}` and `{"published": false}`. Re-publishing
 clears readiness and requires a fresh seed verification. This preserves history
 instead of deleting the member's activity when a release leaves the server.

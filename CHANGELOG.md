@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Refresh private-seed availability in bounded publication-order batches with
+  short SQLite transactions and original observation timestamps. Withdraw the
+  complete proof epoch on failures, cancellation or deadline expiry; recovery
+  cannot reactivate old proofs or an in-flight withdrawn/re-published release.
+- Enforce one private-readiness application owner on a protected local POSIX
+  database, while keeping disabled-default imports portable. Recheck exact
+  proofs before private results, torrent/magnet issuance and tracker writes.
+- Index expired private peers so tracker cleanup does not scan the full ledger.
+
 ## 2.13.0 — 2026-09-30
 
 - Include all UI runtime modules, templates and static assets in installed wheels.

@@ -21,7 +21,6 @@ from contextlib import asynccontextmanager
 from http.cookies import CookieError, SimpleCookie
 from urllib.parse import parse_qsl, quote, urlsplit
 
-import httpx
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -35,6 +34,7 @@ from database import get_db, get_user_api_key, lookup_user_api_key, _hash_user_a
 from deps import require_operator, _configured_hosts
 import privatebindings
 import privatecatalog
+import private_readiness as readiness
 
 router = APIRouter()
 _WRITE_LOCK = asyncio.Lock()
@@ -81,24 +81,45 @@ async def init_schema(db):
             PRIMARY KEY(user_id, release_id)
         );
     """)
+    await readiness.initialize(db)
     await privatecatalog.initialize()
 
 
 @asynccontextmanager
-async def private_write():
-    # A dedicated transaction connection prevents unrelated settings/API-key
-    # commits on the app's shared writer from committing a partial catalog or
-    # a half-written tracker observation.
-    async with _WRITE_LOCK:
-        async with aiosqlite.connect(settings.db_path, timeout=30) as db:
+async def private_write(*, deadline=None, failure_epoch=None):
+    # Readiness has bounded lock/busy/SQL budgets. Ordinary writers retain their
+    # existing transaction semantics; no shared connection owns this BEGIN.
+    acquired = False
+    try:
+        if deadline is None:
+            await _WRITE_LOCK.acquire()
+        else:
+            async with asyncio.timeout_at(deadline):
+                await _WRITE_LOCK.acquire()
+        acquired = True
+        connection = aiosqlite.connect(settings.db_path, timeout=.25 if deadline else 30)
+        if failure_epoch is not None:
+            connection = readiness.fenced_context(connection, lambda: failure_epoch)
+        async with connection as db:
             db.row_factory = aiosqlite.Row
-            await db.execute("BEGIN IMMEDIATE")
+            if deadline is not None:
+                await db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
             try:
-                yield db
-                await db.commit()
+                async with asyncio.timeout_at(deadline):
+                    await db.execute("BEGIN IMMEDIATE")
+                    yield db
+                    await db.commit()
             except BaseException:
+                readiness.withdraw_epoch(failure_epoch)
+                # Interrupt queued work before rollback; busy waits are <=250ms
+                # for readiness. A failed cleanup never opens the local gate.
+                await db.interrupt()
+                await db.set_progress_handler(None, 0)
                 await db.rollback()
                 raise
+    finally:
+        if acquired:
+            _WRITE_LOCK.release()
 
 
 def validate_settings():
@@ -331,6 +352,7 @@ async def import_catalog(body: CatalogImport, request: Request, identity=Depends
                         VALUES (?,?,?,?,?,?,?,?,?)""",
                         (release_id, item["source_id"], item["title"], item["kind"],
                      item["info_hash"], item["size"], item["metadata"], item["metainfo"], time.time()))
+                await readiness.publish_order(db, release_id)
                 changed = changed or not existing or any(existing[0][key] != item[key] for key in ("title", "kind", "metadata"))
                 await db.execute("""INSERT INTO private_release_aliases VALUES (?,?,?,?,?)
                     ON CONFLICT(source_id) DO UPDATE SET title=excluded.title,kind=excluded.kind,metadata=excluded.metadata""",
@@ -352,11 +374,10 @@ def _ready_cutoff():
 
 
 async def reset_readiness():
-    """Require a fresh seed probe after every enabled application startup."""
+    """Replace the proof epoch before every enabled application startup."""
     privatebindings.reset()
     if settings.private_indexer_enabled:
-        async with private_write() as db:
-            await db.execute("UPDATE private_releases SET ready=0,verified_at=NULL")
+        await readiness.reset(private_write)
 
 
 def _seeder_login_ok(login, client, base):
@@ -396,47 +417,9 @@ def _seeder_login_ok(login, client, base):
 
 
 async def refresh_readiness():
-    """One bounded probe of the configured seeder, shared by the startup worker.
-
-    Failed probes withdraw every advertisement immediately; readiness never
-    survives a known seeder failure or a stale verification timestamp.
-    """
-    db = await get_db()
-    rows = await db.execute_fetchall("SELECT id,info_hash,size FROM private_releases WHERE withdrawn=0")
-    if not rows:
-        return
-    verified = {}
-    try:
-        if not settings.private_seeder_url:
-            raise ValueError("Seeder not configured")
-        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
-            base = settings.private_seeder_url.rstrip("/")
-            client.headers["Referer"] = base + "/"
-            login = await client.post(base + "/api/v2/auth/login", data={"username": settings.private_seeder_username, "password": settings.private_seeder_password})
-            if not _seeder_login_ok(login, client, base):
-                raise ValueError("Seeder authentication failed")
-            by_hash = {row["info_hash"]: row for row in rows}
-            # Each request is bounded to 100 hashes rather than reading an
-            # unrelated large qBittorrent corpus into the member service.
-            hashes = list(by_hash)
-            for offset in range(0, len(hashes), 100):
-                resp = await client.get(base + "/api/v2/torrents/info", params={"hashes": "|".join(hashes[offset:offset+100])})
-                resp.raise_for_status()
-                for torrent in resp.json():
-                    info_hash = str(torrent.get("hash", "")).lower()
-                    row = by_hash.get(info_hash)
-                    if row and torrent.get("size") == row["size"] and torrent.get("progress") == 1 and torrent.get("amount_left") == 0 and torrent.get("state") in {"uploading", "stalledUP", "forcedUP"}:
-                        verified[info_hash] = time.time()
-    except Exception:
-        # Every ordinary probe failure invalidates cached readiness. Do not
-        # include upstream exception text or URLs in logs; cancellation still
-        # propagates because CancelledError is a BaseException.
-        verified.clear()
-    async with private_write() as db:
-        for row in rows:
-            observed_at = verified.get(row["info_hash"])
-            fresh = observed_at is not None and observed_at > _ready_cutoff()
-            await db.execute("UPDATE private_releases SET ready=?,verified_at=? WHERE id=? AND info_hash=? AND withdrawn=0", (int(fresh), observed_at if fresh else None, row["id"], row["info_hash"]))
+    """Refresh a fixed canonical cohort through bounded short transactions."""
+    await get_db()
+    return await readiness.refresh(private_write, _seeder_login_ok)
 
 
 def start_readiness_worker():
@@ -446,18 +429,22 @@ def start_readiness_worker():
         return
     async def refresh_loop():
         while True:
+            started = time.monotonic()
             try:
                 await refresh_readiness()
             except Exception as exc:
                 # Never log exception text: upstream request URLs may contain
                 # secrets. Stale timestamps still withdraw catalog availability.
                 logger.warning("private seeder refresh failed (%s)", type(exc).__name__)
-            await asyncio.sleep(min(300, settings.private_seed_verification_ttl / 2))
+            # Anchor to the sweep start; a slow sweep cannot add another full
+            # period to every observation's age. Overruns retain a small backoff.
+            await asyncio.sleep(max(1, started + readiness.period() - time.monotonic()))
     _READINESS_TASK = asyncio.create_task(refresh_loop())
 
 
 async def stop_readiness_worker():
     global _READINESS_TASK
+    readiness.withdraw_local()
     await privatebindings.stop()
     if _READINESS_TASK:
         _READINESS_TASK.cancel()
@@ -471,9 +458,17 @@ async def stop_readiness_worker():
 @router.get("/api/private/catalog")
 async def operator_catalog(identity=Depends(require_operator)):
     enabled()
-    return [dict(r) for r in await (await get_db()).execute_fetchall(
-        "SELECT id,source_id,title,kind,info_hash,size,ready,verified_at,withdrawn FROM private_releases ORDER BY created_at DESC LIMIT 1000"
-    )]
+    gate = readiness.capture()
+    rows = await (await get_db()).execute_fetchall(
+        "SELECT id,source_id,title,kind,info_hash,size,ready,verified_at,withdrawn," + readiness._COLUMNS +
+        " FROM private_releases ORDER BY created_at DESC LIMIT 1000")
+    matches = await readiness.matching_proofs(await get_db(), rows, gate)
+    rows = [dict(row) for row in rows]
+    for row in rows:
+        if (row["id"], row["proof_id"]) not in matches:
+            row.update(ready=0, verified_at=None)
+    return readiness.display(rows, gate)
+
 
 
 @router.get("/api/private/catalog/page")
@@ -486,37 +481,13 @@ async def operator_catalog_page(request: Request, identity=Depends(require_opera
 @router.post("/api/private/catalog/{release_id}/verify")
 async def verify_release(release_id: str, identity=Depends(require_operator)):
     enabled()
-    rows = await (await get_db()).execute_fetchall("SELECT * FROM private_releases WHERE id=? AND withdrawn=0", (release_id,))
-    if not rows:
+    ready = await readiness.verify(await get_db(), release_id, private_write, _seeder_login_ok)
+    if ready is None:
         raise HTTPException(404, "Not found")
-    release = dict(rows[0])
-    ready = False
-    try:
-        if not settings.private_seeder_url:
-            raise ValueError("Seeder not configured")
-        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
-            base = settings.private_seeder_url.rstrip("/")
-            client.headers["Referer"] = base + "/"
-            login = await client.post(base + "/api/v2/auth/login", data={
-                "username": settings.private_seeder_username, "password": settings.private_seeder_password})
-            if not _seeder_login_ok(login, client, base):
-                raise ValueError("Seeder authentication failed")
-            resp = await client.get(base + "/api/v2/torrents/info", params={"hashes": release["info_hash"]})
-            resp.raise_for_status()
-            torrents = resp.json()
-            ready = any(t.get("hash", "").lower() == release["info_hash"]
-                        and t.get("progress") == 1 and t.get("amount_left") == 0
-                        and t.get("size") == release["size"]
-                        and t.get("state") in {"uploading", "stalledUP", "forcedUP"}
-                        for t in torrents)
-    except (httpx.HTTPError, ValueError, TypeError, AttributeError):
-        ready = False
-    async with private_write() as db:
-        await db.execute("UPDATE private_releases SET ready=?,verified_at=? WHERE id=? AND info_hash=? AND withdrawn=0",
-                         (int(ready), time.time() if ready else None, release_id, release["info_hash"]))
     if not ready:
         raise HTTPException(409, "Seeder has not verified a complete active copy")
     return {"id": release_id, "ready": True}
+
 
 
 class CatalogVisibility(BaseModel):
@@ -528,7 +499,7 @@ async def catalog_visibility(release_id: str, body: CatalogVisibility, identity=
     enabled()
     async with private_write() as db:
         prior = await db.execute_fetchall("SELECT withdrawn FROM private_releases WHERE id=?", (release_id,))
-        cur = await db.execute("UPDATE private_releases SET withdrawn=?,ready=0,verified_at=NULL WHERE id=?", (int(not body.published), release_id))
+        cur = await db.execute("UPDATE private_releases SET withdrawn=?,ready=0,verified_at=NULL,ready_until_mono=NULL,proof_id='',publication_nonce=? WHERE id=?", (int(not body.published), secrets.token_hex(16), release_id))
         if not cur.rowcount:
             raise HTTPException(404, "Not found")
         if prior[0]["withdrawn"] != int(not body.published):
@@ -551,7 +522,9 @@ async def search_releases(params) -> dict:
     limit = _number(params, "limit", 100, 100)
     if not limit:
         raise HTTPException(422, "Invalid search limit")
-    where, args = ["r.ready=1", "r.withdrawn=0", "r.verified_at>?"], [_ready_cutoff()]
+    gate = readiness.capture()
+    ready_clause, ready_args = readiness.predicate("r", gate)
+    where, args = [ready_clause], list(ready_args)
     query = str(params.get("q") or "").strip()
     if len(query) > 300:
         raise HTTPException(422, "Query too long")
@@ -598,7 +571,7 @@ async def search_releases(params) -> dict:
     db = await get_db()
     join = " FROM private_releases r JOIN private_release_aliases a ON a.release_id=r.id WHERE "
     total = (await db.execute_fetchall("SELECT count(*) n" + join + clause, args))[0]["n"]
-    rows = await db.execute_fetchall("SELECT r.id,r.info_hash,r.size,r.created_at,a.source_id,a.title,a.kind,a.metadata" + join + clause + " ORDER BY r.created_at DESC,r.id,a.source_id LIMIT ? OFFSET ?", (*args, limit, offset))
+    rows = await db.execute_fetchall("SELECT r.id,r.info_hash,r.size,r.created_at,a.source_id,a.title,a.kind,a.metadata,r.ready,r.verified_at,r.withdrawn,r." + readiness._COLUMNS.replace(",", ",r.") + join + clause + " ORDER BY r.created_at DESC,r.id,a.source_id LIMIT ? OFFSET ?", (*args, limit, offset))
     items = []
     for row in rows:
         item = {k: row[k] for k in ("id", "source_id", "title", "kind", "info_hash", "size", "created_at")}
@@ -611,7 +584,13 @@ async def search_releases(params) -> dict:
         item["seeders"] = sum(p["remaining"] == 0 for p in peers)
         item["leechers"] = sum(p["remaining"] > 0 for p in peers)
         items.append(item)
-    return {"items": items, "total": total, "offset": offset, "limit": limit}
+    # Last awaited peer lookup may cross a source/visibility withdrawal. Keep
+    # only the original exact proofs; recovery cannot authorize an old result.
+    proofs = await readiness.matching_proofs(db, rows, gate)
+    valid = [item for row, item in zip(rows, items) if (row["id"], row["proof_id"]) in proofs]
+    if not readiness.live(gate):
+        valid, total = [], 0
+    return {"items": valid, "total": total, "offset": offset, "limit": limit}
 
 
 @router.get("/api/library/private")
@@ -651,18 +630,31 @@ async def _download_release(release_id: str, row: dict, *, seeding=False) -> dic
     enabled()
     if not await member_active(str(row["user_id"])):
         raise HTTPException(403, "Approved membership required")
-    clause = "" if seeding else " AND ready=1 AND verified_at>?"
-    args = (release_id,) if seeding else (release_id, _ready_cutoff())
-    rows = await (await get_db()).execute_fetchall("SELECT * FROM private_releases WHERE id=? AND withdrawn=0" + clause, args)
+    gate = readiness.capture()
+    clause, args = ("1", ()) if seeding else readiness.predicate(gate=gate)
+    rows = await (await get_db()).execute_fetchall("SELECT * FROM private_releases WHERE id=? AND withdrawn=0 AND " + clause,
+                                                  (release_id, *args))
     if not rows:
         raise HTTPException(404, "Not found")
-    return dict(rows[0])
+    release = dict(rows[0])
+    release["_gate"] = gate
+    return release
 
 
-async def _record_issue(row: dict, release_id: str):
+async def _require_release_proof(release):
+    if not await readiness.recheck(await get_db(), release, release["_gate"]):
+        raise HTTPException(404, "Not found")
+
+
+
+async def _record_issue(row: dict, release_id: str, release):
     async with private_write() as db:
+        if not await readiness.recheck(db, release, release["_gate"]):
+            raise HTTPException(404, "Not found")
         await db.execute("""INSERT INTO private_transfer_totals(user_id,release_id,issued)
             VALUES (?,?,1) ON CONFLICT(user_id,release_id) DO UPDATE SET issued=issued+1""", (str(row["user_id"]), release_id))
+        if not await readiness.recheck(db, release, release["_gate"]):
+            raise HTTPException(404, "Not found")
 
 
 async def torrent_response(release_id: str, request: Request, key_row: dict, *, seeding=False) -> Response:
@@ -672,7 +664,9 @@ async def torrent_response(release_id: str, request: Request, key_row: dict, *, 
     torrent = bdecode(release["metainfo"])
     torrent[b"announce"] = (external_base(request) + "/private/announce/" + token).encode()
     if request.method != "HEAD" and not seeding:
-        await _record_issue(key_row, release_id)
+        await _record_issue(key_row, release_id, release)
+    if not seeding:
+        await _require_release_proof(release)
     return Response(b"" if request.method == "HEAD" else bencode(torrent), media_type="application/x-bittorrent",
         headers={"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="{release_id}.torrent"'})
 
@@ -715,7 +709,8 @@ async def private_magnet(release_id: str, request: Request, identity=Depends(req
     release = await _download_release(release_id, row)
     token = await _tracker_key(row)
     announce = external_base(request) + "/private/announce/" + token
-    await _record_issue(row, release_id)
+    await _record_issue(row, release_id, release)
+    await _require_release_proof(release)
     return {"magnetUri": "magnet:?xt=urn:btih:" + release["info_hash"] + "&dn=" + quote(release["title"], safe="") + "&tr=" + quote(announce, safe=""),
             "private": True, "credentialNotice": "Contains your revocable tracker credential. Keep it private."}
 
@@ -799,10 +794,14 @@ async def announce(passkey: str, request: Request):
         info_hash, peer_id, counters, event, numwant = _announce_params(request)
         ip = _peer_ip(request)
         privatebindings.require_match(ip, row["user_id"])
-        releases = await db.execute_fetchall("SELECT id,size FROM private_releases WHERE info_hash=? AND ready=1 AND withdrawn=0 AND verified_at>?", (info_hash, _ready_cutoff()))
+        gate = readiness.capture()
+        clause, args = readiness.predicate(gate=gate)
+        releases = await db.execute_fetchall("SELECT id,size,ready,verified_at,withdrawn," + readiness._COLUMNS +
+                                             " FROM private_releases WHERE info_hash=? AND " + clause, (info_hash, *args))
         if not releases:
             raise ValueError("Torrent unavailable")
-        release_id = releases[0]["id"]
+        release = dict(releases[0])
+        release_id = release["id"]
         if counters["left"] > releases[0]["size"] or (event == "completed" and counters["left"] != 0):
             raise ValueError("Invalid remaining bytes")
         # Per-key limiter is shared with Torznab. Each peer announces no more
@@ -822,6 +821,8 @@ async def announce(passkey: str, request: Request):
                     (row["id"], row["user_id"], row["source_key_hash"]))
                 if not current:
                     raise ValueError("Retired tracker credential")
+            if not await readiness.recheck(db, release, gate):
+                raise ValueError("Torrent unavailable")
             # Bound persistent peer rows even for an approved member rotating
             # peer IDs. Normal clients use one ID per torrent.
             active = await db.execute_fetchall("SELECT count(*) n FROM private_peers WHERE release_id=? AND user_id=? AND updated_at>?", (release_id, row["user_id"], now-_PEER_TTL))
@@ -860,6 +861,10 @@ async def announce(passkey: str, request: Request):
             # Expiry/revocation during awaited database I/O rolls the whole
             # observation back instead of committing a partially stale claim.
             privatebindings.require_match(ip, row["user_id"])
+            if not await readiness.recheck(db, release, gate):
+                raise ValueError("Torrent unavailable")
+        if not await readiness.recheck(await get_db(), release, gate):
+            raise ValueError("Torrent unavailable")
         peers = [p for p in peers if privatebindings.matches(p["ip"], p["user_id"])]
         peers4, peers6, count = bytearray(), bytearray(), 0
         for peer in peers:
