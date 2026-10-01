@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Connect the user library and operator console with an admin-only Admin
+  navigation entry and a Back to library link. Destinations use validated,
+  startup-only configuration or the existing host allowlists; authorization
+  is still checked independently on the destination surface.
 - Organize Settings into four workflow groups with typed logging, URL and
   secret controls, grouped deployment references and reduced-motion-aware
   section transitions.

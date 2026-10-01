@@ -95,6 +95,7 @@ html.theme-anim, html.theme-anim *, html.theme-anim *::before, html.theme-anim *
 .nav-item.active { background: var(--color-accent-subtle); color: var(--color-accent); font-weight: var(--weight-semibold); }
 .nav-item svg { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.7; }
 .nav-item.active svg { opacity: 1; }
+.sidebar-library-link { min-height: 44px; margin: 0 12px 10px; flex-shrink: 0; }
 .nav-item .badge {
   margin-left: auto;
   background: var(--color-accent);

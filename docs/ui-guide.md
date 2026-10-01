@@ -24,6 +24,12 @@ work with a keyboard; Alt+1 through Alt+8 select the eight console sections.
 
 The sidebar footer carries a **Dark mode** toggle (persisted to `localStorage` under `bitagent-theme`) and an avatar showing the first letter of the authenticated identity's display name. The header has a **Notifications** bell and a **Refresh** button that re-fetches the visible tab. Every stat card, section header and table column carries a small ⓘ with a plain-English explanation of what it measures and where the number comes from.
 
+Start in the user library. An **Admin** entry appears beside Discover, Movies
+and Series for an identity with a verified operator grant. It opens this console;
+**Back to library** returns to the user interface. Both sites check their own
+authentication. A library-local account does not gain operator access through
+navigation.
+
 ## Dashboard tab
 
 The at-a-glance health view. The north-star card is **Indexer Win Rate (30d)** — the share of \*arr grabs won by BitAgent against every other indexer, from the core's grab evidence. Beside it: **Match Rate**, **Grab Liveness** (whether the swarm was alive when grabbed, not whether the grab succeeded), **Crawl Throughput**, **Indexed Torrents** and **Dead Blocked**. The operational snapshot and each metric expose loading, freshness, stale, unavailable and failure states. A stale snapshot retains its observation time and values, while its live pulse and success-toned meters stop. Every headline is source-aware: an unavailable value renders as *unknown*, never as zero, and a rate whose baseline is still filling says `measuring…`.

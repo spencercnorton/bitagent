@@ -66,6 +66,7 @@ from deps import (
     require_operator,
     require_public_library,
 )
+from navigation import validate_navigation_settings, operator_url, library_url
 from torznab import router as torznab_router
 import private_indexer
 import invitations
@@ -95,6 +96,7 @@ async def lifespan(app: FastAPI):
     hydrate_settings(settings)
     validate_auth_settings()
     _validate_host_settings()
+    validate_navigation_settings()
     private_indexer.validate_settings()
     invitations.validate_settings()
     invitation_bridge.validate_settings()
@@ -610,6 +612,7 @@ def _library_response(request: Request, identity: dict):
         name="library.html",
         context={
             "identity": identity,
+            "admin_url": operator_url(request, identity),
             "asset_version": ASSET_VERSION,
             "app_switcher_script_url": settings.app_switcher_script_url.strip(),
             "library_brand": settings.library_brand,
@@ -630,6 +633,7 @@ def _dashboard_response(request: Request, identity: dict):
         name="index.html",
         context={
             "identity": identity,
+            "library_url": library_url(request),
             "active_tab": "dashboard",
             "asset_version": ASSET_VERSION,
             "app_switcher_script_url": settings.app_switcher_script_url.strip(),
