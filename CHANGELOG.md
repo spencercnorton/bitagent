@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 3.2.0 — 2026-10-01
+
+- Apply startup vault settings as one validated batch. A rejected payload keeps
+  the original configuration intact, including operator roles and credentials.
+- Connect the user library and operator console with an admin-only Admin
+  navigation entry and a Back to library link. Destinations use validated,
+  startup-only configuration or the existing host allowlists; authorization
+  is still checked independently on the destination surface.
+- Organize Settings into four workflow groups with typed logging, URL and
+  secret controls, grouped deployment references and reduced-motion-aware
+  section transitions.
+- Align AI observations with the core's token labels and type-classifier
+  metrics. Preserve missing counters as unknown, expose source observations,
+  and label cost totals and sampled projections as estimates rather than
+  invoices or model accuracy.
+- Refine the operator console with bookmarkable navigation, keyboard-safe mobile
+  navigation and per-field draft preservation.
+  Runtime overrides expose save/reset progress and failures, with an explicit
+  reset step and no browser persistence of replacement secrets.
+- Show loading, stale, measuring, unavailable and failed operational observations
+  alongside their values. Suppress live indicators on stale snapshots, distinguish
+  aggregate response time from source observation time, and leave gaps in grab
+  trends where no ratio was measured.
+
 ## 3.1.0 — 2026-10-01
 
 - Automatically open profile enrollment for every invitation recipient when the optional

@@ -1687,7 +1687,7 @@ def _metric(stage, label):
 def test_ai_summary_scores_every_llm_stage_not_just_the_matcher(client, monkeypatch):
     _patch_metrics(monkeypatch, _AI_METRICS_SAMPLE)
     body = client.get("/api/ai/summary").json()
-    assert [s["id"] for s in body["stages"]] == ["matcher", "contentfilter", "junkpurge"]
+    assert [s["id"] for s in body["stages"]] == ["matcher", "contentfilter", "junkpurge", "typeclassifier"]
 
     matcher = _stage(body, "matcher")
     assert matcher["status"]["key"] == "mixed"
@@ -1705,7 +1705,7 @@ def test_ai_summary_scores_every_llm_stage_not_just_the_matcher(client, monkeypa
     # the rejected-picks proxy must read 0, not pick up the pre-LLM gates.
     assert _metric(matcher, "Rejected picks")["value"] == pytest.approx(0.0)
     assert _metric(matcher, "Extract success")["value"] == pytest.approx(0.8)
-    assert _metric(matcher, "Calls")["value"] == 100 + 82
+    assert _metric(matcher, "Calls")["value"] is None  # outcomes are not HTTP dispatches
     # Call-weighted, not a mean of means: (120+90)/(60+30) = 2.333…
     assert _metric(matcher, "Avg latency")["value"] == pytest.approx(210 / 90)
     # The core emits no matcher error counter — null with a note, never a zero.
@@ -2019,14 +2019,14 @@ def test_ai_summary_reports_unavailable_when_core_lacks_matcher(client, monkeypa
     assert body["telemetryAvailable"] is True
     assert _stage(body, "matcher")["status"]["key"] == "unavailable"
     assert _stage(body, "matcher")["status"]["label"] == "Not instrumented"
-    assert body["matches"]["live"]["total"] == 0
-    assert body["extract"]["total"] == 0
-    assert body["rerank"]["matchRate"] == 0.0
-    assert body["cache"]["hitRatio"] == 0.0
-    assert body["latency"]["extract"]["count"] == 0
+    assert body["matches"]["live"]["total"] is None
+    assert body["extract"]["total"] is None
+    assert body["rerank"]["matchRate"] is None
+    assert body["cache"]["hitRatio"] is None
+    assert body["latency"]["extract"]["count"] is None
     # No dashstats alt-title gauges either -> coverage marked unavailable
     assert body["altTitles"]["available"] is False
-    assert body["altTitles"]["checkedRatio"] == 0.0
+    assert body["altTitles"]["checkedRatio"] is None
 
 
 # ── Wants CRUD honesty (404 on missing id) ────────────────────────────────
@@ -2543,3 +2543,58 @@ def test_operator_tab_panels_are_siblings_not_nested():
     assert depth == 0, "unbalanced <div> in index.html"
     assert len(depths) >= 8, f"expected every tab panel, found {sorted(depths)}"
     assert len(set(depths.values())) == 1, f"tab panels at differing depths: {depths}"
+
+
+def test_log_level_override_applies_to_ui_logger_and_reset(client, fresh_db, monkeypatch):
+    import logging
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(app_module.logger, "level", app_module.logger.level)
+    monkeypatch.setattr(config.settings, "log_level", "warning")
+    sink = Mock()
+    handler = logging.Handler()
+    handler.emit = sink
+    app_module.logger.addHandler(handler)
+    core = logging.getLogger("synthetic-core")
+    core_level = core.level
+    uvicorn_level = logging.getLogger("uvicorn").level
+    try:
+        assert client.put("/api/settings/overrides/log_level", json={"value": " DEBUG "}).status_code == 200
+        app_module.logger.debug("synthetic debug event")
+        assert sink.call_count == 1
+        assert app_module.logger.getEffectiveLevel() == logging.DEBUG
+        assert client.delete("/api/settings/overrides/log_level").status_code == 200
+        app_module.logger.debug("synthetic suppressed event")
+        assert sink.call_count == 1
+        assert app_module.logger.getEffectiveLevel() == logging.WARNING
+        assert core.level == core_level
+        assert logging.getLogger("uvicorn").level == uvicorn_level
+    finally:
+        app_module.logger.removeHandler(handler)
+
+
+def test_invalid_log_level_is_rejected_before_persistence(client, fresh_db):
+    original = app_module.logger.level
+    response = client.put("/api/settings/overrides/log_level", json={"value": "not-a-level"})
+    assert response.status_code == 400
+    assert app_module.logger.level == original
+    assert client.get("/api/settings").json()["fields"]["log_level"]["overridden"] is False
+    assert client.get("/api/settings/audit").json() == []
+
+
+def test_log_level_is_loaded_from_saved_override_at_startup(fresh_db, monkeypatch):
+    import logging
+    from fastapi.testclient import TestClient
+    from conftest import _with_transport_peer
+
+    monkeypatch.setattr(app_module.logger, "level", app_module.logger.level)
+    asyncio.run(app_module.set_override("log_level", "debug", actor="synthetic-operator"))
+    app_module.logger.setLevel(logging.ERROR)
+    with TestClient(_with_transport_peer(app_module.app, "127.0.0.1")):
+        assert app_module.logger.getEffectiveLevel() == logging.DEBUG
+    # Old arbitrary strings cannot turn the newly functional setting into a
+    # startup outage; they receive a safe logger fallback until reset.
+    asyncio.run(app_module.set_override("log_level", "old-invalid-value", actor="synthetic-operator"))
+    with TestClient(_with_transport_peer(app_module.app, "127.0.0.1")) as restarted:
+        assert app_module.logger.getEffectiveLevel() == logging.INFO
+        assert restarted.delete("/api/settings/overrides/log_level").status_code == 200

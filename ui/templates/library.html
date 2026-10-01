@@ -76,10 +76,11 @@
   <!-- ── Browse view ─────────────────────────────────────────────────── -->
   <main class="lib-browse" id="libBrowse" tabindex="-1">
     <div class="lib-browse-toolbar">
-      <nav class="lib-browse-nav" aria-label="Browse the library">
+      <nav class="lib-browse-nav{% if admin_url %} has-admin{% endif %}" aria-label="Library navigation">
         <button class="lib-browse-tab active" data-lib-type="" onclick="setType('')" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Discover</button>
         <button class="lib-browse-tab" data-lib-type="movie" onclick="setType('movie')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4"/></svg>Movies</button>
         <button class="lib-browse-tab" data-lib-type="tv_show" onclick="setType('tv_show')" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 3l4 4 4-4"/></svg>Series</button>
+        {% if admin_url %}<a class="lib-browse-tab lib-admin-link" id="libAdminLink" href="{{ admin_url }}" referrerpolicy="no-referrer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l8 4v6c0 5-8 9-8 9s-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg>Admin</a>{% endif %}
       </nav>
 
       <p class="lib-browse-hint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 7v5a3 3 0 006 0V7M6 10v3a6 6 0 0012 0v-3M6 7h3M15 7h3"/></svg>Find a title. Choose a release. Copy a magnet.</p>

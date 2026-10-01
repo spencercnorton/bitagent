@@ -19,6 +19,11 @@ One small FastAPI app, two surfaces selected by hostname:
 - **Public library** — a poster grid with search and facets, rich title pages, and
   a per-user account panel for personal Torznab API keys.
 
+The library is the shared entry point. Verified operators see an **Admin**
+navigation link that opens the console; **Back to library** returns to browsing.
+These are normal page links. The destination checks its own authentication and
+operator grant, and navigation never forwards API keys or login tokens.
+
 It reads the crawler over its GraphQL and Prometheus endpoints — `127.0.0.1:3333`
 when co-located, which is the shipped default — and never writes to the
 crawler's corpus. Its own state — settings overrides, block phrases,
@@ -108,6 +113,7 @@ Settings are environment variables named after the fields in [`config.py`](confi
 | `BITAGENT_TORZNAB_URL` | derived | Torznab base for the `/torznab/*` proxy; defaults to the GraphQL URL with `/graphql` → `/torznab` |
 | `TORZNAB_API_KEY` | empty | The crawler's Torznab key (same name as the core's — set once). Users get personal keys, stored hashed, validated by this app's proxy |
 | `OPERATOR_HOSTS` / `PUBLIC_LIBRARY_HOSTS` | `localhost,127.0.0.1` / `library.localhost` | Explicit, disjoint, non-empty host allowlists. Any other `Host` is answered `421` before routing |
+| `OPERATOR_UI_URL` / `LIBRARY_UI_URL` | empty | Optional canonical navigation URLs for Admin / Back to library. Absolute HTTP(S) URLs whose hosts belong to the corresponding allowlist; credentials, queries and fragments are rejected. Prefer explicit URLs when public ports or paths differ |
 | `REQUIRE_AUTH` | `true` | `false` is the development bypass |
 | `DASHBOARD_API_KEY` | empty | An explicit operator credential for scripts: `?apikey=`, `X-Api-Key` or `Authorization: Bearer` |
 | `TRUST_FORWARDED_USER` / `TRUST_NPM_HEADERS` | `false` | Accept an identity header from a reverse proxy (`X-Forwarded-User`/`Remote-User`, or `X-Auth-User-Id`) |
@@ -124,9 +130,16 @@ Settings are environment variables named after the fields in [`config.py`](confi
 | `HOST` / `PORT` | `0.0.0.0` / `8080` | Bind address when run standalone; the core passes `UI_LISTEN_ADDRESS` as `--host`/`--port` when it spawns the worker |
 
 Host lists, proxy trust, proxy CIDRs, the proof, operator roles and the upstream
-URLs are **startup-only**; they are never editable from the UI. Integration
+and navigation URLs are **startup-only**; they are never editable from the UI. Integration
 credentials can be overridden from the Settings tab, are never echoed back, and
 their audit rows store `[redacted]`.
+
+Without canonical URLs, navigation uses the first non-local hostname in the
+corresponding allowlist and the browser's current protocol. It does not copy a
+proxy or request port. Open loopback development preserves an explicit local
+port. With authentication enabled, a loopback-only operator allowlist does not
+produce an Admin link on the public library. Browsing `/library` on an operator
+host provides a same-origin Admin link back to `/`.
 
 ## Authentication
 

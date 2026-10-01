@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     # lists explicitly (they must be non-empty and disjoint or startup fails).
     public_library_hosts: str = "library.localhost"
     operator_hosts: str = "localhost,127.0.0.1"
+    # Optional canonical navigation destinations, including a deployment's
+    # scheme, port, or base path. Startup validation binds each URL to its
+    # existing surface allowlist; these never alter authentication or routing.
+    operator_ui_url: str = ""
+    library_ui_url: str = ""
     # Optional cross-origin script for a shared app switcher on both shells
     # (`data-current="bitagent" data-me="/api/me"`). Empty = no tag and no
     # third-party origin in the CSP script-src.

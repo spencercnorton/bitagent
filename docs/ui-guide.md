@@ -12,19 +12,47 @@ Use the console for: confirming the crawler is healthy, seeing what your \*arrs 
 
 A left **sidebar**, a top **header bar**, and a scrollable **main content area**. The sidebar has three groups:
 
-- **Overview** — Dashboard, Library
+- **Overview** — Dashboard, Catalogue
 - **Operations** — Wants, Evidence, Quarantine, AI
 - **System** — Settings, System
 
+Console sections have bookmarkable hash URLs, such as `#settings/audit` and
+`#system/health`; reload and browser Back/Forward restore the selected section.
+The mobile navigation drawer isolates keyboard focus and closes with Escape,
+returning focus to its opener. Navigation links and the skip-to-content link
+work with a keyboard; Alt+1 through Alt+8 select the eight console sections.
+
 The sidebar footer carries a **Dark mode** toggle (persisted to `localStorage` under `bitagent-theme`) and an avatar showing the first letter of the authenticated identity's display name. The header has a **Notifications** bell and a **Refresh** button that re-fetches the visible tab. Every stat card, section header and table column carries a small ⓘ with a plain-English explanation of what it measures and where the number comes from.
+
+Start in the user library. An **Admin** entry appears beside Discover, Movies
+and Series for an identity with a verified operator grant. It opens this console;
+**Back to library** returns to the user interface. Both sites check their own
+authentication. A library-local account does not gain operator access through
+navigation.
 
 ## Dashboard tab
 
-The at-a-glance health view. The north-star card is **Indexer Win Rate (30d)** — the share of \*arr grabs won by BitAgent against every other indexer, from the core's grab evidence. Beside it: **Match Rate**, **Grab Liveness** (whether the swarm was alive when grabbed, not whether the grab succeeded), **Crawl Throughput**, **Indexed Torrents** and **Dead Blocked**. Every headline is source-aware: an unavailable value renders as *unknown*, never as zero, and a rate whose baseline is still filling says `measuring…`.
+The at-a-glance health view. The north-star card is **Indexer Win Rate (30d)** — the share of \*arr grabs won by BitAgent against every other indexer, from the core's grab evidence. Beside it: **Match Rate**, **Grab Liveness** (whether the swarm was alive when grabbed, not whether the grab succeeded), **Crawl Throughput**, **Indexed Torrents** and **Dead Blocked**. The operational snapshot and each metric expose loading, freshness, stale, unavailable and failure states. A stale snapshot retains its observation time and values, while its live pulse and success-toned meters stop. Every headline is source-aware: an unavailable value renders as *unknown*, never as zero, and a rate whose baseline is still filling says `measuring…`.
 
 Below the cards: a category breakdown of the corpus, uptime, and the recent-activity feed.
 
-## Library tab
+The displayed values have different sources and windows:
+
+| Metric | Source and limit |
+| --- | --- |
+| Indexed torrents | Core GraphQL content count; may be a PostgreSQL planner estimate. |
+| Match rate | Core Prometheus gauges for matched movie/TV arrivals over 30 days. |
+| Grab liveness | Core gauges for live/dead attempts; pending attempts stay outside the ratio. |
+| Crawl throughput | Change in the content-filter examined counter across valid samples at least ten seconds apart. |
+| Dead blocked | Core liveness blacklist size; exclusions are lifetime counts. |
+| Uptime | This console's backend process, independent of core uptime. |
+| Indexer win rate | Core evidence aggregate over 30 days; loaded time is response time, since its API does not expose observation age. Days without grabs have no ratio and appear as gaps. |
+
+An empty recent-event response can also reflect an unavailable core. Its notice
+states that limitation; use System diagnostics before concluding there were no
+events. Values from different sources may have different observation times.
+
+## Catalogue tab
 
 A sortable, searchable table of recently crawled torrents with posters from TMDB when `TMDB_API_KEY` is set. A row opens a detail panel with the magnet URI to copy and, when `SONARR_*` / `RADARR_*` / `LIDARR_*` are configured, a send-to-\*arr button.
 
@@ -42,11 +70,54 @@ The junk-purge hold: every row shows name, confidence, when it was quarantined a
 
 ## AI tab
 
-One scorecard per LLM stage the crawler runs (TMDB matcher, content filter, junk judge) on shared axes: model, throughput, latency, a quality *proxy* (there is no ground truth, so nothing is called accuracy) and spend. The header row shows **Projected / month** against `LLM_MONTHLY_BUDGET_USD`, **Tokens**, **Spent This Boot** and **Models Billing**. Money is never guessed: an unpriced model makes the total a floor (`≥ $x`), and an idle stage is *still measuring*, not free.
+The AI page reads core Prometheus observations for the TMDB matcher, content
+filter, junk-purge judge and type classifier. The source banner shows whether
+telemetry was received and its observation time. Each stage separates its
+reported configuration from actual calls, outcomes and token usage. A missing
+counter is unknown; a reported zero remains zero. A ratio with no denominator
+and latency with no timed calls remain unmeasured. Transport failure clears
+previous values rather than claiming idle operation.
+
+Request success, accepted matches and verdict mixes describe operational
+behavior. They do not measure correctness, confidence calibration or accuracy;
+those require independent evaluation against ground truth.
+
+**Estimated token cost** applies the stored model price table to reported
+usage since core restart. It is not a provider invoice. Unknown model prices
+produce unknown cost; mixed priced/unpriced usage is a partial lower bound.
+**30-day rate projection** extends a measured cost delta from two samples at
+least ten seconds apart. It assumes that sampled rate continues and does not
+predict future workload. Restart detection resets the sampling baseline. Usage
+from stages without token instrumentation is outside these totals. The model
+count deduplicates models across reporting stages.
 
 ## Settings tab
 
-Read-only: the configuration the running container sees, split into **Configuration**, **Auth & Security**, **Integrations**, **Retention**, **Classifier**, **Liveness**, **Filters**, **Block Lists** and **Audit Log**. Secrets render as `🔒 •••••• <n> chars`. The only values that can be overridden from here are the integration credentials in `MUTABLE_FIELDS` (`ui/config.py`: TMDB, Torznab and the \*arr URLs and keys); they are never echoed back and their audit rows store `[redacted]`. Host lists, proxy trust, proxy CIDRs, the proof secret, operator roles and the upstream URLs are startup-only.
+Settings are organized into **General**, **Connections**, **Content rules**
+and **Access & history**. Secondary references open within their group, and
+legacy section links still select the corresponding content. The desktop
+section rail becomes a compact group chooser on mobile. Section motion respects
+the browser's reduced-motion preference.
+
+Runtime overrides are limited to `MUTABLE_FIELDS` (`ui/config.py`):
+logging verbosity, TMDB/Torznab keys, and the \*arr URLs and keys. Secrets expose
+configured/source state only; values and lengths are never returned, and audit
+rows store `[redacted]`. Host lists, proxy trust, proxy CIDRs, proof, operator
+roles and core endpoint URLs are startup-only.
+
+Logging uses a level selector; connection addresses use validated HTTP/HTTPS
+URL inputs and replacement secrets use password controls. Deployment-managed
+settings are clearly labeled references rather than editable placeholders.
+The logging override changes console application logs; core and web-server
+logging remain deployment-managed.
+Save applies the relevant field or connection; other drafts survive saves, reloads and section
+changes within the same page. Drafts disappear on a full browser reload and are
+never written to browser storage. A failed refresh explicitly labels the retained
+snapshot, and a failed save keeps its draft for retry. Reset requires a second
+confirmation and restores the startup value. Successful secret replacements
+clear their input immediately; blank secret inputs preserve the existing value.
+Only the backend's mutable fields appear here. Core endpoints, authorization,
+host routing and private feature flags remain deployment configuration.
 
 ## System tab
 

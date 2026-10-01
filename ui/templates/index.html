@@ -20,46 +20,47 @@
   <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
 </head>
 <body>
+<a class="skip-link" href="#mainContent" onclick="event.preventDefault();document.getElementById('mainContent').focus()">Skip to content</a>
 <div class="app-layout">
   <!-- ── Sidebar ──────────────────────────────────────────────────── -->
-  <aside class="sidebar" id="sidebar">
+  <aside class="sidebar" id="sidebar" aria-label="Operator navigation">
     <div class="sidebar-brand">
       <svg viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="var(--color-accent)"/><path d="M8 11h6v2H8zm0 4h10v2H8zm0 4h8v2H8zm18-7l-5 5-3-3 1.4-1.4L21 14.2l3.6-3.6L26 12z" fill="#fff"/></svg>
       <div>
         <h1>BitAgent</h1>
-        <small>v{{ app_version }}</small>
+        <small>Operator console · v{{ app_version }}</small>
       </div>
     </div>
-    <nav class="sidebar-nav">
+    <nav class="sidebar-nav" aria-label="Administration">
       {% if private_indexer_enabled %}<a class="nav-item" href="/private-admin">Private library members</a>{% endif %}
       <div class="sidebar-nav-group">
         <div class="sidebar-nav-label">Overview</div>
-        <a class="nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
+        <a class="nav-item active" data-tab="dashboard" href="#dashboard" onclick="event.preventDefault();switchTab('dashboard')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           Dashboard
         </a>
-        <a class="nav-item" data-tab="library" onclick="switchTab('library')">
+        <a class="nav-item" data-tab="library" href="#library" onclick="event.preventDefault();switchTab('library')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-          Library
-          <span class="badge" id="libCount">0</span>
+          Catalogue
+          <span class="badge" id="libCount">—</span>
         </a>
       </div>
 
       <div class="sidebar-nav-group">
         <div class="sidebar-nav-label">Operations</div>
-        <a class="nav-item" data-tab="wants" onclick="switchTab('wants')">
+        <a class="nav-item" data-tab="wants" href="#wants" onclick="event.preventDefault();switchTab('wants')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
           Wants
         </a>
-        <a class="nav-item" data-tab="evidence" onclick="switchTab('evidence')">
+        <a class="nav-item" data-tab="evidence" href="#evidence" onclick="event.preventDefault();switchTab('evidence')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           Evidence
         </a>
-        <a class="nav-item" data-tab="quarantine" onclick="switchTab('quarantine')">
+        <a class="nav-item" data-tab="quarantine" href="#quarantine" onclick="event.preventDefault();switchTab('quarantine')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           Quarantine
         </a>
-        <a class="nav-item" data-tab="ai" onclick="switchTab('ai')">
+        <a class="nav-item" data-tab="ai" href="#ai" onclick="event.preventDefault();switchTab('ai')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
           AI
         </a>
@@ -67,17 +68,19 @@
 
       <div class="sidebar-nav-group">
         <div class="sidebar-nav-label">System</div>
-        <a class="nav-item" data-tab="settings" onclick="switchTab('settings')">
+        <a class="nav-item" data-tab="settings" href="#settings" onclick="event.preventDefault();switchTab('settings')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.32 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
           Settings
         </a>
-        <a class="nav-item" data-tab="system" onclick="switchTab('system')">
+        <a class="nav-item" data-tab="system" href="#system" onclick="event.preventDefault();switchTab('system')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           System
         </a>
       </div>
     </nav>
 
+    <a class="nav-item sidebar-library-link" id="operatorLibraryLink" href="{{ library_url }}" referrerpolicy="no-referrer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>Back to library</a>
+    <button class="btn btn-ghost sidebar-close" onclick="closeSidebar()" aria-label="Close navigation">Close navigation <span aria-hidden="true">×</span></button>
     <div class="sidebar-footer">
       <div class="theme-toggle">
         <span id="darkModeLabel">Dark mode</span>
@@ -100,14 +103,14 @@
   <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
 
   <!-- ── Main Content ─────────────────────────────────────────────── -->
-  <main class="main-content">
+  <main class="main-content" id="mainContent" tabindex="-1">
     <header class="page-header">
       <div class="page-header-left">
-        <button class="mobile-toggle btn-icon" onclick="toggleSidebar()" aria-label="Toggle navigation">
+        <button class="mobile-toggle btn-icon" id="navigationToggle" onclick="toggleSidebar()" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         <div>
-          <h2 class="page-title" id="pageTitle">Dashboard</h2>
+          <h2 class="page-title" id="pageTitle" tabindex="-1">Dashboard</h2>
           <p class="page-subtitle" id="pageSubtitle">System overview and live metrics</p>
         </div>
       </div>
@@ -128,7 +131,7 @@
             </div>
           </div>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="refreshCurrentTab()">
+        <button class="btn btn-secondary btn-sm" id="refreshButton" onclick="refreshCurrentTab()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
           Refresh
         </button>
@@ -138,6 +141,10 @@
     <div class="page-body">
       <!-- ═══════════════════════ DASHBOARD TAB ═══════════════════════ -->
       <div class="tab-panel active" id="tab-dashboard">
+        <div class="observation-bar section-gap">
+          <div><span class="observation-label">Operational snapshot</span><p id="dashboardStatus" class="operator-status" data-state="loading" role="status">Loading source observations…</p></div>
+          <span id="dashboardUpdatedAt" class="text-xs text-subtle"></span>
+        </div>
         <div class="card section-gap" id="winRateCard">
           <div class="card-header">
             <span class="card-title" data-help="North-star KPI: share of *arr grabs won by the BitAgent indexer vs. every other indexer, from the core's label_evidence grab webhooks. Aggregate counts only.">Indexer Win Rate <span class="text-xs text-subtle">30d</span></span>
@@ -147,6 +154,7 @@
             <div class="winrate-layout">
               <div class="winrate-headline">
                 <div class="stat-value" id="winRateValue">--</div>
+                <p class="metric-state operator-status" id="winRateStatus" data-state="loading">Loading…</p>
                 <div class="text-xs text-subtle">of grabs won by BitAgent</div>
                 <svg id="winRateSpark" viewBox="0 0 300 60" preserveAspectRatio="none" aria-label="Daily win-rate trend"></svg>
               </div>
@@ -168,6 +176,7 @@
             </div>
             <div class="stat-label">Match Rate <span class="stat-window">30d</span></div>
             <div class="stat-value" id="statMatchRate">--</div>
+            <p class="metric-state operator-status" id="statMatchRateStatus" data-state="loading">Loading…</p>
             <div class="stat-meter"><i id="statMatchMeter"></i></div>
             <div class="text-xs text-subtle" id="statMatchSub">movie/TV</div>
           </div>
@@ -179,10 +188,11 @@
             </div>
             <div class="stat-label">Grab Liveness</div>
             <div class="stat-value" id="statGrabSuccess">--</div>
+            <p class="metric-state operator-status" id="statGrabSuccessStatus" data-state="loading">Loading…</p>
             <div class="stat-meter"><i id="statGrabMeter"></i></div>
             <div class="text-xs text-subtle" id="statGrabSub">live / dead / pending</div>
           </div>
-          <div class="stat-card" data-accent="orange" data-help="Torrents per minute reaching the content filter — the crawler's actual end-to-end productivity, not DHT packet chatter. Measured in-process from two scrapes at least ten seconds apart, so it reads 'measuring…' for the first poll after a page load.">
+          <div class="stat-card" data-accent="orange" data-help="Torrents per minute reaching the content filter — the content filter's observed examination rate, not DHT packet chatter. Measured in-process from two scrapes at least ten seconds apart, so it reads 'measuring…' for the first poll after a page load.">
             <div class="stat-card-head">
               <div class="stat-icon orange">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -191,6 +201,7 @@
             </div>
             <div class="stat-label">Crawl Throughput</div>
             <div class="stat-value" id="statThroughput">--</div>
+            <p class="metric-state operator-status" id="statThroughputStatus" data-state="loading">Loading…</p>
             <div class="text-xs text-subtle">torrents examined / min</div>
           </div>
           <div class="stat-card" data-accent="violet" data-help="Rows in the core's torrent_contents table — indexed torrents that carry a classified content row. The core answers this from the Postgres planner's estimate once the table is too large for an exact count, so it is shown rounded; the exact figure is not available and rendering one would be a fiction.">
@@ -201,6 +212,7 @@
             </div>
             <div class="stat-label">Indexed Torrents</div>
             <div class="stat-value" id="statTorrents">--</div>
+            <p class="metric-state operator-status" id="statTorrentsStatus" data-state="loading">Loading…</p>
             <div class="text-xs text-subtle" id="statTorrentsSub">catalogue size</div>
           </div>
           <div class="stat-card" data-accent="red" data-help="Per-infohash liveness blocklist size. Torrents marked dead by the qB stall observer or *arr download-failed events; excluded from Torznab responses until revalidation succeeds.">
@@ -211,6 +223,7 @@
             </div>
             <div class="stat-label">Dead Blocked</div>
             <div class="stat-value" id="statBlacklist">--</div>
+            <p class="metric-state operator-status" id="statBlacklistStatus" data-state="loading">Loading…</p>
             <div class="text-xs text-subtle" id="statBlacklistSub">currently blocked</div>
           </div>
         </div>
@@ -220,6 +233,7 @@
             <div class="card-header">
               <span class="card-title" data-help="Count of indexed torrents per media type (Movie, TV, Music, etc.), from the core GraphQL contentType aggregation; bars scale to the largest slice, the percent is share of total.">Category Breakdown</span>
             </div>
+            <p id="categoryChartStatus" class="operator-status observation-detail" data-state="loading">Loading…</p>
             <div class="card-body" id="categoryChart">
               <div class="empty-state" style="padding:var(--space-8)">
                 <p class="text-sm text-muted">Connect to BitAgent core to see category data</p>
@@ -234,6 +248,7 @@
             <div class="card-body">
               <div class="uptime-readout">
                 <div class="stat-value" id="statUptime">--</div>
+            <p class="metric-state operator-status" id="statUptimeStatus" data-state="loading">Loading…</p>
                 <div class="text-xs text-subtle">bitagent-ui service</div>
               </div>
             </div>
@@ -245,6 +260,7 @@
             <span class="card-title" data-help="Latest evidence events from the core's label_evidence table (qBittorrent state polls and *arr webhooks/history); shows the 10 most recent.">Recent Activity</span>
             <button class="btn btn-ghost btn-sm" onclick="switchTab('evidence')">View all</button>
           </div>
+          <p id="activityStatus" class="operator-status observation-detail" data-state="loading">Loading…</p>
           <div class="card-body table-wrap">
             <table>
               <thead>
@@ -502,31 +518,34 @@
 
       <!-- ═══════════════════════ AI TAB ══════════════════════════════ -->
       <div class="tab-panel" id="tab-ai">
-        <div class="flex items-center justify-between mb-6">
-          <p class="text-sm text-muted">
-            Scorecards for all three LLM stages the core runs — the TMDB matcher, the content filter and the
-            junk-purge judge. Counters are since core boot. Auto-refreshes every 30s while this tab is open.
-            A metric shown as <span class="font-mono">—</span> with a note is one the core does not emit; it is
-            never rendered as a zero.
-          </p>
-          <button class="btn btn-secondary btn-sm" onclick="loadAiTab()">
+        <div class="ai-observation section-gap">
+          <div>
+            <div class="snapshot-label">AI OBSERVABILITY</div>
+            <p id="aiObservationState" class="operator-status" role="status" aria-live="polite">Waiting for core telemetry</p>
+            <p id="aiObservationTime" class="text-xs text-subtle">No observation yet</p>
+          </div>
+          <div class="flex gap-2">
+          <a class="btn btn-secondary btn-sm" href="#system/health" onclick="event.preventDefault();switchSystemTab('health',{history:false,load:false});switchTab('system')">Source diagnostics</a>
+          <button class="btn btn-secondary btn-sm" onclick="loadAiTab()" aria-label="Refresh AI telemetry">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
             Refresh
           </button>
+          </div>
         </div>
+        <p class="text-sm text-muted mb-6">Activity and request outcomes for the core's optional AI stages. Counters reset with the core; this page refreshes every 30 seconds while open. A successful request or accepted decision does not establish model accuracy. Unreported measurements appear as <span class="font-mono">—</span>.</p>
         <div id="aiUnavailableNote" class="callout callout-warn mb-6" role="status" style="display:none"></div>
 
         <div class="stats-grid section-gap">
-          <div class="stat-card" data-accent="orange" id="aiSpendCard" data-help="Spend-to-date across every LLM stage that reports tokens, priced from a static per-model table. The core publishes no process-start gauge, so a monthly figure cannot come from one scrape — it is measured by sampling spend across this page's own polls, and reads 'measuring…' until two samples 10s apart exist.">
+          <div class="stat-card" data-accent="orange" id="aiSpendCard" data-help="A 30-day projection of the observed token-cost rate, using two valid samples at least ten seconds apart and a static model price table. It assumes that rate continues; it is not an invoice or a prediction of future workload. Missing samples or prices keep the result partial or unavailable.">
             <div class="stat-card-head"><div class="stat-icon orange">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
             </div></div>
-            <div class="stat-label">Projected / month</div>
+            <div class="stat-label">30-day rate projection</div>
             <div class="stat-value" id="aiSpendMonthly">--</div>
             <div class="stat-meter"><i id="aiSpendMeter"></i></div>
             <div class="text-xs text-subtle" id="aiSpendSub">against budget</div>
           </div>
-          <div class="stat-card" data-accent="blue" data-help="Total provider-reported tokens across every reporting stage, since core boot. Input dominates on this workload, which is why prompt size — not model choice — is the lever on the bill.">
+          <div class="stat-card" data-accent="blue" data-help="Token usage reported by instrumented stages since core boot. Stages without token counters are outside this total.">
             <div class="stat-card-head"><div class="stat-icon blue">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
             </div></div>
@@ -534,11 +553,11 @@
             <div class="stat-value" id="aiTokensTotal">--</div>
             <div class="text-xs text-subtle" id="aiTokensSub">in / out</div>
           </div>
-          <div class="stat-card" data-accent="green" data-help="Spend-to-date since the core last restarted, priced from the same table. Resets when the core does — the counters behind it are per-process.">
+          <div class="stat-card" data-accent="green" data-help="Estimated cost of reported tokens at the stored model list prices since core restart. Provider invoices, discounts and uninstrumented usage are not included. An unknown price never becomes a zero-cost claim.">
             <div class="stat-card-head"><div class="stat-icon green">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             </div></div>
-            <div class="stat-label">Spent This Boot</div>
+            <div class="stat-label">Estimated token cost</div>
             <div class="stat-value" id="aiSpendTotal">--</div>
             <div class="text-xs text-subtle" id="aiSpendTotalSub">since core restart</div>
           </div>
@@ -546,7 +565,7 @@
             <div class="stat-card-head"><div class="stat-icon cyan">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>
             </div></div>
-            <div class="stat-label">Models Billing</div>
+            <div class="stat-label">Models reporting usage</div>
             <div class="stat-value" id="aiModelCount">--</div>
             <div class="text-xs text-subtle" id="aiModelSub">reporting tokens</div>
           </div>
@@ -554,13 +573,15 @@
 
         <div class="card section-gap">
           <div class="card-header">
-            <span class="card-title" data-help="Spend-to-date per model with its measured monthly projection, and what each dollar bought. Cost per unit is the comparison that ranks stages: a stage can be cheap in total and still be the worst value per decision it makes.">Spend by Model</span>
+            <span class="card-title" data-help="Reported token usage priced by model and stage. Projections extend the observed rate to thirty days; per-unit estimates describe operational work, not independent model quality.">Estimated cost by model &amp; stage</span>
             <span class="text-xs text-subtle" id="aiSpendPrices">list prices</span>
           </div>
           <div class="card-body" id="aiSpendPanel">
             <div class="empty-state" style="padding:var(--space-6)"><p class="text-sm text-muted">Loading…</p></div>
           </div>
         </div>
+
+        <p class="text-xs text-muted section-gap">Cost estimates use the price-table date shown above. Partial totals omit unpriced models and unreported usage. Independent evaluation is needed to establish matching or classification accuracy.</p>
 
         <div class="llm-stage-grid section-gap" id="aiStageGrid">
           <div class="empty-state" style="padding:var(--space-8)"><p class="text-sm text-muted">Loading LLM scorecards…</p></div>
@@ -614,77 +635,11 @@
       </div>
 
       <!-- ═══════════════════════ SETTINGS TAB ════════════════════════ -->
-      <div class="tab-panel" id="tab-settings">
-        <div class="tab-bar">
-          <button class="tab-btn active" data-stab="config" onclick="switchSettingsTab('config')">Configuration</button>
-          <button class="tab-btn" data-stab="auth" onclick="switchSettingsTab('auth')">Auth & Security</button>
-          <button class="tab-btn" data-stab="integrations" onclick="switchSettingsTab('integrations')">Integrations</button>
-          <button class="tab-btn" data-stab="retention" onclick="switchSettingsTab('retention')">Retention</button>
-          <button class="tab-btn" data-stab="classifier" onclick="switchSettingsTab('classifier')">Classifier</button>
-          <button class="tab-btn" data-stab="liveness" onclick="switchSettingsTab('liveness')">Liveness</button>
-          <button class="tab-btn" data-stab="filters" onclick="switchSettingsTab('filters')">Filters</button>
-          <button class="tab-btn" data-stab="blocklists" onclick="switchSettingsTab('blocklists')">Block Lists</button>
-          <button class="tab-btn" data-stab="audit" onclick="switchSettingsTab('audit')">Audit Log</button>
-        </div>
-
-        <!-- Config sub-tab -->
-        <div class="tab-panel active" id="stab-config">
-          <div class="flex items-center justify-between mb-6">
-            <div>
-              <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold);" data-help="Live editor for non-security mutable settings. Security trust, hosts, proxy CIDRs, proof, and operator roles are startup-only deployment configuration.">Runtime Configuration</h3>
-              <p class="text-sm text-muted mt-2">Override application settings without restarting. Secrets are never displayed; enter a value only to replace one.</p>
-            </div>
-            <button class="btn btn-secondary btn-sm" onclick="loadSettings()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-              Reload
-            </button>
-          </div>
-          <div class="settings-grid" id="settingsGrid"></div>
-        </div>
-
-        <!-- Auth sub-tab -->
-        <div class="tab-panel" id="stab-auth">
-          <div class="card mb-6">
-            <div class="card-header"><span class="card-title" data-help="Which request-auth tiers are actually configured, from /api/auth/tiers. The resolver checks tiers in priority order and the first match wins; Status shows only whether each tier is enabled (no secrets).">Authentication Tiers</span></div>
-            <div class="card-body">
-              <p class="text-sm text-muted mb-4">BitAgent uses a layered auth resolver — the first matching tier wins. Proxy identity requires both a configured transport-peer CIDR and shared proof; operator routes also require an allowed role.</p>
-              <div class="table-wrap">
-              <table>
-                <thead><tr><th data-help="Order the resolver tries this tier; lower number checked first, and the first tier that matches authenticates the request.">Priority</th><th data-help="The authentication method for this row (API key, reverse-proxy header, forwarded-user header, or upstream SSO gate).">Tier</th><th data-help="The request header, query param, or upstream check this tier reads to identify the caller.">Source</th><th data-help="Whether this tier is currently enabled in config: Active means configured/trusted, Disabled means off (from /api/auth/tiers, booleans only).">Status</th></tr></thead>
-                <tbody>
-                  <tr><td>1</td><td>API Key</td><td><code class="font-mono text-xs">?apikey= / X-Api-Key / Authorization: Bearer</code></td><td id="authTierApi"><span class="pill pill-neutral">--</span></td></tr>
-                  <tr><td>2</td><td>Reverse Proxy</td><td><code class="font-mono text-xs">X-Auth-User-Id (NPM)</code></td><td id="authTierNpm"><span class="pill pill-neutral">--</span></td></tr>
-                  <tr><td>3</td><td>Forwarded User</td><td><code class="font-mono text-xs">X-Forwarded-User / Remote-User</code></td><td id="authTierFwd"><span class="pill pill-neutral">--</span></td></tr>
-                  <tr><td>—</td><td>SSO (via gate)</td><td><code class="font-mono text-xs">validated upstream by the auth-portal; surfaced via a trusted proxy tier</code></td><td id="authTierSso"><span class="pill pill-neutral">--</span></td></tr>
-                </tbody>
-              </table>
-              </div>
-            </div>
-          </div>
-          <div class="card">
-            <div class="card-header"><span class="card-title" data-help="Key values are never returned to the browser. These fields report configured state only; replace mutable keys through the configuration or integration form.">API Keys</span></div>
-            <div class="card-body">
-              <div class="grid-2">
-                <div class="input-group">
-                  <label class="input-label">Dashboard API Key</label>
-                  <div class="flex gap-2">
-                    <input class="input font-mono" type="password" id="dashKeyDisplay" readonly value="" placeholder="loading…">
-                  </div>
-                </div>
-                <div class="input-group">
-                  <label class="input-label">Torznab API Key</label>
-                  <div class="flex gap-2">
-                    <input class="input font-mono" type="password" id="tzKeyDisplay" readonly value="" placeholder="loading…">
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Integrations sub-tab -->
-        <div class="tab-panel" id="stab-integrations">
-          <div class="grid-2">
+      <div class="tab-panel" id="tab-settings"><div class="settings-shell"><nav class="settings-rail" aria-label="Settings groups"><p class="settings-rail-label">Manage your console</p><button type="button" class="settings-group-button active" data-settings-group="config" aria-pressed="true" aria-controls="settings-group-config" onclick="switchSettingsTab('config')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg><span><strong>General</strong><small>Console preferences & deployment</small></span></button>
+<button type="button" class="settings-group-button" data-settings-group="integrations" aria-pressed="false" aria-controls="settings-group-integrations" onclick="switchSettingsTab('integrations')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 13a5 5 0 007 0l3-3a5 5 0 00-7-7l-2 2M14 11a5 5 0 00-7 0l-3 3a5 5 0 007 7l2-2"/></svg><span><strong>Connections</strong><small>Media apps & metadata</small></span></button>
+<button type="button" class="settings-group-button" data-settings-group="content" aria-pressed="false" aria-controls="settings-group-content" onclick="switchSettingsTab('content')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 4h16l-6 7v7l-4 2v-9z"/></svg><span><strong>Content rules</strong><small>Filters, block lists & health</small></span></button>
+<button type="button" class="settings-group-button" data-settings-group="access" aria-pressed="false" aria-controls="settings-group-access" onclick="switchSettingsTab('access')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M12 3l8 4v6c0 5-8 9-8 9s-8-4-8-9V7z"/><path d="M9 12l2 2 4-4"/></svg><span><strong>Access & history</strong><small>Credentials & change records</small></span></button></nav><div class="settings-content"><section class="settings-group-panel active" id="settings-group-config" data-settings-panel="config"><header class="settings-group-heading"><div><p class="settings-eyebrow">Settings</p><h2 id="settings-heading-config" tabindex="-1">General</h2><p>Console preferences and an overview of deployment-managed configuration.</p></div><span class="pill pill-neutral">Console</span></header><section id="stab-config" class="settings-primary-section"><div class="settings-section-heading"><div><h3>Console preferences</h3><p>Save a console override. Running core services use their deployment configuration.</p></div><button type="button" class="btn btn-secondary btn-sm" id="settingsReload" onclick="loadSettings()">Refresh</button></div><p class="operator-status settings-status" id="settingsStatus" role="status" aria-live="polite">Checking console settings…</p><div class="settings-grid settings-general-grid" id="settingsGrid" aria-busy="true"></div></section>
+<div class="settings-managed-card"><span class="settings-managed-icon" aria-hidden="true">↗</span><div><h3>Managed in your deployment</h3><p>Service addresses, trusted hosts, authentication and proxy rules, and core processing switches are configured when the service starts.</p><p>Change these values in your deployment configuration, then restart through your normal deployment workflow.</p><div class="settings-managed-links"><button type="button" onclick="switchSettingsTab('auth')">Review access status →</button><button type="button" onclick="switchSettingsTab('filters')">Review content rules →</button></div></div></div><details class="settings-disclosure" id="settings-disclosure-retention" data-settings-section="retention"><summary onclick="settingsSectionIntent('retention', this.parentElement)"><span><strong>Retention & storage</strong><small>Available capabilities and where to inspect storage.</small></span><span class="pill pill-neutral">Reference</span></summary><div class="settings-disclosure-body" id="stab-retention"><div class="settings-reference-grid"><div><span class="pill pill-warning">Not available</span><h3>Age-based retention</h3><p>Automatic deletion by age is not implemented. Review, restore, or purge individual releases in Quarantine.</p><a class="btn btn-secondary btn-sm" href="#quarantine" onclick="switchTab('quarantine');return false">Open Quarantine</a></div><div><span class="pill pill-neutral">Unavailable</span><h3>Storage usage</h3><p>No storage-size endpoint currently feeds this console. Check PostgreSQL, the console database, and the poster cache in your deployment tools.</p></div></div></div></details></section><section class="settings-group-panel" id="settings-group-integrations" data-settings-panel="integrations"><header class="settings-group-heading"><div><p class="settings-eyebrow">Settings</p><h2 id="settings-heading-integrations" tabindex="-1">Connections</h2><p>Configure media apps and metadata without exposing stored keys.</p></div><span class="pill pill-neutral">Editable</span></header><section id="stab-integrations"><div class="settings-section-heading"><div><h3>Media app connections</h3><p>Enable the library’s Send to action. Configured means a URL and key are stored; it does not prove connectivity.</p></div></div><p class="operator-status settings-status" id="integrationsStatus" role="status" aria-live="polite">Checking integration configuration…</p><div class="settings-connections-grid" id="arrSettingsGrid"><article class="settings-connection-card"><header><div><h3>Sonarr</h3><p>TV series</p></div><span class="pill pill-neutral" id="arr-sonarr-state">Checking</span></header><div class="input-group"><label class="input-label" for="arr-sonarr-url">Base URL</label><input class="input" type="url" inputmode="url" id="arr-sonarr-url" oninput="editArrSetting('sonarr','url')" aria-describedby="arr-sonarr-help arr-sonarr-status" placeholder="http://sonarr:8989" autocomplete="url" spellcheck="false"></div><p id="arr-sonarr-help" class="settings-field-help">Use an http:// or https:// address reachable by this service.</p><div class="input-group"><label class="input-label" for="arr-sonarr-key">API key replacement</label><input class="input" type="password" id="arr-sonarr-key" oninput="editArrSetting('sonarr')" aria-describedby="arr-sonarr-status" autocomplete="off" spellcheck="false" placeholder="Checking configured state…"></div><button type="button" class="btn btn-primary btn-sm" id="arr-save-sonarr" onclick="saveArrSettings('sonarr')">Save Sonarr</button><p class="operator-status setting-message" id="arr-sonarr-status" role="status" aria-live="polite"></p></article><article class="settings-connection-card"><header><div><h3>Radarr</h3><p>Movies</p></div><span class="pill pill-neutral" id="arr-radarr-state">Checking</span></header><div class="input-group"><label class="input-label" for="arr-radarr-url">Base URL</label><input class="input" type="url" inputmode="url" id="arr-radarr-url" oninput="editArrSetting('radarr','url')" aria-describedby="arr-radarr-help arr-radarr-status" placeholder="http://radarr:7878" autocomplete="url" spellcheck="false"></div><p id="arr-radarr-help" class="settings-field-help">Use an http:// or https:// address reachable by this service.</p><div class="input-group"><label class="input-label" for="arr-radarr-key">API key replacement</label><input class="input" type="password" id="arr-radarr-key" oninput="editArrSetting('radarr')" aria-describedby="arr-radarr-status" autocomplete="off" spellcheck="false" placeholder="Checking configured state…"></div><button type="button" class="btn btn-primary btn-sm" id="arr-save-radarr" onclick="saveArrSettings('radarr')">Save Radarr</button><p class="operator-status setting-message" id="arr-radarr-status" role="status" aria-live="polite"></p></article><article class="settings-connection-card"><header><div><h3>Lidarr</h3><p>Music</p></div><span class="pill pill-neutral" id="arr-lidarr-state">Checking</span></header><div class="input-group"><label class="input-label" for="arr-lidarr-url">Base URL</label><input class="input" type="url" inputmode="url" id="arr-lidarr-url" oninput="editArrSetting('lidarr','url')" aria-describedby="arr-lidarr-help arr-lidarr-status" placeholder="http://lidarr:8686" autocomplete="url" spellcheck="false"></div><p id="arr-lidarr-help" class="settings-field-help">Use an http:// or https:// address reachable by this service.</p><div class="input-group"><label class="input-label" for="arr-lidarr-key">API key replacement</label><input class="input" type="password" id="arr-lidarr-key" oninput="editArrSetting('lidarr')" aria-describedby="arr-lidarr-status" autocomplete="off" spellcheck="false" placeholder="Checking configured state…"></div><button type="button" class="btn btn-primary btn-sm" id="arr-save-lidarr" onclick="saveArrSettings('lidarr')">Save Lidarr</button><p class="operator-status setting-message" id="arr-lidarr-status" role="status" aria-live="polite"></p></article></div><article class="settings-connection-card settings-metadata-card"><header><div><h3>Posters & metadata</h3><p>TMDB supplies artwork for the public library.</p></div><span class="pill pill-neutral" id="tmdbStatus">Checking</span></header><div class="settings-inline-editor"><div class="input-group"><label class="input-label" for="tmdbKeyInput">TMDB API key replacement</label><input class="input" type="password" id="tmdbKeyInput" aria-describedby="tmdb-save-status" autocomplete="off" spellcheck="false" placeholder="Enter a replacement key"></div><button type="button" class="btn btn-primary btn-sm" id="tmdb-save" onclick="saveTmdbKey()">Save key</button></div><p id="tmdb-save-status" class="operator-status setting-message" role="status" aria-live="polite"></p></article><p class="settings-key-note">Existing keys are never shown. Leave a key blank to keep its configured value.</p></section><details class="settings-disclosure" id="settings-disclosure-setup" data-settings-section="setup"><summary onclick="settingsSectionIntent('setup', this.parentElement)"><span><strong>Indexer & webhook setup</strong><small>Instructions for your media apps; configure these in the receiving application.</small></span><span class="pill pill-neutral">Reference</span></summary><div class="settings-disclosure-body" id="stab-setup"><div class="grid-2">
             <div class="card">
               <div class="card-header">
                 <span class="card-title" data-help="Copy-paste settings to add BitAgent to Sonarr as a Torznab indexer (TV categories 5000/5030/5040). Static reference text, not a live connection status.">Sonarr</span>
@@ -733,57 +688,7 @@ API Key: ${TORZNAB_API_KEY}
 Categories: 3000, 3010, 3020</div>
               </div>
             </div>
-          </div>
-
-          <div class="card mt-6">
-            <div class="card-header">
-              <span class="card-title" data-help="Store each app's base URL and API key (saved as settings overrides) so the Library tab's one-click Send-to can push a release into Sonarr/Radarr/Lidarr via its API.">*arr API Configuration</span>
-              <span class="text-xs text-subtle">Required for "Send to" release push from Library</span>
-            </div>
-            <div class="card-body">
-              <p class="text-sm text-muted mb-4">Set base URL and API key for each app to enable one-click release push from the Library tab. Find API keys in each app under Settings → General.</p>
-              <div class="grid-2" id="arrSettingsGrid">
-                <div>
-                  <div style="font-weight:var(--weight-semibold);font-size:var(--text-sm);margin-bottom:var(--space-3)">Sonarr</div>
-                  <div class="input-group mb-2">
-                    <label class="input-label">Base URL</label>
-                    <input class="input font-mono" id="arr-sonarr-url" placeholder="http://sonarr:8989">
-                  </div>
-                  <div class="input-group">
-                    <label class="input-label">API Key</label>
-                    <input class="input font-mono" type="password" id="arr-sonarr-key" placeholder="32-char hex key">
-                  </div>
-                  <button class="btn btn-primary btn-sm mt-2" onclick="saveArrSettings('sonarr')">Save Sonarr</button>
-                </div>
-                <div>
-                  <div style="font-weight:var(--weight-semibold);font-size:var(--text-sm);margin-bottom:var(--space-3)">Radarr</div>
-                  <div class="input-group mb-2">
-                    <label class="input-label">Base URL</label>
-                    <input class="input font-mono" id="arr-radarr-url" placeholder="http://radarr:7878">
-                  </div>
-                  <div class="input-group">
-                    <label class="input-label">API Key</label>
-                    <input class="input font-mono" type="password" id="arr-radarr-key" placeholder="32-char hex key">
-                  </div>
-                  <button class="btn btn-primary btn-sm mt-2" onclick="saveArrSettings('radarr')">Save Radarr</button>
-                </div>
-                <div>
-                  <div style="font-weight:var(--weight-semibold);font-size:var(--text-sm);margin-bottom:var(--space-3)">Lidarr</div>
-                  <div class="input-group mb-2">
-                    <label class="input-label">Base URL</label>
-                    <input class="input font-mono" id="arr-lidarr-url" placeholder="http://lidarr:8686">
-                  </div>
-                  <div class="input-group">
-                    <label class="input-label">API Key</label>
-                    <input class="input font-mono" type="password" id="arr-lidarr-key" placeholder="32-char hex key">
-                  </div>
-                  <button class="btn btn-primary btn-sm mt-2" onclick="saveArrSettings('lidarr')">Save Lidarr</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="card mt-6">
+          </div><div class="card mt-6">
             <div class="card-header">
               <span class="card-title" data-help="Instructions to point each *arr app's Connect webhook at the BitAgent core's /evidence/arr/<instance> endpoint; those events feed the same Evidence stream this UI shows. Set on the core, not here.">Download Event Webhooks</span>
               <span class="text-xs text-subtle">Configure on the BitAgent core, not this UI</span>
@@ -791,230 +696,7 @@ Categories: 3000, 3010, 3020</div>
             <div class="card-body">
               <p class="text-sm text-muted">In each *arr app: Settings → Connect → Webhook → URL <code class="font-mono text-xs">&lt;bitagent-core-host&gt;/evidence/arr/&lt;instance-name&gt;</code> with the <code class="font-mono text-xs">X-Evidence-Token</code> header set to the core's <code>EVIDENCE_WEBHOOK_SECRET</code>. The core feeds the same Evidence stream this UI displays.</p>
             </div>
-          </div>
-
-          <div class="card mt-6">
-            <div class="card-header">
-              <span class="card-title" data-help="Optional TMDB API key (saved as the tmdb_api_key setting) that provides poster art in the Library tab; the pill shows Configured or Not configured based on whether that key is set.">TMDB Integration</span>
-              <span class="pill pill-neutral" id="tmdbStatus">Not configured</span>
-            </div>
-            <div class="card-body">
-              <p class="text-sm text-muted mb-4">Optional. Provides poster art for the Library tab. Set TMDB_API_KEY in settings.</p>
-              <div class="input-group">
-                <label class="input-label">TMDB API Key</label>
-                <div class="flex gap-2">
-                  <input class="input font-mono" type="password" id="tmdbKeyInput" placeholder="Enter TMDB API key...">
-                  <button class="btn btn-primary btn-sm" onclick="saveTmdbKey()">Save</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Retention sub-tab -->
-        <div class="tab-panel" id="stab-retention">
-          <!-- Honest placeholder: there is NO retention backend anywhere in
-               the stack. The old panel here was pure fiction — sliders wired
-               to nothing and a Save button that toasted success without an
-               API call. Do not re-add controls until a real backend exists. -->
-          <div class="card mb-6">
-            <div class="card-header">
-              <span class="card-title" data-help="Placeholder only. Age-based retention/purge is NOT implemented in the core or this dashboard; the only deletion path is the junk classifier quarantine in the Quarantine tab.">Retention Policy</span>
-              <span class="pill pill-warning">Not implemented</span>
-            </div>
-            <div class="card-body">
-              <p class="text-sm text-muted">Age-based retention/purge is not implemented in the core or this dashboard — there is nothing to configure yet.</p>
-              <p class="text-sm text-muted mt-2">The only deletion path today is the junk classifier's quarantine (review, restore, or purge per release in the <a href="#" onclick="switchTab('quarantine');return false">Quarantine tab</a>).</p>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-header">
-              <span class="card-title" data-help="Intended to show on-disk size of the Postgres catalog, SQLite sidecar, and poster cache. Currently static placeholders; no live storage endpoint feeds these numbers yet.">Storage Usage</span>
-            </div>
-            <div class="card-body">
-              <div class="grid-3">
-                <div data-help="On-disk size of the main BitAgent Postgres database — the indexed torrent catalogue and TMDB content.">
-                  <div class="stat-label">Postgres</div>
-                  <div class="text-lg" style="font-size:var(--text-lg);font-weight:var(--weight-semibold)">--</div>
-                  <div class="progress mt-2"><div class="progress-bar" style="width:0%"></div></div>
-                </div>
-                <div data-help="Size of the local SQLite sidecar DB that stores *arr webhook evidence and liveness observations.">
-                  <div class="stat-label">SQLite Sidecar</div>
-                  <div class="text-lg" style="font-size:var(--text-lg);font-weight:var(--weight-semibold)">--</div>
-                  <div class="progress mt-2"><div class="progress-bar green" style="width:0%"></div></div>
-                </div>
-                <div data-help="Disk used by cached TMDB poster/artwork images served to this dashboard.">
-                  <div class="stat-label">Poster Cache</div>
-                  <div class="text-lg" style="font-size:var(--text-lg);font-weight:var(--weight-semibold)">--</div>
-                  <div class="progress mt-2"><div class="progress-bar orange" style="width:0%"></div></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Classifier sub-tab -->
-        <div class="tab-panel" id="stab-classifier">
-          <div class="flex items-center justify-between mb-6">
-            <div>
-              <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold)">Classifier Rules <span class="pill pill-neutral" style="vertical-align:middle" data-help="Illustrative examples of the CEL classification approach, NOT the live ruleset. The authoritative logic is the CLASSIFIER_WORKFLOW config on the core, which this dashboard cannot read.">Reference</span></h3>
-              <p class="text-sm text-muted mt-2">Illustrative examples of the CEL classification approach — not the live, authoritative ruleset.</p>
-            </div>
-            <div class="flex gap-2">
-              <button class="btn btn-secondary btn-sm" onclick="loadClassifierRules()" data-help="Re-renders the illustrative reference cards below; it does NOT fetch the live ruleset. The refresh icon is cosmetic here because these examples are static, not read from the running classifier.">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-                Reload
-              </button>
-            </div>
-          </div>
-
-          <div class="card mb-6" style="border-left:3px solid var(--color-warning)">
-            <div class="card-body">
-              <p class="text-sm" style="font-weight:var(--weight-semibold)">These rules are illustrative references, not the live ruleset.</p>
-              <p class="text-xs text-muted mt-2">
-                The cards below document <em>how</em> BitAgent's CEL classifier reasons about releases — they are
-                <strong>not editable here and are not fetched from the running classifier</strong>. The authoritative
-                classification logic is the CEL workflow configured on the BitAgent core via the
-                <code class="font-mono">CLASSIFIER_WORKFLOW</code> environment variable
-                (currently <code class="font-mono">norvi</code>), which this dashboard cannot introspect. Treat the
-                examples as documentation of the approach, not as a mirror of production behaviour.
-              </p>
-            </div>
-          </div>
-
-          <div id="classifierRules">
-            <div class="flex flex-col gap-4" id="classifierRulesList">
-              <!-- Illustrative reference rules rendered by JS (see banner above) -->
-            </div>
-          </div>
-        </div>
-
-        <!-- Liveness sub-tab -->
-        <div class="tab-panel" id="stab-liveness">
-          <div class="flex items-center justify-between mb-6">
-            <div>
-              <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold)" data-help="Per-infohash health from qBittorrent state observations and *arr import outcomes; dead torrents are filtered out of Torznab responses. Counters come from the core's liveness metrics via /api/stats.">Liveness Pipeline</h3>
-              <p class="text-sm text-muted mt-2">
-                Per-infohash health derived from qBittorrent state observations and *arr import outcomes.
-                Dead torrents are excluded from Torznab responses; revalidation re-checks them on a schedule.
-              </p>
-            </div>
-            <button class="btn btn-secondary btn-sm" onclick="loadLivenessOps()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-              Refresh
-            </button>
-          </div>
-
-          <!-- Live counters -->
-          <div class="stats-grid mb-6">
-            <div class="stat-card" data-help="Count of liveness checks that found the torrent healthy — qBittorrent seeding/uploading, or a successful *arr import.">
-              <div class="stat-icon green">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-              </div>
-              <div class="stat-label">Alive Observations</div>
-              <div class="stat-value" id="livenessObsAlive">--</div>
-              <div class="text-xs text-subtle">qB seeding/uploading + *arr import</div>
-            </div>
-            <div class="stat-card" data-help="Count of liveness checks that came back unhealthy — qBittorrent stalledDL / metaDL / error states. Repeated suspects get moved to the dead blocklist.">
-              <div class="stat-icon orange">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              </div>
-              <div class="stat-label">Suspect Observations</div>
-              <div class="stat-value" id="livenessObsSuspect">--</div>
-              <div class="text-xs text-subtle">qB stalledDL/metaDL/error</div>
-            </div>
-            <div class="stat-card" data-help="Torrents currently marked dead and excluded from Torznab search responses, pending a successful revalidation re-check.">
-              <div class="stat-icon red">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
-              </div>
-              <div class="stat-label">Dead Blocklist</div>
-              <div class="stat-value" id="livenessBlacklist">--</div>
-              <div class="text-xs text-subtle"><span id="livenessExcluded">--</span> total filtered</div>
-            </div>
-            <div class="stat-card" data-help="Share of blocklisted dead torrents that came back alive when revalidation re-checked them — how many the pipeline recovers rather than permanently excludes.">
-              <div class="stat-icon blue">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-              </div>
-              <div class="stat-label">Revalidation Recovery</div>
-              <div class="stat-value" id="livenessRecoveryRate">--</div>
-              <div class="text-xs text-subtle"><span id="livenessRevalidAlive">0</span> alive / <span id="livenessRevalidDead">0</span> still dead</div>
-            </div>
-          </div>
-
-          <!-- Configured thresholds (read-only — set via env vars on the bitagent core) -->
-          <div class="card mb-6">
-            <div class="card-header">
-              <span class="card-title" data-help="Read-only reference of the liveness pipeline's tuning knobs and their defaults. These are set via env vars on the bitagent core stack; changing them requires a core restart.">Configured Thresholds</span>
-              <span class="text-xs text-subtle">Set via env vars on the bitagent core. Restart required to change.</span>
-            </div>
-            <div class="card-body table-wrap">
-              <table>
-                <thead><tr><th>Knob</th><th data-help="Full environment variable that sets this knob on the bitagent core; changing it needs a core restart.">Env var</th><th>Default</th><th>What it does</th></tr></thead>
-                <tbody>
-                  <tr>
-                    <td><code class="font-mono text-xs">enabled</code></td>
-                    <td><code class="font-mono text-xs">BITAGENT_EVIDENCE__LIVENESS__ENABLED</code></td>
-                    <td><span class="pill pill-success">true</span></td>
-                    <td>Master toggle. When false, no observations are emitted and Torznab responses are unfiltered (zero overhead).</td>
-                  </tr>
-                  <tr>
-                    <td><code class="font-mono text-xs">stall_threshold_hours</code></td>
-                    <td><code class="font-mono text-xs">…__STALL_THRESHOLD_HOURS</code></td>
-                    <td><code>4</code></td>
-                    <td>How long a torrent must stay in stalledDL/metaDL before it's eligible to be marked dead.</td>
-                  </tr>
-                  <tr>
-                    <td><code class="font-mono text-xs">min_observations</code></td>
-                    <td><code class="font-mono text-xs">…__MIN_OBSERVATIONS</code></td>
-                    <td><code>2</code></td>
-                    <td>How many independent suspect observations are required. Guards against transient network issues.</td>
-                  </tr>
-                  <tr>
-                    <td><code class="font-mono text-xs">blacklist_ttl_days</code></td>
-                    <td><code class="font-mono text-xs">…__BLACKLIST_TTL_DAYS</code></td>
-                    <td><code>30</code></td>
-                    <td>How long until a dead torrent gets re-checked. Lower = faster recovery if it comes back; higher = less DHT load.</td>
-                  </tr>
-                  <tr>
-                    <td><code class="font-mono text-xs">revalidate_interval</code></td>
-                    <td><code class="font-mono text-xs">…__REVALIDATE_INTERVAL</code></td>
-                    <td><code>6h</code></td>
-                    <td>How often the revalidation worker wakes up to re-check a batch of dead torrents.</td>
-                  </tr>
-                  <tr>
-                    <td><code class="font-mono text-xs">revalidate_min_peers</code></td>
-                    <td><code class="font-mono text-xs">…__REVALIDATE_MIN_PEERS</code></td>
-                    <td><code>2</code></td>
-                    <td>Minimum DHT peers that must respond to a get_peers query for the torrent to be marked alive again.</td>
-                  </tr>
-                  <tr>
-                    <td><code class="font-mono text-xs">exclude_private_tracker_grabs</code></td>
-                    <td><code class="font-mono text-xs">…__EXCLUDE_PRIVATE_TRACKER_GRABS</code></td>
-                    <td><span class="pill pill-success">true</span></td>
-                    <td>When a *arr imports a torrent in the qB <code>private</code> category, don't credit it as alive evidence — the file came from a private tracker, not BitAgent's catalog.</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- Explainer -->
-          <div class="card">
-            <div class="card-header"><span class="card-title">How it works</span></div>
-            <div class="card-body">
-              <div class="text-sm" style="line-height:1.7">
-                <p class="mb-3"><strong>Inputs.</strong> Every <code class="font-mono text-xs">/api/v2/torrents/info</code> poll cycle, qBittorrent reports the state of each torrent it knows about. <code>seeding/uploading/downloading</code> = alive. <code>stalledDL/metaDL/error/missingFiles</code> = suspect. Plus every successful <code>*arr</code> import webhook = alive.</p>
-                <p class="mb-3"><strong>Resolution.</strong> A torrent is marked <span class="pill pill-error">dead</span> only after <em>min_observations</em> independent suspect observations across at least <em>stall_threshold_hours</em>. Any single alive observation immediately wins.</p>
-                <p class="mb-3"><strong>Output.</strong> Dead infohashes are filtered out of Torznab responses before they reach Sonarr/Radarr — no stale grabs.</p>
-                <p class="mb-0"><strong>Revalidation.</strong> Every <em>revalidate_interval</em>, the worker picks a batch of dead torrents and fires a DHT <code>get_peers</code> query. If <em>revalidate_min_peers</em> respond, the torrent is reinstated as alive. Otherwise it stays dead until the next sweep.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Filters sub-tab — read-only view of the bitagent core's contentfilter -->
-        <div class="tab-panel" id="stab-filters">
+          </div></div></details></section><section class="settings-group-panel" id="settings-group-content" data-settings-panel="content"><header class="settings-group-heading"><div><p class="settings-eyebrow">Settings</p><h2 id="settings-heading-content" tabindex="-1">Content rules</h2><p>Understand filtering and classification, and manage console block phrases.</p></div><span class="pill pill-neutral">Core & console</span></header><details class="settings-disclosure" id="settings-disclosure-filters" data-settings-section="filters"><summary onclick="settingsSectionIntent('filters', this.parentElement)"><span><strong>Content filters</strong><small>Observe modes and outcomes; enforcement is configured at startup.</small></span><span class="pill pill-neutral">Deployment managed</span></summary><div class="settings-disclosure-body" id="stab-filters">
           <div class="flex items-center justify-between mb-6">
             <div>
               <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold)" data-help="Read-only view of the core's enforced-drop and shadow would-drop counters (via /api/filters/status). These filters are configured only through env vars on the core stack, not here.">Content Filters</h3>
@@ -1115,17 +797,14 @@ Categories: 3000, 3010, 3020</div>
               <div style="font-size:var(--text-2xl);font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums" id="filterExamined">--</div>
             </div>
           </div>
-        </div>
-
-        <!-- Block Lists sub-tab — liveness + CSAM read-only + operator block phrases -->
-        <div class="tab-panel" id="stab-blocklists">
+        </div></details><details class="settings-disclosure" id="settings-disclosure-blocklists" data-settings-section="blocklists"><summary onclick="settingsSectionIntent('blocklists', this.parentElement)"><span><strong>Block lists & phrases</strong><small>Review core block lists and manage console-only block phrases.</small></span><span class="pill pill-neutral">Mixed controls</span></summary><div class="settings-disclosure-body" id="stab-blocklists">
           <div class="flex items-center justify-between mb-6">
             <div>
               <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold)" data-help="Two automatic core blocklists (Liveness and CSAM), plus operator-managed block phrases that filter this dashboard's Library tab only.">Block Lists</h3>
               <p class="text-sm text-muted mt-2">
                 Two automatic blocklists run on the bitagent core (Liveness + CSAM).
                 Below them: operator-managed block phrases that filter the Library tab
-                in this dashboard. (Future: feed these phrases into the core's filter chain.)
+                in this dashboard. Core and Torznab enforcement are unchanged.
               </p>
             </div>
             <button class="btn btn-secondary btn-sm" onclick="loadBlockLists()">
@@ -1146,7 +825,7 @@ Categories: 3000, 3010, 3020</div>
                 <div class="kv-row"><span>Filtered from Torznab</span><span class="font-mono" id="blListLivenessExcluded">--</span></div>
                 <div class="kv-row"><span>Block rate</span><span class="font-mono"><span id="blListLivenessRate">--</span> filtered/min</span></div>
                 <p class="text-xs text-muted mt-3">
-                  Configure thresholds in the <a href="#" onclick="switchSettingsTab('liveness');return false;">Liveness</a> sub-tab.
+                  Review reference thresholds in the <a href="#" onclick="switchSettingsTab('liveness');return false;">Liveness</a> section.
                 </p>
               </div>
             </div>
@@ -1175,7 +854,7 @@ Categories: 3000, 3010, 3020</div>
             </div>
             <div class="card-body">
               <div class="flex gap-2 mb-4">
-                <input
+                <label class="sr-only" for="blockPhraseInput">Block phrase</label><input
                   type="text"
                   id="blockPhraseInput"
                   class="input flex-1"
@@ -1183,7 +862,7 @@ Categories: 3000, 3010, 3020</div>
                   maxlength="200"
                   onkeydown="if(event.key==='Enter') addBlockPhrase()"
                 />
-                <input
+                <label class="sr-only" for="blockPhraseNote">Optional reason</label><input
                   type="text"
                   id="blockPhraseNote"
                   class="input"
@@ -1215,10 +894,176 @@ Categories: 3000, 3010, 3020</div>
               </div>
             </div>
           </div>
-        </div>
+        </div></details><details class="settings-disclosure" id="settings-disclosure-classifier" data-settings-section="classifier"><summary onclick="settingsSectionIntent('classifier', this.parentElement)"><span><strong>Classification reference</strong><small>Illustrative rules explain the approach, not the live ruleset.</small></span><span class="pill pill-neutral">Reference</span></summary><div class="settings-disclosure-body" id="stab-classifier">
+          <div class="flex items-center justify-between mb-6">
+            <div>
+              <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold)">Classifier Rules <span class="pill pill-neutral" style="vertical-align:middle" data-help="Illustrative examples of the CEL classification approach, NOT the live ruleset. The authoritative logic is the CLASSIFIER_WORKFLOW config on the core, which this dashboard cannot read.">Reference</span></h3>
+              <p class="text-sm text-muted mt-2">Illustrative examples of the CEL classification approach — not the live, authoritative ruleset.</p>
+            </div>
+            <div class="flex gap-2">
+              <button class="btn btn-secondary btn-sm" onclick="loadClassifierRules()" data-help="Re-renders the illustrative reference cards below; it does NOT fetch the live ruleset. The refresh icon is cosmetic here because these examples are static, not read from the running classifier.">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                Reload
+              </button>
+            </div>
+          </div>
 
-        <!-- Audit sub-tab -->
-        <div class="tab-panel" id="stab-audit">
+          <div class="card mb-6" style="border-left:3px solid var(--color-warning)">
+            <div class="card-body">
+              <p class="text-sm" style="font-weight:var(--weight-semibold)">These rules are illustrative references, not the live ruleset.</p>
+              <p class="text-xs text-muted mt-2">
+                The cards below document <em>how</em> BitAgent's CEL classifier reasons about releases — they are
+                <strong>not editable here and are not fetched from the running classifier</strong>. The authoritative
+                classification logic is the CEL workflow configured on the BitAgent core via the
+                <code class="font-mono">CLASSIFIER_WORKFLOW</code> environment variable
+                which this dashboard cannot introspect. Treat the
+                examples as documentation of the approach, not as a mirror of production behaviour.
+              </p>
+            </div>
+          </div>
+
+          <div id="classifierRules">
+            <div class="flex flex-col gap-4" id="classifierRulesList">
+              <!-- Illustrative reference rules rendered by JS (see banner above) -->
+            </div>
+          </div>
+        </div></details><details class="settings-disclosure" id="settings-disclosure-liveness" data-settings-section="liveness"><summary onclick="settingsSectionIntent('liveness', this.parentElement)"><span><strong>Torrent health</strong><small>Observed health counters and startup tuning references.</small></span><span class="pill pill-neutral">Observations</span></summary><div class="settings-disclosure-body" id="stab-liveness">
+          <div class="flex items-center justify-between mb-6">
+            <div>
+              <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold)" data-help="Per-infohash health from qBittorrent state observations and *arr import outcomes; dead torrents are filtered out of Torznab responses. Counters come from the core's liveness metrics via /api/stats.">Liveness Pipeline</h3>
+              <p class="text-sm text-muted mt-2">
+                Per-infohash health derived from qBittorrent state observations and *arr import outcomes.
+                Dead torrents are excluded from Torznab responses; revalidation re-checks them on a schedule.
+              </p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="loadLivenessOps()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Refresh
+            </button>
+          </div>
+
+          <!-- Live counters -->
+          <div class="stats-grid mb-6">
+            <div class="stat-card" data-help="Count of liveness checks that found the torrent healthy — qBittorrent seeding/uploading, or a successful *arr import.">
+              <div class="stat-icon green">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div class="stat-label">Alive Observations</div>
+              <div class="stat-value" id="livenessObsAlive">--</div>
+              <div class="text-xs text-subtle">qB seeding/uploading + *arr import</div>
+            </div>
+            <div class="stat-card" data-help="Count of liveness checks that came back unhealthy — qBittorrent stalledDL / metaDL / error states. Repeated suspects get moved to the dead blocklist.">
+              <div class="stat-icon orange">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              </div>
+              <div class="stat-label">Suspect Observations</div>
+              <div class="stat-value" id="livenessObsSuspect">--</div>
+              <div class="text-xs text-subtle">qB stalledDL/metaDL/error</div>
+            </div>
+            <div class="stat-card" data-help="Torrents currently marked dead and excluded from Torznab search responses, pending a successful revalidation re-check.">
+              <div class="stat-icon red">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+              </div>
+              <div class="stat-label">Dead Blocklist</div>
+              <div class="stat-value" id="livenessBlacklist">--</div>
+              <div class="text-xs text-subtle"><span id="livenessExcluded">--</span> total filtered</div>
+            </div>
+            <div class="stat-card" data-help="Share of blocklisted dead torrents that came back alive when revalidation re-checked them — how many the pipeline recovers rather than permanently excludes.">
+              <div class="stat-icon blue">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              </div>
+              <div class="stat-label">Revalidation Recovery</div>
+              <div class="stat-value" id="livenessRecoveryRate">--</div>
+              <div class="text-xs text-subtle"><span id="livenessRevalidAlive">0</span> alive / <span id="livenessRevalidDead">0</span> still dead</div>
+            </div>
+          </div>
+
+          <!-- Configured thresholds (read-only — set via env vars on the bitagent core) -->
+          <div class="card mb-6">
+            <div class="card-header">
+              <span class="card-title" data-help="Read-only reference of the liveness pipeline's tuning knobs and their defaults. These are set via env vars on the bitagent core stack; changing them requires a core restart.">Startup tuning reference</span>
+              <span class="text-xs text-subtle">Set via env vars on the bitagent core. Restart required to change.</span>
+            </div>
+            <div class="card-body table-wrap">
+              <table>
+                <thead><tr><th>Knob</th><th data-help="Full environment variable that sets this knob on the bitagent core; changing it needs a core restart.">Env var</th><th>Default</th><th>What it does</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code class="font-mono text-xs">enabled</code></td>
+                    <td><code class="font-mono text-xs">BITAGENT_EVIDENCE__LIVENESS__ENABLED</code></td>
+                    <td><span class="pill pill-success">true</span></td>
+                    <td>Master toggle. When false, no observations are emitted and Torznab responses are unfiltered (zero overhead).</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">stall_threshold_hours</code></td>
+                    <td><code class="font-mono text-xs">…__STALL_THRESHOLD_HOURS</code></td>
+                    <td><code>4</code></td>
+                    <td>How long a torrent must stay in stalledDL/metaDL before it's eligible to be marked dead.</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">min_observations</code></td>
+                    <td><code class="font-mono text-xs">…__MIN_OBSERVATIONS</code></td>
+                    <td><code>2</code></td>
+                    <td>How many independent suspect observations are required. Guards against transient network issues.</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">blacklist_ttl_days</code></td>
+                    <td><code class="font-mono text-xs">…__BLACKLIST_TTL_DAYS</code></td>
+                    <td><code>30</code></td>
+                    <td>How long until a dead torrent gets re-checked. Lower = faster recovery if it comes back; higher = less DHT load.</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">revalidate_interval</code></td>
+                    <td><code class="font-mono text-xs">…__REVALIDATE_INTERVAL</code></td>
+                    <td><code>6h</code></td>
+                    <td>How often the revalidation worker wakes up to re-check a batch of dead torrents.</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">revalidate_min_peers</code></td>
+                    <td><code class="font-mono text-xs">…__REVALIDATE_MIN_PEERS</code></td>
+                    <td><code>2</code></td>
+                    <td>Minimum DHT peers that must respond to a get_peers query for the torrent to be marked alive again.</td>
+                  </tr>
+                  <tr>
+                    <td><code class="font-mono text-xs">exclude_private_tracker_grabs</code></td>
+                    <td><code class="font-mono text-xs">…__EXCLUDE_PRIVATE_TRACKER_GRABS</code></td>
+                    <td><span class="pill pill-success">true</span></td>
+                    <td>When a *arr imports a torrent in the qB <code>private</code> category, don't credit it as alive evidence — the file came from a private tracker, not BitAgent's catalog.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Explainer -->
+          <div class="card">
+            <div class="card-header"><span class="card-title">How it works</span></div>
+            <div class="card-body">
+              <div class="text-sm" style="line-height:1.7">
+                <p class="mb-3"><strong>Inputs.</strong> Every <code class="font-mono text-xs">/api/v2/torrents/info</code> poll cycle, qBittorrent reports the state of each torrent it knows about. <code>seeding/uploading/downloading</code> = alive. <code>stalledDL/metaDL/error/missingFiles</code> = suspect. Plus every successful <code>*arr</code> import webhook = alive.</p>
+                <p class="mb-3"><strong>Resolution.</strong> A torrent is marked <span class="pill pill-error">dead</span> only after <em>min_observations</em> independent suspect observations across at least <em>stall_threshold_hours</em>. Any single alive observation immediately wins.</p>
+                <p class="mb-3"><strong>Output.</strong> Dead infohashes are filtered out of Torznab responses before they reach Sonarr/Radarr — no stale grabs.</p>
+                <p class="mb-0"><strong>Revalidation.</strong> Every <em>revalidate_interval</em>, the worker picks a batch of dead torrents and fires a DHT <code>get_peers</code> query. If <em>revalidate_min_peers</em> respond, the torrent is reinstated as alive. Otherwise it stays dead until the next sweep.</p>
+              </div>
+            </div>
+          </div>
+        </div></details></section><section class="settings-group-panel" id="settings-group-access" data-settings-panel="access"><header class="settings-group-heading"><div><p class="settings-eyebrow">Settings</p><h2 id="settings-heading-access" tabindex="-1">Access & history</h2><p>Review trusted access methods, manage the shared indexer key, and inspect changes.</p></div><span class="pill pill-neutral">Operator only</span></header><details class="settings-disclosure" id="settings-disclosure-auth" data-settings-section="auth"><summary onclick="settingsSectionIntent('auth', this.parentElement)"><span><strong>Access & credentials</strong><small>Configured authentication methods and the shared indexer key.</small></span><span class="pill pill-neutral">Security</span></summary><div class="settings-disclosure-body" id="stab-auth"><div class="card mb-6">
+            <div class="card-header"><span class="card-title" data-help="Which request-auth tiers are actually configured, from /api/auth/tiers. The resolver checks tiers in priority order and the first match wins; Status shows only whether each tier is enabled (no secrets).">Authentication Tiers</span></div>
+            <div class="card-body">
+              <p class="text-sm text-muted mb-4">BitAgent uses a layered auth resolver — the first matching tier wins. Proxy identity requires both a configured transport-peer CIDR and shared proof; operator routes also require an allowed role.</p>
+              <div class="table-wrap">
+              <table>
+                <thead><tr><th data-help="Order the resolver tries this tier; lower number checked first, and the first tier that matches authenticates the request.">Priority</th><th data-help="The authentication method for this row (API key, reverse-proxy header, forwarded-user header, or upstream SSO gate).">Tier</th><th data-help="The request header, query param, or upstream check this tier reads to identify the caller.">Source</th><th data-help="Whether this tier is currently enabled in config: Active means configured/trusted, Disabled means off (from /api/auth/tiers, booleans only).">Status</th></tr></thead>
+                <tbody>
+                  <tr><td>1</td><td>API Key</td><td><code class="font-mono text-xs">?apikey= / X-Api-Key / Authorization: Bearer</code></td><td id="authTierApi"><span class="pill pill-neutral">--</span></td></tr>
+                  <tr><td>2</td><td>Reverse Proxy</td><td><code class="font-mono text-xs">X-Auth-User-Id (NPM)</code></td><td id="authTierNpm"><span class="pill pill-neutral">--</span></td></tr>
+                  <tr><td>3</td><td>Forwarded User</td><td><code class="font-mono text-xs">X-Forwarded-User / Remote-User</code></td><td id="authTierFwd"><span class="pill pill-neutral">--</span></td></tr>
+                  <tr><td>—</td><td>SSO (via gate)</td><td><code class="font-mono text-xs">validated upstream by the auth-portal; surfaced via a trusted proxy tier</code></td><td id="authTierSso"><span class="pill pill-neutral">--</span></td></tr>
+                </tbody>
+              </table>
+              </div>
+            </div>
+          </div><div class="settings-reference-grid settings-access-summary"><div><span class="pill pill-neutral">Deployment managed</span><h3>Dashboard access key</h3><span class="pill pill-neutral" id="dashKeyState">Checking</span><p>This startup credential is managed in the deployment. Its value is never returned to the browser.</p></div><div><span class="pill pill-info">Editable here</span><h3>Shared Torznab key</h3><p>Replace the key used by shared indexer clients. Personal account keys are managed on the public library surface.</p></div></div><div class="settings-section-heading"><div><h3>Indexer access key</h3><p>Save a replacement or remove its console override to use the startup value.</p></div><button type="button" class="btn btn-secondary btn-sm" id="settingsAccessReload" onclick="loadSettings();loadAuthStatus()">Refresh</button></div><p class="operator-status settings-status" id="settingsAccessStatus" role="status" aria-live="polite">Checking console settings…</p><div class="settings-grid" id="settingsAccessGrid"></div></div></details><details class="settings-disclosure" id="settings-disclosure-audit" data-settings-section="audit"><summary onclick="settingsSectionIntent('audit', this.parentElement)"><span><strong>Configuration history</strong><small>Recorded changes to console overrides.</small></span><span class="pill pill-neutral">Read only</span></summary><div class="settings-disclosure-body" id="stab-audit">
           <div class="card">
             <div class="card-header">
               <span class="card-title" data-help="Chronological record of settings-override changes (key, old value, new value, actor) from the audit_log table via /api/settings/audit.">Configuration Audit Log</span>
@@ -1228,8 +1073,7 @@ Categories: 3000, 3010, 3020</div>
               <div class="text-sm text-muted" style="text-align:center;padding:var(--space-8)">Loading audit log...</div>
             </div>
           </div>
-        </div>
-      </div>
+        </div></details></section></div></div></div>
 
       <!-- ═══════════════════════ SYSTEM TAB ══════════════════════════ -->
       <div class="tab-panel" id="tab-system">
@@ -1282,14 +1126,14 @@ Categories: 3000, 3010, 3020</div>
               </div>
             </div>
             <div class="card">
-              <div class="card-header"><span class="card-title" data-help="The endpoint URLs this dashboard is configured to talk to: the core's GraphQL and metrics addresses (from settings) and this page's own origin.">Network</span></div>
+              <div class="card-header"><span class="card-title" data-help="The endpoint URLs this dashboard is configured to talk to: the core's GraphQL and metrics addresses (in deployment configuration) and this page's own origin.">Network</span></div>
               <div class="card-body flex flex-col gap-3">
                 <div class="flex items-center justify-between">
-                  <span class="text-sm" data-help="The configured GraphQL endpoint URL the dashboard queries the core through (settings field bitagent_graphql_url).">Core GraphQL</span>
+                  <span class="text-sm" data-help="Core GraphQL is a startup-only endpoint. Inspect the deployment configuration for its configured URL.">Core GraphQL</span>
                   <span class="font-mono text-xs truncate sys-url" id="sysCoreUrl" title="">--</span>
                 </div>
                 <div class="flex items-center justify-between">
-                  <span class="text-sm" data-help="The configured Prometheus metrics endpoint URL the dashboard scrapes the core through (settings field bitagent_metrics_url).">Core Metrics</span>
+                  <span class="text-sm" data-help="Core Prometheus is a startup-only endpoint. Inspect the deployment configuration for its configured URL.">Core Metrics</span>
                   <span class="font-mono text-xs truncate sys-url" id="sysMetricsUrl" title="">--</span>
                 </div>
                 <div class="flex items-center justify-between">

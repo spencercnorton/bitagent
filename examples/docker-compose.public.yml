@@ -114,6 +114,8 @@ services:
       # in Chrome/Firefox with no setup; add an /etc/hosts line elsewhere.
       OPERATOR_HOSTS: ${OPERATOR_HOSTS:-localhost,127.0.0.1}
       PUBLIC_LIBRARY_HOSTS: ${PUBLIC_LIBRARY_HOSTS:-library.localhost}
+      OPERATOR_UI_URL: ${OPERATOR_UI_URL:-}
+      LIBRARY_UI_URL: ${LIBRARY_UI_URL:-}
       # false = open dashboard, which is why port 8080 below binds to
       # loopback only. Set DASHBOARD_API_KEY or a proxy tier before
       # exposing it — ui/README.md → Authentication.

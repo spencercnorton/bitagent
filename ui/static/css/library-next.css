@@ -154,6 +154,8 @@ button:disabled { cursor: not-allowed; }
 .lib-browse-tab.active { background: transparent; color: var(--color-fg); box-shadow: none; }
 .lib-browse-tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--color-accent); }
 .lib-browse-tab.active svg { color: var(--color-accent); }
+.lib-admin-link { min-width: 44px; justify-content: center; }
+.lib-admin-link svg { color: var(--color-accent); }
 .lib-browse-hint { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--color-fg-subtle); font-size: 11px; }
 .lib-browse-hint svg { width: 17px; height: 17px; color: var(--color-accent); }
 .lib-filter-toggle { display: none; align-items: center; justify-content: center; gap: 7px; min-height: 44px; padding: 0 13px; border: 1px solid var(--color-border); border-radius: 11px; background: var(--color-bg-raised); color: var(--color-fg); font-size: 12px; font-weight: 650; }
@@ -899,6 +901,8 @@ button.lib-card { appearance: none; padding: 0; border: 0; background: transpare
   .lib-actions { gap: 3px; }
   .lib-private-link { max-width: 60px; font-size: 10px; }
   .lib-browse-nav { gap: 25px; }
+  .lib-browse-nav.has-admin { width: 100%; min-width: 0; justify-content: space-between; gap: clamp(10px, 3.5vw, 20px); }
+  .lib-browse-nav.has-admin .lib-browse-tab { flex-shrink: 0; }
   .lib-browse-tab { min-height: 44px; padding: 8px 0; font-size: 13px; gap: 7px; }
   .lib-browse-tab svg { width: 16px; height: 16px; }
   .lib-browse-hint { display: none; }

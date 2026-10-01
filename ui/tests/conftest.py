@@ -88,6 +88,7 @@ def _restore_settings():
         "require_auth", "dashboard_api_key", "trust_npm_headers",
         "trust_forwarded_user", "trusted_proxy_cidrs", "proxy_auth_secret",
         "operator_roles", "operator_hosts", "public_library_hosts",
+        "operator_ui_url", "library_ui_url",
         "sso_cookie_name", "tmdb_api_key", "app_switcher_script_url",
         "torznab_api_key", "bitagent_graphql_url", "bitagent_torznab_url",
         "torznab_rate_limit_per_min",
