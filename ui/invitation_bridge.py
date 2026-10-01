@@ -36,7 +36,8 @@ _HASH = re.compile(r"[0-9a-f]{64}")
 _NONCE = re.compile(r"[A-Za-z0-9_-]{32}")
 _PROVIDERS = frozenset({"google", "microsoft", "discord", "plex"})
 _KEY: bytes | None = None
-_CONFIG: tuple[str, str, str] | None = None
+_CONFIG: tuple[str, str, str, str] | None = None
+_SUBJECT_FORMATS = frozenset({"legacy-negative", "principal"})
 _BODY_LIMIT = 4096
 _ACTIVE_LIMIT = 1000
 _NONCE_LIMIT = 4096
@@ -49,7 +50,8 @@ async def init_schema(db):
             auth_request_id TEXT NOT NULL UNIQUE,
             browser_binding_hash TEXT NOT NULL, created_at REAL NOT NULL,
             expires_at REAL NOT NULL, principal_id INTEGER,
-            provider TEXT, subject_binding_hash TEXT, redeemed_at REAL
+            provider TEXT, subject_binding_hash TEXT, redeemed_at REAL,
+            subject_format TEXT NOT NULL DEFAULT 'legacy-negative'
         );
         CREATE INDEX IF NOT EXISTS idx_invitation_bootstrap_expiry
             ON invitation_bootstrap_enrollments(expires_at);
@@ -60,6 +62,21 @@ async def init_schema(db):
         CREATE INDEX IF NOT EXISTS idx_invitation_bootstrap_nonce_expiry
             ON invitation_bootstrap_nonces(expires_at);
     """)
+    columns = {row["name"] for row in await db.execute_fetchall(
+        "PRAGMA table_info(invitation_bootstrap_enrollments)")}
+    if "subject_format" not in columns:
+        # Existing enrollments retain their original namespace. A new startup
+        # mode may refuse them, but never reinterprets their reserved identity.
+        await db.execute("""ALTER TABLE invitation_bootstrap_enrollments
+            ADD COLUMN subject_format TEXT NOT NULL DEFAULT 'legacy-negative'""")
+
+
+def account_subject(principal_id, subject_format):
+    """Format one authenticated positive principal, without provider aliases."""
+    if (type(principal_id) is not int or not 0 < principal_id <= 2**63 - 1
+            or not isinstance(subject_format, str) or subject_format not in _SUBJECT_FORMATS):
+        raise ValueError("Invalid invitation account subject")
+    return str(-principal_id) if subject_format == "legacy-negative" else f"principal:{principal_id}"
 
 
 def _https_url(value, path, *, operator=False):
@@ -86,6 +103,9 @@ def validate_settings():
     _KEY, _CONFIG = None, None
     if not settings.private_invitation_bridge_enabled:
         return
+    if (not isinstance(settings.invitation_bridge_subject_format, str)
+            or settings.invitation_bridge_subject_format not in _SUBJECT_FORMATS):
+        raise RuntimeError("Invitation bridge requires an explicit account subject format")
     if not (settings.private_invitations_enabled and settings.private_indexer_enabled
             and settings.require_auth and (settings.trust_npm_headers or settings.trust_forwarded_user)):
         raise RuntimeError("Invitation bridge requires verified private invitation authentication")
@@ -116,7 +136,8 @@ def validate_settings():
     except (OSError, ValueError):
         raise RuntimeError("Invitation bridge requires a distinct protected regular key file") from None
     _KEY = key
-    _CONFIG = (settings.invitation_bridge_url, path, settings.invitation_sign_in_url)
+    _CONFIG = (settings.invitation_bridge_url, path, settings.invitation_sign_in_url,
+               settings.invitation_bridge_subject_format)
 
 
 def _enabled():
@@ -124,9 +145,15 @@ def _enabled():
     if not settings.private_invitation_bridge_enabled:
         raise HTTPException(404, "Not found")
     if _KEY is None or _CONFIG != (
-        settings.invitation_bridge_url, settings.invitation_bridge_secret_file, settings.invitation_sign_in_url
+        settings.invitation_bridge_url, settings.invitation_bridge_secret_file, settings.invitation_sign_in_url,
+        settings.invitation_bridge_subject_format
     ):
         raise HTTPException(503, "Invitation bridge unavailable")
+
+
+def _subject_format():
+    _enabled()
+    return _CONFIG[3]
 
 
 def sign_in_url():
@@ -268,6 +295,7 @@ async def _valid_invite(db, invite_id, now):
 
 
 async def _start(db, body, now):
+    subject_format = _subject_format()
     rows = await db.execute_fetchall("SELECT id FROM membership_invitations WHERE token_hash=?", (invitations._hash(body["token"]),))
     if not rows:
         _unavailable()
@@ -278,7 +306,7 @@ async def _start(db, body, now):
     if existing:
         row = existing[0]
         if (row["invite_id"] != invite["id"] or row["browser_binding_hash"] != body["browserBindingHash"]
-                or row["expires_at"] <= now):
+                or row["expires_at"] <= now or row["subject_format"] != subject_format):
             _unavailable()
         return {"version": 1, "enrollmentId": row["id"], "expiresAt": int(row["expires_at"])}
     active = (await db.execute_fetchall("SELECT COUNT(*) AS n FROM invitation_bootstrap_enrollments WHERE expires_at>?", (now,)))[0]["n"]
@@ -288,15 +316,20 @@ async def _start(db, body, now):
     expiry = min(int(invite["expires_at"]), int(now) + 600)
     if expiry <= now:
         _unavailable()
-    await db.execute("INSERT INTO invitation_bootstrap_enrollments VALUES (?,?,?,?,?,?,NULL,NULL,NULL,NULL)",
-        (enrollment_id, invite["id"], body["authRequestId"], body["browserBindingHash"], now, expiry))
+    await db.execute("""INSERT INTO invitation_bootstrap_enrollments
+        (id,invite_id,auth_request_id,browser_binding_hash,created_at,expires_at,subject_format)
+        VALUES (?,?,?,?,?,?,?)""",
+        (enrollment_id, invite["id"], body["authRequestId"], body["browserBindingHash"], now, expiry,
+         subject_format))
     return {"version": 1, "enrollmentId": enrollment_id, "expiresAt": expiry}
 
 
 async def _bound(db, body, now):
+    subject_format = _subject_format()
     rows = await db.execute_fetchall("SELECT * FROM invitation_bootstrap_enrollments WHERE id=? AND auth_request_id=?",
                                      (body["enrollmentId"], body["authRequestId"]))
-    if not rows or rows[0]["expires_at"] <= now:
+    if (not rows or rows[0]["expires_at"] <= now
+            or rows[0]["subject_format"] != subject_format):
         _unavailable()
     row = rows[0]
     invite = await _valid_invite(db, row["invite_id"], now)
@@ -309,10 +342,17 @@ async def _bound(db, body, now):
 
 async def _redeem(db, body, now):
     row, invite = await _bound(db, body, now)
-    uid = str(-body["principalId"])
+    uid = account_subject(body["principalId"], row["subject_format"])
     if invite["redeemed_at"] is not None:
         if (row["redeemed_at"] is None or invite["redeemed_by"] != uid
                 or not await invitations._active(db, uid)):
+            _unavailable()
+    else:
+        other_format = "principal" if row["subject_format"] == "legacy-negative" else "legacy-negative"
+        other = account_subject(body["principalId"], other_format)
+        # A row in the other namespace may be an active account or a suspension
+        # tombstone. Neither permits an implicit second membership or migration.
+        if await db.execute_fetchall("SELECT 1 FROM private_members WHERE user_id=?", (other,)):
             _unavailable()
     already = await invitations._redeem_for_subject(db, invite, uid, now)
     if not already:
@@ -327,13 +367,14 @@ async def _redeem(db, body, now):
 
 
 async def _status(db, body, now):
+    uid = account_subject(body["principalId"], _subject_format())
     try:
         row, invite = await _bound(db, body, now)
         # Status is reconciliation, never a provider-principal reservation or
         # binding operation. Before redemption an unbound row is unavailable.
         approved = (row["principal_id"] is not None and row["redeemed_at"] is not None
-                    and invite["redeemed_by"] == str(-body["principalId"])
-                    and await invitations._active(db, str(-body["principalId"])))
+                    and invite["redeemed_by"] == uid
+                    and await invitations._active(db, uid))
         state = "redeemed" if approved else "unavailable"
         now = time.time()
         issued, expiry = _authority_window(now, row, invite)
@@ -342,7 +383,7 @@ async def _status(db, body, now):
             raise
         approved, state, issued, expiry = False, "unavailable", int(now), int(now) + 30
     return {"version": 1, "enrollmentId": body["enrollmentId"], "principalId": body["principalId"],
-            "accountId": str(-body["principalId"]), "state": state, "approved": bool(approved),
+            "accountId": uid, "state": state, "approved": bool(approved),
             "issuedAt": issued, "expiresAt": expiry}
 
 
@@ -379,6 +420,9 @@ async def _bootstrap(request, deadline):
         except HTTPException as error:
             await db.execute("ROLLBACK TO enrollment_operation")
             status, content = error.status_code, {"detail": error.detail}
+        # Configuration hydration cannot change the namespace of an in-flight
+        # enrollment. A changed startup contract aborts this transaction.
+        _enabled()
         await db.execute("RELEASE enrollment_operation")
     # Membership authority is linearized by this transaction. A subsequent
     # suspension can invalidate it immediately; the recipient must still

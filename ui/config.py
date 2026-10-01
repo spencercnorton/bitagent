@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+from typing import Literal
 from pydantic_settings import BaseSettings
 
 DATA_DIR = Path("/data") if Path("/data").exists() else Path(__file__).parent / "data"
@@ -54,6 +55,8 @@ class Settings(BaseSettings):
     private_invitation_bridge_enabled: bool = False
     invitation_bridge_url: str = ""
     invitation_bridge_secret_file: str = ""
+    # Match the verified SSO service's account namespace; never infer aliases.
+    invitation_bridge_subject_format: Literal["legacy-negative", "principal"] = "legacy-negative"
     invitation_sign_in_url: str = ""
     # Hosted Checkout and signed reconciliation require separately scoped keys.
     # They remain disabled until an operator validates the exact Stripe account.

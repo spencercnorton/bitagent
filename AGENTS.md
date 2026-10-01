@@ -12,6 +12,12 @@
 
 ## Session notes
 
+- The SSO enrollment bridge uses one startup-sealed account-subject format.
+  Preserve the legacy default, per-enrollment namespace and exact account
+  ownership. Format changes must not migrate data, grant an alias membership
+  or reactivate a suspension; cover restart mismatches and cross-account
+  isolation with actual SQLite/ASGI tests.
+
 - Invitations use existing verified SSO subjects and atomic SQLite ledgers.
   Keep the feature disabled by default, tokens out of URLs/logs/storage except
   one-time fragment links, and payment fulfillment separate from client claims.

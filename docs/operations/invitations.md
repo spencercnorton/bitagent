@@ -68,6 +68,7 @@ the feature defaults to disabled:
 | `PRIVATE_INVITATION_BRIDGE_ENABLED` | Requires authenticated private invitations and the verified proxy. |
 | `INVITATION_BRIDGE_URL` | Exact canonical HTTPS operator-origin `/api/invitations/bootstrap`, without port, query, fragment or credentials. |
 | `INVITATION_BRIDGE_SECRET_FILE` | Distinct 32–4096-byte regular POSIX file, no symlinks/hard links or group/other permissions; exact file bytes are the HMAC key. |
+| `INVITATION_BRIDGE_SUBJECT_FORMAT` | Startup-only `legacy-negative` (default) or `principal`. Both require an exact positive integer principal; the SSO service must use the same format. |
 | `INVITATION_SIGN_IN_URL` | Fixed canonical HTTPS SSO `/invitations/start` form target; only the invitation landing page permits that origin in `form-action`. |
 
 The upstream machine location must restrict its callers to the reviewed SSO
@@ -87,12 +88,27 @@ Never save a success response as future membership authority.
 `start` creates a bounded ten-minute enrollment without consuming the link or
 granting membership. The SSO service must bind its host-only secure cookie,
 existing OAuth state and verified provider subject, then reserve a stable
-unapproved principal. `redeem` derives the legacy account ID from that reserved
-positive principal and commits membership and consumption together. `status`
+unapproved principal. `redeem` derives the configured account ID from that
+reserved positive principal and commits membership and consumption together. `status`
 reconciles an already bound enrollment; it cannot bind an arbitrary principal.
 Recovery requires the same provider/principal/subject binding and a still
 active issuer and member, valid invitation and unexpired enrollment. All
 nonces and active enrollments have explicit capacity and expiry bounds.
+
+The default `legacy-negative` format derives a negative decimal account ID.
+The opt-in `principal` format derives `principal:<positive integer>`. Neither
+accepts provider IDs, caller-supplied account IDs or a fallback format. Each
+enrollment stores its startup format; schema upgrades mark existing enrollments
+as legacy, and changing the format refuses pending or consumed enrollments in
+the previous format. A new redemption also refuses any membership row in the
+other format, including a suspension or revocation record. Already consumed
+same-subject recovery still requires that exact account to remain active.
+
+Account data belongs to exact subject strings. Enabling `principal` requires
+matching trusted SSO headers and a separately reviewed migration for existing
+memberships, keys, usage, preferences and invitation/payment ledgers. This
+setting does not migrate, merge, reactivate or grant access to legacy accounts.
+Verify existing account continuity before enabling it on a populated site.
 
 Only fresh membership authority permits the SSO service's separately reviewed
 project-capability activation. It must preserve denial history and refuse
