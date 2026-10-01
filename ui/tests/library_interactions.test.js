@@ -242,7 +242,7 @@ function accountController(options = {}) {
     querySelector(selector){return selector === 'meta[name="theme-color"]' ? themeMeta : null;},querySelectorAll(){return [];}};
   const media = new Map([['(prefers-color-scheme: dark)',{matches:true}],['(prefers-reduced-motion: reduce)',{matches:false}]]);
   const events = [], storage = options.storage || {getItem:key => cache.get(key)||null,setItem:(key,value) => cache.set(key,value)};
-  const window = {BitAgentPreferences:preferences,localStorage:storage,matchMedia:query => media.get(query),dispatchEvent:event => events.push(event.type)};
+  const window = {BitAgentPreferences:preferences,localStorage:storage,matchMedia:query => media.get(query),dispatchEvent:event => events.push(event.type),confirm:options.confirm || (()=>true)};
   const c = controller({window,CustomEvent:class {constructor(type){this.type=type;}},
     crypto:{randomUUID:() => `00000000-0000-4000-8000-${String(++nextEvent).padStart(12,'0')}`},
     setTimeout(callback,delay){const id=++nextTimer;timers.set(id,{callback,delay});return id;},clearTimeout:id => timers.delete(id)});
@@ -501,4 +501,47 @@ test('closing account settings removes a newly generated one-time key from its v
   f.document.getElementById('libAccount').classList.add('open'); f.c.controller.closeAccount(true);
   assert.equal(f.nodes.get('acctApiSecret').value,''); assert.equal(f.nodes.get('acctSecretWrap').style.display,'none');
   assert.equal(f.nodes.get('libAccount').getAttribute('aria-hidden'),'true');
+});
+
+
+test('generic key generation stays public-only without an explicit private choice', async () => {
+  const f=accountController();f.identify('alice',{privateKeyAvailable:true});
+  assert.equal(f.nodes.get('acctPrivateAccess').checked,false);
+  const pending=f.c.controller.generateAccountKey();
+  assert.equal(JSON.parse(f.requests[0].options.body).privateAccess,false);
+  f.respond(0,accountPayload('alice',{apiKey:{prefix:'fixture',privateAccess:false}}));await pending;
+  assert.match(f.nodes.get('acctKeyStatus').textContent,/Public only/);
+});
+
+test('private key rotation requires explicit choice and a client-reconfiguration confirmation', async () => {
+  const prompts=[];const f=accountController({confirm:message=>{prompts.push(message);return true;}});
+  f.identify('alice',{privateKeyAvailable:true,apiKey:{prefix:'fixture',privateAccess:false}});
+  f.nodes.get('acctPrivateAccess').checked=true;
+  const pending=f.c.controller.generateAccountKey();
+  assert.equal(prompts.length,1);assert.match(prompts[0],/revokes your existing key/);assert.match(prompts[0],/Update Prowlarr/);
+  assert.deepEqual(JSON.parse(f.requests[0].options.body),{name:'default',expectedAccountId:'alice',privateAccess:true});
+  f.respond(0,accountPayload('alice',{privateKeyAvailable:true,apiKey:{prefix:'next',privateAccess:true}}));await pending;
+  assert.match(f.nodes.get('acctKeyStatus').textContent,/Public \+ private/);
+});
+
+test('declining key rotation creates no request or mutation', async () => {
+  const f=accountController({confirm:()=>false});f.identify('alice',{privateKeyAvailable:true,apiKey:{prefix:'fixture'}});
+  f.nodes.get('acctPrivateAccess').checked=true;
+  await f.c.controller.generateAccountKey();assert.equal(f.requests.length,0);
+  assert.equal(f.nodes.get('acctGenerateBtn').disabled,false);
+});
+
+test('an account change clears the previous private key choice', async () => {
+  const f=accountController();f.identify('alice',{privateKeyAvailable:true,apiKey:{privateAccess:true}});
+  assert.equal(f.nodes.get('acctPrivateAccess').checked,true);
+  f.identify('bob',{privateKeyAvailable:false});
+  assert.equal(f.nodes.get('acctPrivateAccess').checked,false);assert.equal(f.nodes.get('acctPrivateAccess').disabled,true);
+  const pending=f.c.controller.generateAccountKey();assert.equal(JSON.parse(f.requests[0].options.body).privateAccess,false);
+  f.respond(0,accountPayload('bob'));await pending;
+});
+
+test('failed account refresh clears and disables private scope choice', async () => {
+  const f=accountController();f.identify('alice',{privateKeyAvailable:true,apiKey:{privateAccess:true}});
+  const pending=f.c.controller.loadAccount();f.respond(0,null,401);await pending;
+  assert.equal(f.nodes.get('acctPrivateAccess').checked,false);assert.equal(f.nodes.get('acctPrivateAccess').disabled,true);
 });

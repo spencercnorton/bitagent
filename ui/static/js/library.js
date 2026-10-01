@@ -1982,6 +1982,7 @@ function _clearAccountView() {
   _accountElementText('acctKeyStatus','Unavailable');_accountElementText('acctKeyMeta','');
   const url=document.getElementById('acctTorznabUrl');if(url)url.value='';
   for(const id of ['acctGenerateBtn','acctRevokeBtn']) {const btn=document.getElementById(id);if(btn)btn.disabled=true;}
+  const scope=document.getElementById('acctPrivateAccess');if(scope){scope.checked=false;scope.disabled=true;}
   renderAccountUsage(null);
   _accountElementText('acctPrefStatus','Account unavailable. Display choices still apply to this visit.');
 }
@@ -2010,9 +2011,11 @@ function renderAccount(data) {
   _accountElementText('acctSub',[ident.email||ident.username||ident.id,ident.method].filter(Boolean).join(' · '));
   document.getElementById('acctTorznabUrl').value=data.torznabUrl||'';
   const key=data.apiKey;
-  _accountElementText('acctKeyStatus',key?`Active ${key.prefix||''}`:'No key');_accountElementText('acctGenerateLabel',key?'Rotate':'Generate');
+  _accountElementText('acctKeyStatus',key?`Active ${key.prefix||''} · ${key.privateAccess===true?'Public + private':'Public only'}`:'No key');_accountElementText('acctGenerateLabel',key?'Rotate':'Generate');
   document.getElementById('acctGenerateBtn').disabled=_accountKeyBusy||!_accountSignedIn();
   document.getElementById('acctRevokeBtn').disabled=_accountKeyBusy||!key||!_accountSignedIn();
+  const scope=document.getElementById('acctPrivateAccess');if(scope){scope.checked=key?.privateAccess===true;scope.disabled=_accountKeyBusy||!_accountSignedIn()||data.privateKeyAvailable!==true;}
+  _accountElementText('acctPrivateAccessHelp',data.privateKeyAvailable===true?'Private access is optional. Rotation revokes your existing key and tracker credentials; update indexer connections and torrents.':'Public-only keys query the public indexer. Private access is currently unavailable for this account.');
   const meta=document.getElementById('acctKeyMeta');if(meta){meta.textContent=key?[key.createdAt?'Created '+fmtDate(key.createdAt):'',key.lastUsedAt?'Last used '+fmtDate(key.lastUsedAt):'Never used'].filter(Boolean).join(' · '):'';meta.style.display=key?'':'none';}
   _clearAccountSecret();if(data.apiKeySecret){document.getElementById('acctApiSecret').value=data.apiKeySecret;document.getElementById('acctSecretWrap').style.display='';}
   return true;
@@ -2093,12 +2096,14 @@ async function retryAccountUsage() {
 }
 async function _mutateAccountKey(method) {
   if(_accountKeyBusy || !_accountSignedIn())return;
+  const privateAccess=method==='POST'&&accountState?.privateKeyAvailable===true&&document.getElementById('acctPrivateAccess')?.checked===true;
+  if(method==='POST'&&(accountState?.apiKey||privateAccess)&&!window.confirm('Create a '+(privateAccess?'private-enabled':'public-only')+' replacement key? This revokes your existing key and tracker credentials. Update Prowlarr, Jackett and other indexer connections and torrents.'))return;
   _accountKeyBusy=true;const version=++_accountRequestVersion,epoch=_accountOwnerEpoch,owner=_accountOwner;
-  for(const id of ['acctGenerateBtn','acctRevokeBtn'])document.getElementById(id).disabled=true;
+  for(const id of ['acctGenerateBtn','acctRevokeBtn','acctPrivateAccess'])document.getElementById(id).disabled=true;
   const path='/api/account/api-key'+(method==='DELETE'?'?expectedAccountId='+encodeURIComponent(owner):'');
-  const response=await accountRequest(path,method==='POST'?{method,headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'default',expectedAccountId:owner})}:{method});
+  const response=await accountRequest(path,method==='POST'?{method,headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'default',expectedAccountId:owner,privateAccess})}:{method});
   _accountKeyBusy=false;
-  if(epoch!==_accountOwnerEpoch || version!==_accountRequestVersion){ if(accountState) {document.getElementById('acctGenerateBtn').disabled=!_accountSignedIn();document.getElementById('acctRevokeBtn').disabled=!_accountSignedIn()||!accountState.apiKey;}return;}
+  if(epoch!==_accountOwnerEpoch || version!==_accountRequestVersion){ if(accountState) {document.getElementById('acctGenerateBtn').disabled=!_accountSignedIn();document.getElementById('acctRevokeBtn').disabled=!_accountSignedIn()||!accountState.apiKey;document.getElementById('acctPrivateAccess').disabled=!_accountSignedIn()||accountState.privateKeyAvailable!==true;}return;}
   if(!response.ok || response.data?.identity?.id!==owner){_clearAccountView();toast(method==='POST'?'Key update failed':'Revoke failed');return;}
   renderAccount(response.data);toast(method==='POST'?'API key ready':'API key revoked');
 }

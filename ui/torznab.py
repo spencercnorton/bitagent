@@ -206,8 +206,10 @@ async def private_torznab(request: Request):
     row = await lookup_user_api_key(_hash_user_api_key(presented)) if presented else None
     if not row:
         return _torznab_error(401, 100, "Invalid API key")
-    if not await private_indexer.member_active(row["user_id"]):
-        return _torznab_error(403, 100, "Membership required")
+    try:
+        await private_indexer.require_private_key(row)
+    except HTTPException as exc:
+        return _torznab_error(exc.status_code, 100, str(exc.detail))
     ok, retry_after = _torznab_rate_ok(row["id"])
     if not ok:
         response = _torznab_error(429, 500, "Rate limit exceeded")
@@ -249,6 +251,10 @@ async def private_torznab(request: Request):
             # Match the DHT proxy: optional usage accounting cannot fail the
             # search, and exception URLs/credentials never enter the log.
             logger.warning("account usage recording failed (%s)", type(exc).__name__)
+    try:
+        await private_indexer.require_private_key(row)
+    except HTTPException as exc:
+        return _torznab_error(exc.status_code, 100, str(exc.detail))
     return Response(
         b"" if request.method == "HEAD" else body,
         media_type="application/xml",
@@ -266,12 +272,6 @@ async def torznab_proxy(path: str, request: Request):
     row = await lookup_user_api_key(_hash_user_api_key(presented))
     if not row:
         return _torznab_error(401, 100, "Invalid API key")
-    if settings.private_indexer_enabled:
-        import private_indexer
-
-        if not await private_indexer.torznab_requires_member(row):
-            return _torznab_error(403, 100, "Membership required")
-
     ok, retry_after = _torznab_rate_ok(row["id"])
     if not ok:
         resp = _torznab_error(429, 900, "Rate limit exceeded")

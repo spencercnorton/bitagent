@@ -334,3 +334,21 @@ totals must come from `totals`, rather than summing the display list. Ratios are
 null until downloaded bytes are observed. These are operational observations,
 not independently verified delivery or billing measurements. Public DHT swarm
 transfers are outside this tracker and cannot be attributed to website members.
+
+## Personal key permissions
+
+Existing and newly generated personal keys are public-only by default. They
+continue to authenticate the public DHT Torznab route when private indexing is
+enabled, independently of private membership. A verified human member can
+explicitly select private access when rotating a key in Account. This replaces
+that account's existing key and retires its tracker credentials: update
+Prowlarr, Jackett and any other integrations and personalized torrents.
+
+Private access is a separate key permission, checked with current exact owner,
+nonrevocation and active membership. Personal-key-authenticated private
+Torznab metadata, metainfo, browser-issued magnets and seed provisioning
+require it. Human-member catalogue browsing continues to use its existing
+membership checks. Strict peer bindings additionally
+match actual announced addresses to the credential owner; they do not prevent
+an authorized person from copying metadata or file bytes. A scope or subject
+change must not automatically grant alias access or restore a revoked key.

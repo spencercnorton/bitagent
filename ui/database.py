@@ -206,7 +206,8 @@ async def _init_tables(db: aiosqlite.Connection):
             key_prefix TEXT NOT NULL,
             created_at REAL NOT NULL,
             last_used_at REAL,
-            revoked_at REAL
+            revoked_at REAL,
+            private_access INTEGER NOT NULL DEFAULT 0 CHECK (private_access IN (0, 1))
         );
         CREATE INDEX IF NOT EXISTS idx_user_api_keys_user_active
             ON user_api_keys(user_id, revoked_at, created_at);
@@ -247,6 +248,11 @@ async def _init_tables(db: aiosqlite.Connection):
             settings TEXT NOT NULL
         );
     """)
+    # Existing credentials remain public-only. Membership/subject changes
+    # cannot silently grant a key the private catalogue capability.
+    key_columns = {row["name"] for row in await db.execute_fetchall("PRAGMA table_info(user_api_keys)")}
+    if "private_access" not in key_columns:
+        await db.execute("ALTER TABLE user_api_keys ADD COLUMN private_access INTEGER NOT NULL DEFAULT 0 CHECK (private_access IN (0, 1))")
     # Additive account migrations preserve lifetime counters. Historical daily
     # windows cannot be rebuilt from the original untimestamped totals.
     account_columns = {row["name"] for row in await db.execute_fetchall("PRAGMA table_info(account_usage)")}
@@ -379,6 +385,7 @@ def _safe_api_key_row(row) -> dict | None:
         "created_at": row["created_at"],
         "last_used_at": row["last_used_at"],
         "revoked_at": row["revoked_at"],
+        "private_access": row["private_access"] == 1,
     }
 
 
@@ -390,7 +397,7 @@ async def get_user_api_key(user_id: str) -> dict | None:
     db = await get_db()
     rows = await db.execute_fetchall(
         """
-        SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at
+        SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, private_access
         FROM user_api_keys
         WHERE user_id = ? AND revoked_at IS NULL
         ORDER BY created_at DESC, id DESC
@@ -406,40 +413,46 @@ async def create_user_api_key(
     key_hash: str,
     key_prefix: str,
     name: str = "default",
+    *,
+    private_access: bool = False,
+    require_active_member: bool = False,
 ) -> dict:
-    db = await get_db()
+    """Rotate one exact owner's key; private scope is an explicit decision.
+
+    HTTP callers must additionally prove human SSO before requesting scope.
+    Membership is rechecked under the same writer transaction as rotation.
+    """
+    from fastapi import HTTPException
+    from private_indexer import private_write
+
+    if type(private_access) is not bool:
+        raise ValueError("Private access must be boolean")
+    await get_db()
     now = time.time()
-    await db.execute(
-        "UPDATE user_api_keys SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
-        (now, user_id),
-    )
-    cur = await db.execute(
-        """
-        INSERT INTO user_api_keys (user_id, name, key_hash, key_prefix, created_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (user_id, name or "default", key_hash, key_prefix, now),
-    )
-    await db.commit()
-    return {
-        "id": cur.lastrowid,
-        "user_id": user_id,
-        "name": name or "default",
-        "key_prefix": key_prefix,
-        "created_at": now,
-        "last_used_at": None,
-        "revoked_at": None,
-    }
+    async with private_write() as db:
+        if private_access or require_active_member:
+            rows = await db.execute_fetchall("SELECT active FROM private_members WHERE user_id=? AND active=1", (user_id,))
+            if (private_access and not settings.private_indexer_enabled) or not rows:
+                raise HTTPException(403, "Approved membership and enabled private indexer required")
+        await db.execute(
+            "UPDATE user_api_keys SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", (now, user_id),
+        )
+        cur = await db.execute(
+            """INSERT INTO user_api_keys (user_id, name, key_hash, key_prefix, created_at, private_access)
+            VALUES (?, ?, ?, ?, ?, ?)""", (user_id, name or "default", key_hash, key_prefix, now, int(private_access)),
+        )
+    return {"id": cur.lastrowid, "user_id": user_id, "name": name or "default", "key_prefix": key_prefix,
+            "created_at": now, "last_used_at": None, "revoked_at": None, "private_access": private_access}
 
 
 async def revoke_user_api_key(user_id: str) -> bool:
-    db = await get_db()
-    now = time.time()
-    cur = await db.execute(
-        "UPDATE user_api_keys SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
-        (now, user_id),
-    )
-    await db.commit()
+    from private_indexer import private_write
+
+    await get_db()
+    async with private_write() as db:
+        cur = await db.execute(
+            "UPDATE user_api_keys SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", (time.time(), user_id),
+        )
     return bool(cur.rowcount)
 
 
@@ -447,7 +460,7 @@ async def lookup_user_api_key(key_hash: str) -> dict | None:
     db = await get_db()
     rows = await db.execute_fetchall(
         """
-        SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at
+        SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, private_access
         FROM user_api_keys
         WHERE key_hash = ? AND revoked_at IS NULL
         LIMIT 1

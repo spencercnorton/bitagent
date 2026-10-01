@@ -22,7 +22,7 @@ from fastapi import FastAPI, Request, Depends, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
 import httpx
 from version import __version__
@@ -419,6 +419,7 @@ async def me(identity: dict = Depends(require_auth)):
 class AccountApiKeyRequest(BaseModel):
     name: str = "default"
     expectedAccountId: StrictStr | None = Field(default=None, min_length=1, max_length=200)
+    privateAccess: StrictBool = False
 
 
 class AccountGrabRequest(BaseModel):
@@ -476,6 +477,7 @@ def _public_api_key(row: dict | None) -> dict | None:
         "prefix": row.get("key_prefix"),
         "createdAt": row.get("created_at"),
         "lastUsedAt": row.get("last_used_at"),
+        "privateAccess": row.get("private_access") is True,
     }
 
 
@@ -504,6 +506,8 @@ async def _account_payload(
     user_id = _account_user_id(identity)
     payload["usage"] = await get_account_usage(user_id)
     payload["preferences"] = await get_account_preferences(user_id)
+    payload["privateKeyAvailable"] = bool(settings.private_indexer_enabled and
+        identity.get("method") in {"npm-header", "forwarded-user"} and await private_indexer.member_active(user_id))
     return payload
 
 
@@ -538,14 +542,28 @@ async def api_account_create_key(
     user_id = _expected_account(identity, body.expectedAccountId if body else None, personal=True)
     if settings.private_indexer_enabled and not await private_indexer.member_active(user_id):
         raise HTTPException(403, "Approved membership required")
+    private_access = body.privateAccess if body else False
+    if private_access:
+        human = require_human_sso(request)
+        if body.expectedAccountId is None:
+            raise HTTPException(422, "Expected account is required for private access")
+        _expected_account(human, body.expectedAccountId, personal=True)
+        if str(human["id"]) != user_id:
+            raise HTTPException(409, "Account changed; refresh your account")
+        private_indexer.enabled()
     api_key = _new_user_api_key()
     row = await create_user_api_key(
         user_id,
         _hash_user_api_key(api_key),
         _key_prefix(api_key),
         (body.name if body else "default") or "default",
+        private_access=private_access,
+        require_active_member=settings.private_indexer_enabled,
     )
-    return await _account_payload(request, identity, row, secret=api_key)
+    payload = await _account_payload(request, identity, row, secret=api_key)
+    if private_access:
+        await private_indexer.require_private_key(row)
+    return payload
 
 
 @app.delete("/api/account/api-key")
