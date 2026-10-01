@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # Invitations grant application membership only. Billing adapters and peer
     # enrollment remain separate; these settings are startup-only.
     private_invitations_enabled: bool = False
+    # Invite-only site registration can precede private catalogue admission.
+    # It still requires the invitation ledger and protected enrollment bridge.
+    site_registration_enabled: bool = False
     invitation_annual_allowance: int = 3
     invitation_owner_ids: str = ""
     invitation_price_usd_cents: int = 5000

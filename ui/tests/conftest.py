@@ -94,6 +94,7 @@ def _restore_settings():
         "torznab_rate_limit_per_min",
         "bitagent_metrics_url",
         "private_indexer_enabled", "private_indexer_secret", "private_indexer_url",
+        "site_registration_enabled",
         "private_seeder_url", "private_seeder_username", "private_seeder_password",
         "private_seed_verification_ttl", "private_tracker_rate_limit_per_min",
         "private_peer_cidrs", "private_peer_bindings_required",

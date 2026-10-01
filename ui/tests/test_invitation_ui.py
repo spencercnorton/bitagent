@@ -45,6 +45,10 @@ def test_landing_render_never_embeds_token_identity_or_external_script():
     assert "synthetic-user" not in html
     assert 'id="invAccept" type="button" disabled hidden' in html
     assert 'src="/static/js/invitations.js' in html
+    assert 'for="invCode"' in html
+    assert 'id="invCode" type="text" minlength="46" maxlength="46"' in html
+    assert 'id="invCodeForm" autocomplete="off"' in html
+    assert 'name="code"' not in html and 'name="token"' not in html
     assert "https://" not in html
     assert "bi_" not in html
 

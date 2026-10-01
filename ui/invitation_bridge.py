@@ -106,7 +106,8 @@ def validate_settings():
     if (not isinstance(settings.invitation_bridge_subject_format, str)
             or settings.invitation_bridge_subject_format not in _SUBJECT_FORMATS):
         raise RuntimeError("Invitation bridge requires an explicit account subject format")
-    if not (settings.private_invitations_enabled and settings.private_indexer_enabled
+    if not (settings.private_invitations_enabled
+            and (settings.private_indexer_enabled or settings.site_registration_enabled)
             and settings.require_auth and (settings.trust_npm_headers or settings.trust_forwarded_user)):
         raise RuntimeError("Invitation bridge requires verified private invitation authentication")
     _https_url(settings.invitation_bridge_url, PATH, operator=True)

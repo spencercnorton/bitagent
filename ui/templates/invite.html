@@ -22,7 +22,14 @@
       <h1 id="invWelcome">Join the private library</h1>
       <p>Accept this invitation using your own account.</p>
       {% endif %}
-      <p id="invStatus" class="inv-status" role="status" aria-live="polite">Checking your invitation…</p>
+      <form id="invCodeForm" autocomplete="off">
+        <label for="invCode">Invite code</label>
+        <div class="inv-code-entry">
+          <input id="invCode" type="text" minlength="46" maxlength="46" required autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="invStatus" placeholder="Paste your invite code">
+          <button class="inv-primary" id="invCodeSubmit" type="submit">Continue</button>
+        </div>
+      </form>
+      <p id="invStatus" class="inv-status" role="status" aria-live="polite">Enter your invite code to continue.</p>
       <p id="invRecipient" class="inv-muted" hidden></p>
       <p id="invExpiry" class="inv-muted" hidden></p>
       {% if invitation_sign_in_url %}
