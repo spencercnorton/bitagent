@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # Invite-only site registration can precede private catalogue admission.
     # It still requires the invitation ledger and protected enrollment bridge.
     site_registration_enabled: bool = False
+    # A verified owner must deliberately admit their own invitation issuer.
+    # This never creates a grant, account or private-key permission.
+    site_registration_issuer_admission_enabled: bool = False
     invitation_annual_allowance: int = 3
     invitation_owner_ids: str = ""
     invitation_price_usd_cents: int = 5000

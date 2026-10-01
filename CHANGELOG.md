@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add an explicit, disabled-by-default owner action to admit their own
+  invitation issuer before private indexing. Bind it to the verified account
+  on the canonical operator origin; retain suspended memberships and all
+  existing account, key and private permissions.
+
 ## 3.3.0 — 2026-10-01
 
 - Add explicit `openai`/`ollama` chat backend selection for the TMDB matcher
