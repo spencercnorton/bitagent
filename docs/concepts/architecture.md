@@ -59,7 +59,7 @@ flowchart LR
 
 **ui worker** — FastAPI + vanilla-JS frontend under `ui/`, spawned as a uvicorn child by the core when `UI_ENABLED=true` (or alone with `worker run --keys ui`, still gated on `UI_ENABLED`), restarted with backoff if it dies, its stdout/stderr folded into the core's log stream. A three-tier auth resolver (`DASHBOARD_API_KEY` → `X-Auth-User-Id` from a trusted proxy → `X-Forwarded-User` from a trusted proxy, each proxy tier requiring both a trusted peer CIDR and a proof header) gates every endpoint; it validates no passwords or session cookies itself. Read-only relative to BitAgent core: never mutates indexing data. All data fetches route through the GraphQL API.
 
-**Settings persistence** — SQLite at `/data/bitagent-ui.db` (mount a volume there). Only the integration credentials in `MUTABLE_FIELDS` (`ui/config.py`) can be overridden from the UI; host lists, proxy trust and the upstream URLs are startup-only. Every change writes an audit row (key, old, new, actor, timestamp) with secrets stored as `[redacted]`. Overrides apply on the next request — no process restart needed.
+**Settings persistence** — SQLite at `/data/bitagent-ui.db` (mount a volume there). Runtime overrides are limited to console logging and integration URLs/credentials in `MUTABLE_FIELDS` (`ui/config.py`); host lists, proxy trust, operator roles and core endpoint/navigation URLs are startup-only. Every save and reset writes an audit row (key, old, new, actor, timestamp) with secrets stored as `[redacted]`. Integration overrides apply on the next request. Logging changes apply immediately to the console application logger, and saved levels are restored at startup; core and web-server logging remain deployment-managed.
 
 ## Why two processes in one image
 
