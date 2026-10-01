@@ -117,7 +117,7 @@
     const api = options.api;
     const view = options.view;
     const signInUrl = signInTarget(options.signInUrl);
-    const state = {owner:options.owner || '', snapshot:null, fresh:null, token:options.token || null, signInReady:false, checkoutRequestId:null, orders:[], ordersLoaded:false, paymentUnavailable:false, busy:false, closed:false, generation:0};
+    const state = {owner:options.owner || '', snapshot:null, fresh:null, token:options.token || null, signInReady:false, autoHandoffAttempted:false, checkoutRequestId:null, orders:[], ordersLoaded:false, paymentUnavailable:false, busy:false, closed:false, generation:0};
     options.token = null;
     function clearSecret() { state.fresh = null; view.secret(null); }
     function clearSignIn() { state.signInReady = false; if (view.signIn) view.signIn(false); }
@@ -249,38 +249,69 @@
       } catch (_) { if (!state.closed && state.fresh === value) status('Select the invitation link and copy it manually.', true); }
     }
     async function preview() {
+      if (state.closed || state.busy || state.autoHandoffAttempted) return;
       if (!TOKEN.test(state.token || '')) { state.token = null; status('This invitation is unavailable or has expired.', true); return; }
       state.busy = true; view.busy(true);
       const generation = ++state.generation;
-      let available = false;
+      let handoff = false;
       clearSignIn();
       try {
         const result = await api('/api/invitations/preview', 'POST', {token:state.token});
         if (!result || result.available !== true || !timestamp(result.expiresAt)) { state.token = null; throw fail(404); }
-        available = true;
+        if (state.closed || generation !== state.generation) return;
+        if (options.signInUrl) {
+          if (!signInUrl || typeof options.submitSignIn !== 'function') throw fail('shape');
+          // Profile enrollment belongs to the identity service for all users.
+          // An existing browser session must not bypass its required email.
+          state.owner = ''; state.signInReady = true; if (view.signIn) view.signIn(true);
+          status('Create your profile to accept this invitation. An email address is required; SSO is optional.');
+          handoff = true;
+          return;
+        }
         const identity = await api('/api/me');
         if (!personal(identity && identity.id) || !['npm-header','forwarded-user'].includes(identity.method)) throw fail(401);
         if (state.closed || generation !== state.generation) return;
         state.owner = identity.id; view.recipient(identity.display || 'your account', result.expiresAt); status('Your invitation is ready to accept.');
       } catch (error) {
         if (!state.closed && generation === state.generation) {
-          if (error.code === 401 && available && signInUrl && typeof options.submitSignIn === 'function') {
-            state.signInReady = true; if (view.signIn) view.signIn(true);
-            status('Sign in with your own account to accept this invitation.');
-          } else if (error.code === 401) { state.token = null; status('Sign in with your usual account, then reopen this invitation link.'); }
+          if (error.code === 401) { state.token = null; status('Sign in with your usual account, then reopen this invitation link.'); }
           else { state.token = null; status('This invitation is unavailable or has expired.', true); }
         }
-      } finally { if (!state.closed && generation === state.generation) { state.busy = false; view.busy(false, null, !!state.token && personal(state.owner)); } }
+      } finally {
+        if (!state.closed && generation === state.generation) {
+          state.busy = false; view.busy(false, null, !!state.token && personal(state.owner));
+          if (handoff) signIn(true);
+        }
+      }
     }
-    function signIn() {
-      if (state.closed || state.busy || !state.signInReady || !signInUrl || !TOKEN.test(state.token || '')) return;
+    function signIn(automatic = false) {
+      if (state.closed || state.busy || !state.signInReady || !signInUrl || !TOKEN.test(state.token || '') || automatic && state.autoHandoffAttempted) return;
       const token = state.token;
-      state.token = null; clearSignIn(); state.busy = true; view.busy(true);
-      try { options.submitSignIn(token, signInUrl); }
-      catch (_) { close(); status('Sign-in could not be started. Reopen your invitation link before trying again.', true); }
+      if (automatic) state.autoHandoffAttempted = true;
+      clearSignIn(); state.busy = true; view.busy(true);
+      try {
+        options.submitSignIn(token, signInUrl);
+        if (state.closed) return;
+        if (automatic) {
+          // Native submit cannot confirm that browser navigation was allowed.
+          // Keep a deliberate fallback, never automatically retry the handoff.
+          state.busy = false; state.signInReady = true; if (view.signIn) view.signIn(true);
+          view.busy(false, null, false);
+          status('Opening profile setup. If this page stays open, select Create your profile to continue. An email address is required; SSO is optional.');
+        } else {
+          state.token = null;
+          status('Opening profile setup…');
+        }
+      } catch (error) {
+        if (state.closed) return;
+        if (error && error.code === 'shape') { close(); status('Profile setup could not be opened safely. Reopen your invitation link before trying again.', true); return; }
+        state.busy = false; state.signInReady = true; if (view.signIn) view.signIn(true);
+        view.busy(false, null, false);
+        status('Profile setup could not open automatically. Select Create your profile to continue.', true);
+      }
     }
     async function redeem() {
-      if (state.closed || state.busy || !TOKEN.test(state.token || '') || !personal(state.owner)) return;
+      if (options.signInUrl || state.closed || state.busy || !TOKEN.test(state.token || '') || !personal(state.owner)) return;
       state.busy = true; view.busy(true); const generation = ++state.generation;
       try {
         const result = await api('/api/invitations/redeem', 'POST', {token:state.token, expectedAccountId:state.owner});

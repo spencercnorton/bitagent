@@ -62,3 +62,9 @@ def test_landing_bridge_is_optional_and_has_only_a_top_level_post_action():
     assert "bi_" not in html
     assert 'name="returnUrl"' not in html
     assert 'name="provider"' not in html
+    assert '<h1 id="invWelcome">Create your profile</h1>' in html
+    assert "email address" in html and "username and password" in html
+    assert "SSO is optional." in html
+    assert 'type="password"' not in html
+    assert 'name="email"' not in html
+    assert "Create your profile" not in disabled

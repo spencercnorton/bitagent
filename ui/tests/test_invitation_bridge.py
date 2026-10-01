@@ -18,7 +18,7 @@ import invitation_bridge as bridge
 import invitations
 import private_indexer as private
 from conftest import _with_transport_peer
-from test_invitations import PROOF, headers, invitation_config as _invitation_config, member, mint
+from test_invitations import PROOF, headers, invitation_config as _invitation_config, member, mint, redeem
 
 invitation_config = _invitation_config
 
@@ -87,7 +87,12 @@ def rpc(client, body, **kwargs):
     return response
 
 
-def test_actual_start_redeem_status_and_no_peer_or_identity_changes(client):
+@pytest.mark.parametrize("provider", ["google", "bitagent-local"])
+@pytest.mark.parametrize("subject_format", ["legacy-negative", "principal"])
+def test_actual_start_redeem_status_and_no_peer_or_identity_changes(client, provider, subject_format, monkeypatch):
+    monkeypatch.setattr(config.settings, "invitation_bridge_subject_format", subject_format)
+    bridge.validate_settings()
+    account_id = "principal:12345" if subject_format == "principal" else "-12345"
     token = mint(client).json()["token"]
     begin = start_body(token)
     started = rpc(client, begin)
@@ -96,32 +101,68 @@ def test_actual_start_redeem_status_and_no_peer_or_identity_changes(client):
     assert bridge._HEX_ID.fullmatch(enrollment_id)
     assert 590 <= started.json()["expiresAt"] - time.time() <= 600
     assert rpc(client, begin).json() == started.json()
-    bound = redemption(begin, enrollment_id)
+    bound = redemption(begin, enrollment_id, provider=provider)
     pending = rpc(client, {**bound, "operation": "status"}).json()
     assert pending["approved"] is False and pending["state"] == "unavailable"
     redeemed = rpc(client, bound)
     assert redeemed.status_code == 200
-    assert redeemed.json()["accountId"] == "-12345" and redeemed.json()["alreadyRedeemed"] is False
+    assert redeemed.json()["accountId"] == account_id and redeemed.json()["alreadyRedeemed"] is False
     assert rpc(client, bound).json()["alreadyRedeemed"] is True
     status = rpc(client, {**bound, "operation": "status"}).json()
     assert status["approved"] is True and status["state"] == "redeemed"
     assert 0 < status["expiresAt"] - status["issuedAt"] <= 30
     async def check():
         db = await database.get_db()
-        assert (await db.execute_fetchall("SELECT active FROM private_members WHERE user_id='-12345'"))[0]["active"] == 1
+        assert (await db.execute_fetchall("SELECT active FROM private_members WHERE user_id=?", (account_id,)))[0]["active"] == 1
         for table in ("private_peers", "user_api_keys"):
-            assert not await db.execute_fetchall(f"SELECT * FROM {table} WHERE user_id='-12345'")
+            assert not await db.execute_fetchall(f"SELECT * FROM {table} WHERE user_id=?", (account_id,))
         assert token not in str([dict(r) for r in await db.execute_fetchall("SELECT * FROM invitation_bootstrap_enrollments")])
     asyncio.run(check())
 
 
-def test_binding_retry_cannot_switch_token_browser_principal_or_provider(client):
+def test_local_provider_requires_signed_machine_authority(client):
+    begin = start_body(mint(client).json()["token"])
+    enrollment = rpc(client, begin).json()["enrollmentId"]
+    bound = redemption(begin, enrollment, provider="bitagent-local")
+    raw, h = signed(bound)
+    h.pop("X-Invitation-Signature")
+    assert client.post(bridge.PATH, headers=h, content=raw).status_code == 401
+    assert rpc(client, bound, key=b"wrong-key").status_code == 401
+    async def check():
+        db = await database.get_db()
+        assert not await db.execute_fetchall("SELECT * FROM invitation_bootstrap_enrollments WHERE principal_id IS NOT NULL")
+        assert not await db.execute_fetchall("SELECT * FROM membership_invitations WHERE redeemed_at IS NOT NULL")
+    asyncio.run(check())
+    assert rpc(client, bound).status_code == 200
+
+
+def test_issuer_withdrawal_revokes_pending_local_enrollment_permanently(client):
+    begin = start_body(mint(client).json()["token"])
+    enrollment = rpc(client, begin).json()["enrollmentId"]
+    bound = redemption(begin, enrollment, provider="bitagent-local")
+    operator = {"Host": "console.example.org", "X-Auth-User-Id": "owner",
+                "X-Auth-Priv": "OWNER", "X-BitAgent-Proxy-Proof": PROOF}
+    assert client.put("/api/private/members/alice", headers=operator, json={"active": False}).status_code == 200
+    assert rpc(client, bound).status_code == 409
+    assert client.put("/api/private/members/alice", headers=operator, json={"active": True}).status_code == 200
+    assert rpc(client, bound).status_code == 409
+    assert rpc(client, {**bound, "operation": "status"}).json()["approved"] is False
+    async def check():
+        db = await database.get_db()
+        row = (await db.execute_fetchall("SELECT revoked_at,redeemed_at FROM membership_invitations"))[0]
+        assert row["revoked_at"] is not None and row["redeemed_at"] is None
+        assert not await db.execute_fetchall("SELECT * FROM private_members WHERE user_id='-12345'")
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("provider", ["google", "bitagent-local"])
+def test_binding_retry_cannot_switch_token_browser_principal_or_provider(client, provider):
     token, other_token = mint(client).json()["token"], mint(client).json()["token"]
     begin = start_body(token)
     enrollment = rpc(client, begin).json()["enrollmentId"]
     assert rpc(client, {**begin, "token": other_token}).status_code == 409
     assert rpc(client, {**begin, "browserBindingHash": "c" * 64}).status_code == 409
-    bound = redemption(begin, enrollment)
+    bound = redemption(begin, enrollment, provider=provider)
     assert rpc(client, bound).status_code == 200
     for changed in ({"principalId": 12}, {"provider": "discord"}, {"subjectBindingHash": "c" * 64}, {"authRequestId": "d" * 32}):
         assert rpc(client, {**bound, **changed}).status_code == 409
@@ -129,11 +170,12 @@ def test_binding_retry_cannot_switch_token_browser_principal_or_provider(client)
 
 
 @pytest.mark.parametrize("withdraw", ["issuer", "member", "invite", "enrollment"])
-def test_recovery_requires_current_issuer_member_and_expiry(client, withdraw):
+@pytest.mark.parametrize("provider", ["google", "bitagent-local"])
+def test_recovery_requires_current_issuer_member_and_expiry(client, withdraw, provider):
     token = mint(client).json()["token"]
     begin = start_body(token)
     eid = rpc(client, begin).json()["enrollmentId"]
-    bound = redemption(begin, eid)
+    bound = redemption(begin, eid, provider=provider)
     assert rpc(client, bound).status_code == 200
     async def close():
         db = await database.get_db()
@@ -149,11 +191,12 @@ def test_recovery_requires_current_issuer_member_and_expiry(client, withdraw):
     assert rpc(client, {**bound, "operation": "status"}).json()["approved"] is False
 
 
-def test_inactive_existing_subject_does_not_reactivate(client):
+@pytest.mark.parametrize("provider", ["google", "bitagent-local"])
+def test_inactive_existing_subject_does_not_reactivate(client, provider):
     asyncio.run(member("-12345", False))
     begin = start_body(mint(client).json()["token"])
     eid = rpc(client, begin).json()["enrollmentId"]
-    assert rpc(client, redemption(begin, eid)).status_code == 403
+    assert rpc(client, redemption(begin, eid, provider=provider)).status_code == 403
     async def check():
         db = await database.get_db()
         assert (await db.execute_fetchall("SELECT active FROM private_members WHERE user_id='-12345'"))[0]["active"] == 0
@@ -161,20 +204,21 @@ def test_inactive_existing_subject_does_not_reactivate(client):
     asyncio.run(check())
 
 
-def test_concurrent_principals_one_consumption_and_response_lost_recovery(client):
+@pytest.mark.parametrize("provider", ["google", "bitagent-local"])
+def test_concurrent_principals_one_consumption_and_response_lost_recovery(client, provider):
     begin = start_body(mint(client).json()["token"])
     eid = rpc(client, begin).json()["enrollmentId"]
     async def run():
         transport = httpx.ASGITransport(app=_with_transport_peer(app_module.app, "127.0.0.1"))
         async with httpx.AsyncClient(transport=transport, base_url=ORIGIN) as c:
-            requests = [redemption(begin, eid, principalId=p) for p in (321, 654)]
+            requests = [redemption(begin, eid, principalId=p, provider=provider) for p in (321, 654)]
             async def call(body):
                 raw, h = signed(body)
                 return await c.post(bridge.PATH, headers=h, content=raw)
             result = await asyncio.gather(*(call(b) for b in requests))
             assert sorted(r.status_code for r in result) == [200, 409]
             winner = next(r.json()["principalId"] for r in result if r.status_code == 200)
-            status = await call(redemption(begin, eid, principalId=winner, operation="status"))
+            status = await call(redemption(begin, eid, principalId=winner, provider=provider, operation="status"))
             assert status.json()["approved"] is True
             assert len(await (await database.get_db()).execute_fetchall("SELECT * FROM private_members WHERE user_id IN ('-321','-654')")) == 1
     asyncio.run(run())
@@ -208,6 +252,7 @@ def test_nonce_replay_expired_future_badkey_direction_and_duplicates(client):
 @pytest.mark.parametrize("change", [
     {"principalId": True}, {"principalId": 0}, {"principalId": -1}, {"principalId": 2**63},
     {"principalId": "12345"}, {"provider": "telegram"}, {"provider": []},
+    {"provider": "password"}, {"provider": "local"}, {"provider": "bitagent_local"},
     {"subjectBindingHash": "B" * 64}, {"accountId": "owner"}, {"version": True},
 ])
 def test_strict_provider_principal_and_unknown_fields(client, change):
@@ -263,6 +308,39 @@ def test_landing_only_form_origin_and_feature_off(client, monkeypatch):
     monkeypatch.setattr(config.settings, "private_invitation_bridge_enabled", False)
     landing = client.get("/invite", headers={"Host": "library.example.org"})
     assert "sso.example.org" not in landing.headers["Content-Security-Policy"]
+
+
+def test_bridge_enrollment_cannot_be_bypassed_by_existing_human_identity(client):
+    token = mint(client).json()["token"]
+    response = client.post("/api/invitations/redeem", headers=headers("recipient", **{
+        "X-Auth-Email": "recipient@example.test", "X-Auth-Provider": "bitagent-local"
+    }), json={"token": token, "expectedAccountId": "recipient"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Invitation profile enrollment required"
+    assert client.post("/api/invitations/preview", headers={"Host": "library.example.org"},
+                       json={"token": token}).json()["available"] is True
+    async def check():
+        db = await database.get_db()
+        assert not await db.execute_fetchall("SELECT * FROM private_members WHERE user_id='recipient'")
+        assert not await db.execute_fetchall("SELECT * FROM membership_invitations WHERE redeemed_at IS NOT NULL")
+    asyncio.run(check())
+
+
+def test_direct_redemption_rechecks_enrollment_requirement_inside_writer(client, monkeypatch):
+    token = mint(client).json()["token"]
+    monkeypatch.setattr(config.settings, "private_invitation_bridge_enabled", False)
+    original = invitations._account
+    def enable_after_account(identity, expected):
+        uid = original(identity, expected)
+        monkeypatch.setattr(config.settings, "private_invitation_bridge_enabled", True)
+        return uid
+    monkeypatch.setattr(invitations, "_account", enable_after_account)
+    assert redeem(client, token, "recipient").status_code == 403
+    async def check():
+        db = await database.get_db()
+        assert not await db.execute_fetchall("SELECT * FROM private_members WHERE user_id='recipient'")
+        assert not await db.execute_fetchall("SELECT * FROM membership_invitations WHERE redeemed_at IS NOT NULL")
+    asyncio.run(check())
 
 
 @pytest.mark.parametrize("raw", [b'{"operation":[]}', b'{"operation":{}}', b'{"operation":null}', b'[]',
