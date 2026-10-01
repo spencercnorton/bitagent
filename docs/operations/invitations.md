@@ -9,7 +9,8 @@ The feature defaults to disabled. These settings are startup-only:
 
 | Setting | Default | Behavior |
 |---|---|---|
-| `PRIVATE_INVITATIONS_ENABLED` | `false` | Requires the authenticated private indexer and verified SSO proxy. |
+| `PRIVATE_INVITATIONS_ENABLED` | `false` | Requires authenticated private indexing or separately enabled site registration, and a verified identity proxy. |
+| `SITE_REGISTRATION_ENABLED` | `false` | Invite-only profile enrollment before private indexing. Requires invitations and the protected enrollment bridge; does not open private routes. |
 | `INVITATION_ANNUAL_ALLOWANCE` | `3` | Free invitations generated per member per UTC calendar year. |
 | `INVITATION_OWNER_IDS` | empty | Comma-separated exact existing SSO subject IDs with unlimited annual generation; a role name or machine credential grants no exemption. |
 | `INVITATION_PRICE_USD_CENTS` | `5000` | Display/ledger price in USD; the Checkout adapter requires exactly `5000`. |
@@ -59,6 +60,35 @@ redemption endpoint does not accept a caller-supplied identity or a machine
 key as a substitute for the trusted proxy's human identity.
 
 ## Optional profile enrollment bridge
+
+Recipients can open `/invite` and enter an invite code, or follow their fragment
+link. The manual form accepts only the exact generated code, clears it before
+preview, and sends it in a request body. Invalid or unavailable codes do not
+create an account or reveal who issued the invitation. Codes never enter a query
+string, browser storage or status message.
+
+To offer site registration while `PRIVATE_INDEXER_ENABLED=false`, explicitly set
+`SITE_REGISTRATION_ENABLED=true`, `PRIVATE_INVITATIONS_ENABLED=true` and
+`PRIVATE_INVITATION_BRIDGE_ENABLED=true`. Keep
+`PRIVATE_INVITATION_CHECKOUT_ENABLED=false`. Authentication and a verified
+identity proxy remain required. `PRIVATE_INDEXER_URL` must be the exact canonical
+HTTPS public origin, without a port, trailing slash, query or fragment, and its
+host must be in `PUBLIC_LIBRARY_HOSTS`. Only that exact public Host serves the
+registration and invitation endpoints; aliases and operator hosts do not.
+
+This mode uses the existing membership and invitation ledgers. It neither
+creates an initial issuer nor changes account IDs, public keys, usage or
+preferences. An invitation still requires an active issuer; owner allowance
+exemptions do not create membership. Suspension and the signed enrollment
+service's identity-history/profile checks remain mandatory. All private
+catalogue, tracker, transfer and private-key routes remain unavailable until
+their separate feature is enabled.
+
+The reverse proxy must permit anonymous access only to the canonical `/invite`
+page, its fixed local static assets and the JSON POST preview endpoint. Keep
+token/body logging disabled. The operator bootstrap endpoint still requires
+its existing transport/proxy proof and purpose HMAC; do not expose it as a public
+registration endpoint. An application setting does not configure proxy ingress.
 
 An authentication service can use a separate bootstrap protocol when an invitee
 has not yet acquired an approved identity. All bridge settings are startup-only

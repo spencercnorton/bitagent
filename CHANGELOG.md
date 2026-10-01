@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add manual invite-code entry and an explicit, disabled-by-default site
+  registration mode so profile enrollment can run before private indexing.
+  Preserve signed enrollment, issuer membership and suspension checks, while
+  private routes and payment checkout remain closed in public-only mode.
+
 ## 3.2.0 — 2026-10-01
 
 - Apply startup vault settings as one validated batch. A rejected payload keeps

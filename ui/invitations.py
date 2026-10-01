@@ -13,6 +13,7 @@ import json
 import re
 import secrets
 import time
+from urllib.parse import urlsplit
 
 import aiosqlite
 import asyncio
@@ -22,7 +23,7 @@ from fastapi.responses import JSONResponse
 from auth import require_human_sso
 from config import settings
 from database import get_db
-from deps import _host_scope
+from deps import _host_scope, _host_sets, _normalise_hostname
 from private_indexer import private_write
 
 router = APIRouter()
@@ -79,10 +80,15 @@ def _owners():
 
 
 def validate_settings():
+    if settings.site_registration_enabled:
+        if not (settings.private_invitations_enabled and settings.private_invitation_bridge_enabled):
+            raise RuntimeError("Site registration requires invitations and profile enrollment")
+        if not settings.private_indexer_enabled and settings.private_invitation_checkout_enabled:
+            raise RuntimeError("Site registration without a private indexer requires checkout disabled")
     if not settings.private_invitations_enabled:
         return
-    if not settings.private_indexer_enabled or not settings.require_auth:
-        raise RuntimeError("Private invitations require an authenticated private indexer")
+    if not (settings.private_indexer_enabled or settings.site_registration_enabled) or not settings.require_auth:
+        raise RuntimeError("Invitations require authenticated private indexing or site registration")
     if not (settings.trust_npm_headers or settings.trust_forwarded_user):
         raise RuntimeError("Private invitations require a verified SSO proxy")
     if not 0 <= settings.invitation_annual_allowance <= 1000:
@@ -95,10 +101,22 @@ def validate_settings():
     # PUBLIC_LIBRARY_HOSTS. Never derive a share URL from request Host headers.
     if not settings.private_indexer_url.startswith("https://"):
         raise RuntimeError("Invitations require a configured HTTPS library origin")
+    if settings.site_registration_enabled:
+        try:
+            parts = urlsplit(settings.private_indexer_url)
+        except ValueError:
+            raise RuntimeError("Site registration requires an exact canonical HTTPS public origin") from None
+        public_hosts, _ = _host_sets()
+        if (not parts.hostname or parts.netloc != parts.hostname
+                or _normalise_hostname(parts.hostname) != parts.hostname
+                or parts.hostname not in public_hosts
+                or settings.private_indexer_url != f"https://{parts.hostname}"):
+            raise RuntimeError("Site registration requires an exact canonical HTTPS public origin")
 
 
 def enabled():
-    if not (settings.private_invitations_enabled and settings.private_indexer_enabled):
+    if not (settings.private_invitations_enabled
+            and (settings.private_indexer_enabled or settings.site_registration_enabled)):
         raise HTTPException(404, "Not found")
 
 
@@ -193,6 +211,9 @@ def _hash(token):
 
 def _public(request):
     if _host_scope(request) != "public":
+        raise HTTPException(404, "Not found")
+    if (settings.site_registration_enabled
+            and request.headers.getlist("host") != [urlsplit(settings.private_indexer_url).netloc]):
         raise HTTPException(404, "Not found")
 
 

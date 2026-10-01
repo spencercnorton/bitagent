@@ -549,3 +549,58 @@ test('manual hold remains unresolved, cannot retry or navigate, and asks for ope
   await mutation.controller.load();await mutation.controller.checkout();await mutation.controller.checkout();
   assert.equal(posts,1);assert.equal(mutation.opened.length,0);assert.equal(paymentView(mutation).showBuy,false);
 });
+
+test('manual entry strictly bounds codes and never sends malformed or coerced values', async () => {
+  const calls = [];
+  const h = harness(async (...args) => { calls.push(args); return {available:false}; }, {owner:'',token:null});
+  for (const value of ['', 'synthetic', token+'\n', ' '+token, token+'x', {toString:() => token}]) await h.controller.enterToken(value);
+  assert.equal(calls.length,0);
+  assert.match(h.events.findLast(event => event[0] === 'status')[1], /valid invite code/);
+  assert.equal(invitations.fragmentToken('#'+token+'\n'),null);
+});
+
+test('unavailable manual code permits deliberate retry without echoing the secret', async () => {
+  const calls = [], submissions = [];
+  const h = harness(async (...args) => { calls.push(args); return calls.length === 1 ? {available:false} : {available:true,expiresAt}; },
+    {owner:'',token:null,signInUrl:'https://sso.example.test/invitations/start',submitSignIn:(...args) => submissions.push(args)});
+  await h.controller.enterToken(token);
+  assert.equal(submissions.length,0);
+  assert.match(h.events.findLast(event => event[0] === 'status')[1], /unavailable/);
+  await h.controller.enterToken(token);
+  assert.deepEqual(submissions,[[token,'https://sso.example.test/invitations/start']]);
+  assert.deepEqual(calls.map(call => call.slice(0,2)), [['/api/invitations/preview','POST'],['/api/invitations/preview','POST']]);
+  assert.equal(h.events.some(event => event[0] === 'status' && event[1].includes(token)),false);
+  await h.controller.enterToken(token); assert.equal(calls.length,2); // One navigation attempt only.
+});
+
+test('manual entry cannot replace a code while its preview is in flight', async () => {
+  const pending = deferred(), calls = [];
+  const h = harness(async (...args) => { calls.push(args); return pending.promise; }, {owner:'',token:null});
+  const first = h.controller.enterToken(token);
+  await h.controller.enterToken('bi_'+'B'.repeat(43));
+  assert.equal(calls.length,1);
+  h.controller.close(); pending.resolve({available:true,expiresAt}); await first;
+  assert.equal(h.events.some(event => event[0] === 'recipient'),false);
+});
+
+test('anonymous manual form clears its DOM value before body-only preview and handoff', async () => {
+  const {document,elements}=dom('redeem'); const listeners={}, requests=[], sent=[], history=[];
+  const form={hidden:true,listeners:{},getAttribute:() => 'https://sso.example.test/invitations/start',addEventListener(name,fn) { this.listeners[name]=fn; }};
+  elements.set('invSignInForm',form);
+  const win={location:{origin,pathname:'/invite',search:'',hash:''},history:{replaceState(...args) { history.push(args); }},navigator:{},addEventListener:(name,fn) => { listeners[name]=fn; },
+    HTMLFormElement:{prototype:{submit() { sent.push(elements.get('invSignInToken').children.map(input => ({name:input.name,value:input.value}))); }}},
+    fetch:async (path,options) => { assert.equal(elements.get('invCode').value,''); requests.push([path,options]); return {ok:true,text:async () => JSON.stringify({available:true,expiresAt})}; }};
+  invitations.mount(win,document);
+  assert.equal(requests.length,0); assert.equal(elements.get('invCodeForm').hidden,false);
+  elements.get('invCode').value=token;
+  elements.get('invCodeForm').listeners.submit({preventDefault() {}});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(history,[[null,'','/invite']]);
+  assert.equal(requests[0][0],'/api/invitations/preview');
+  assert.deepEqual(JSON.parse(requests[0][1].body),{token});
+  assert.deepEqual(sent,[[{name:'token',value:token}]]);
+  assert.equal(elements.get('invCodeForm').hidden,true);
+  assert.equal(elements.get('invCode').value,'');
+  listeners.pagehide(); assert.equal(elements.get('invSignInToken').children.length,0);
+  assert.equal(elements.get('invStatus').textContent.includes(token),false);
+});

@@ -11,10 +11,11 @@
   const timestamp = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/.test(value) && Number.isFinite(Date.parse(value)) && Date.parse(value) > 0;
   const personal = value => typeof value === 'string' && value.length > 0 && value.length <= 200 && !['anonymous', 'api-client'].includes(value);
   const fail = code => Object.assign(new Error('Invitation request unavailable'), {code});
+  const isToken = value => typeof value === 'string' && value.length === 46 && TOKEN.test(value);
 
   function fragmentToken(hash) {
     const value = typeof hash === 'string' && hash.startsWith('#') ? hash.slice(1) : '';
-    return TOKEN.test(value) ? value : null;
+    return isToken(value) ? value : null;
   }
   function takeFragment(location, history) {
     const token = fragmentToken(location.hash);
@@ -46,7 +47,7 @@
     return data;
   }
   function issued(data, origin) {
-    if (!data || !ID.test(data.id) || !TOKEN.test(data.token) || !timestamp(data.createdAt) || !timestamp(data.expiresAt) || Date.parse(data.expiresAt) <= Date.parse(data.createdAt) || !['annual','paid'].includes(data.creditSource)) throw fail('shape');
+    if (!data || !ID.test(data.id) || !isToken(data.token) || !timestamp(data.createdAt) || !timestamp(data.expiresAt) || Date.parse(data.expiresAt) <= Date.parse(data.createdAt) || !['annual','paid'].includes(data.creditSource)) throw fail('shape');
     let url;
     try { url = new URL(data.shareUrl); } catch (_) { throw fail('shape'); }
     if (url.protocol !== 'https:' || url.origin !== origin || url.username || url.password || url.pathname !== '/invite' || url.search || url.hash !== '#' + data.token) throw fail('shape');
@@ -121,7 +122,7 @@
     options.token = null;
     function clearSecret() { state.fresh = null; view.secret(null); }
     function clearSignIn() { state.signInReady = false; if (view.signIn) view.signIn(false); }
-    function close() { clearSignIn(); state.closed = true; state.generation++; state.token = null; state.checkoutRequestId = null; state.orders = []; clearSecret(); state.snapshot = null; view.busy(true); paymentView(); }
+    function close() { clearSignIn(); state.closed = true; state.generation++; state.token = null; state.checkoutRequestId = null; state.orders = []; clearSecret(); state.snapshot = null; if (view.entry) view.entry(false); view.busy(true); paymentView(); }
     function status(message, error = false) { view.status(message, error); }
     function failure(error, mutation = false) {
       clearSecret(); state.snapshot = null;
@@ -248,10 +249,18 @@
         if (!state.closed && state.fresh === value) status('Invitation link copied.');
       } catch (_) { if (!state.closed && state.fresh === value) status('Select the invitation link and copy it manually.', true); }
     }
+    async function enterToken(value) {
+      if (state.closed || state.busy || state.autoHandoffAttempted) return;
+      clearSignIn(); state.owner = ''; state.token = null;
+      if (!isToken(value)) { status('Enter a valid invite code.', true); return; }
+      state.token = value;
+      await preview();
+    }
     async function preview() {
       if (state.closed || state.busy || state.autoHandoffAttempted) return;
-      if (!TOKEN.test(state.token || '')) { state.token = null; status('This invitation is unavailable or has expired.', true); return; }
+      if (!isToken(state.token)) { state.token = null; status('This invitation is unavailable or has expired.', true); return; }
       state.busy = true; view.busy(true);
+      if (view.entry) view.entry(false);
       const generation = ++state.generation;
       let handoff = false;
       clearSignIn();
@@ -276,6 +285,7 @@
         if (!state.closed && generation === state.generation) {
           if (error.code === 401) { state.token = null; status('Sign in with your usual account, then reopen this invitation link.'); }
           else { state.token = null; status('This invitation is unavailable or has expired.', true); }
+          if (view.entry) view.entry(true);
         }
       } finally {
         if (!state.closed && generation === state.generation) {
@@ -285,7 +295,7 @@
       }
     }
     function signIn(automatic = false) {
-      if (state.closed || state.busy || !state.signInReady || !signInUrl || !TOKEN.test(state.token || '') || automatic && state.autoHandoffAttempted) return;
+      if (state.closed || state.busy || !state.signInReady || !signInUrl || !isToken(state.token) || automatic && state.autoHandoffAttempted) return;
       const token = state.token;
       if (automatic) state.autoHandoffAttempted = true;
       clearSignIn(); state.busy = true; view.busy(true);
@@ -311,7 +321,7 @@
       }
     }
     async function redeem() {
-      if (options.signInUrl || state.closed || state.busy || !TOKEN.test(state.token || '') || !personal(state.owner)) return;
+      if (options.signInUrl || state.closed || state.busy || !isToken(state.token) || !personal(state.owner)) return;
       state.busy = true; view.busy(true); const generation = ++state.generation;
       try {
         const result = await api('/api/invitations/redeem', 'POST', {token:state.token, expectedAccountId:state.owner});
@@ -321,7 +331,7 @@
       } catch (error) { if (!state.closed && generation === state.generation) { state.token = null; failure(error, true); } }
       finally { if (!state.closed && generation === state.generation) { state.busy = false; view.busy(false, null, false); } }
     }
-    return {load, create, checkout, revoke, copy, preview, signIn, redeem, close, dismiss:clearSecret,
+    return {load, create, checkout, revoke, copy, preview, enterToken, signIn, redeem, close, dismiss:clearSecret,
       selectionChanged:() => view.busy(state.busy, state.snapshot)};
   }
 
@@ -330,13 +340,17 @@
     if (!['manage','redeem'].includes(mode)) return;
     const element = id => document.getElementById(id);
     let token = mode === 'redeem' ? takeFragment(win.location, win.history) : null;
+    const hasFragmentToken = !!token;
     const put = (id, text) => { element(id).textContent = text; };
     let controller;
     const signInForm = mode === 'redeem' ? element('invSignInForm') : null;
+    const codeForm = mode === 'redeem' ? element('invCodeForm') : null;
+    const codeInput = mode === 'redeem' ? element('invCode') : null;
+    if (codeInput) codeInput.value = '';
     const view = {
       status(text, error) { put('invStatus', text); element('invStatus').dataset.error = String(!!error); },
       busy(busy, value, accept) {
-        if (mode === 'redeem') { if (signInForm) element('invSignIn').disabled = busy || signInForm.hidden; element('invAccept').disabled = busy || !accept; element('invAccept').hidden = !accept; return; }
+        if (mode === 'redeem') { if (codeInput) codeInput.disabled = busy; if (codeForm) element('invCodeSubmit').disabled = busy; if (signInForm) element('invSignIn').disabled = busy || signInForm.hidden; element('invAccept').disabled = busy || !accept; element('invAccept').hidden = !accept; return; }
         const selected = element('invCreditSource').value;
         element('invCreate').disabled = busy || !value || !value.enabled || (selected === 'paid' ? value.paidCredits < 1 : (!value.unlimited && value.annualRemaining < 1));
         element('invCreditSource').disabled = busy;
@@ -384,6 +398,7 @@
         element('invCheckoutRefresh').hidden = !value.showRefresh; element('invCheckoutRefresh').disabled = value.disabled;
       },
       signIn(ready) { if (signInForm) { element('invSignInToken').replaceChildren(); signInForm.hidden = !ready; element('invSignIn').disabled = !ready; } },
+      entry(visible) { if (codeForm) codeForm.hidden = !visible; if (codeInput) codeInput.value = ''; },
       accepted() { element('invAccept').hidden = true; element('invContinue').hidden = false; },
     };
     // Landing has no secret display elements; close remains safe for either page.
@@ -412,9 +427,15 @@
       element('invCopy').addEventListener('click', controller.copy);
       controller.load();
     } else {
+      if (codeForm) codeForm.addEventListener('submit', event => {
+        event.preventDefault();
+        const value = codeInput.value;
+        codeInput.value = '';
+        controller.enterToken(value);
+      });
       element('invAccept').addEventListener('click', controller.redeem);
       if (signInForm) signInForm.addEventListener('submit', event => { event.preventDefault(); controller.signIn(); });
-      controller.preview();
+      if (hasFragmentToken) controller.preview();
     }
     return controller;
   }
