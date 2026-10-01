@@ -12,6 +12,7 @@ import (
 
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/llmprovider"
 	"github.com/spencercnorton/bitagent/internal/model"
 )
 
@@ -80,6 +81,9 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	}
 	taskInputObject := map[string]any{
 		"min_confidence": s.cfg.MinConfidence, "live": s.cfg.EnableLive,
+	}
+	if s.cfg.ChatBackend.Effective() == llmprovider.ChatBackendOllama {
+		taskInputObject["chat_backend"] = llmprovider.ChatBackendOllama
 	}
 	if s.cfg.OpenrouterProvider != "" {
 		taskInputObject["openrouter_provider"] = s.cfg.OpenrouterProvider
@@ -181,6 +185,9 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 }
 
 func typeContractID(cfg Config) string {
+	if cfg.ChatBackend.Effective() == llmprovider.ChatBackendOllama {
+		return "classifier-type-v4-ollama-chat"
+	}
 	if cfg.OpenaiDataSharing {
 		return "classifier-type-v3-openai-data-sharing"
 	}

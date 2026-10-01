@@ -37,6 +37,9 @@ import (
 // Registered as "classifier_llm" on configfx. Env prefix
 // CLASSIFIER_LLM_*.
 type Config struct {
+	// ChatBackend selects a request dialect explicitly; it does not select a
+	// provider, enable this stage or alter the existing API-key/privacy gates.
+	ChatBackend llmprovider.ChatBackend `yaml:"chat_backend"`
 	// Enabled turns the stage on. When false, the decorator is
 	// inert regardless of other flags.
 	Enabled bool `yaml:"enabled"`
@@ -112,6 +115,7 @@ type Config struct {
 // never call OpenAI.
 func NewDefaultConfig() Config {
 	return Config{
+		ChatBackend:        llmprovider.ChatBackendOpenAI,
 		Enabled:            false,
 		EnableLive:         false,
 		Model:              "gpt-5.4-nano",
@@ -135,6 +139,9 @@ func NewDefaultConfig() Config {
 func (c Config) Validate() error {
 	if !c.Enabled {
 		return nil
+	}
+	if err := llmprovider.ValidateChatBackend(c.ChatBackend, c.Endpoint, c.OpenrouterProvider, c.OpenaiDataSharing); err != nil {
+		return fmt.Errorf("classifier_llm: %w", err)
 	}
 	u, err := url.Parse(c.Endpoint)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||

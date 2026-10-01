@@ -32,6 +32,9 @@ import (
 // Config controls the LLM matcher. Registered as "classifier_llm_match" on
 // configfx; env prefix CLASSIFIER_LLM_MATCH_*.
 type Config struct {
+	// ChatBackend selects the explicit request dialect. Empty/openai retains
+	// existing provider contracts; ollama uses max_tokens and API reasoning control.
+	ChatBackend llmprovider.ChatBackend `yaml:"chat_backend"`
 	// Enabled turns the stage on in shadow mode.
 	Enabled bool `yaml:"enabled"`
 	// EnableLive promotes shadow -> live (the chosen match is attached).
@@ -97,6 +100,7 @@ type Config struct {
 // including the module never calls out until an operator opts in.
 func NewDefaultConfig() Config {
 	return Config{
+		ChatBackend:         llmprovider.ChatBackendOpenAI,
 		Enabled:             false,
 		EnableLive:          false,
 		Model:               "qwen3.6:35b",
@@ -126,6 +130,9 @@ func NewDefaultConfig() Config {
 func (c Config) Validate() error {
 	if !c.Enabled {
 		return nil
+	}
+	if err := llmprovider.ValidateChatBackend(c.ChatBackend, c.Endpoint, c.OpenrouterProvider, c.OpenaiDataSharing); err != nil {
+		return fmt.Errorf("matcher: %w", err)
 	}
 	endpoint, err := url.Parse(c.Endpoint)
 	if err != nil {

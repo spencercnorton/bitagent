@@ -67,7 +67,7 @@ The benchmark found its own regressions: the first run showed three matching fea
 
 ## LLM integration
 
-Four points in the pipeline can ask a model. All four are **off by default** — without them BitAgent is a fully deterministic indexer — and each speaks to an OpenAI-compatible chat endpoint, hosted or self-hosted (Ollama, vLLM), so the model can live on your own LAN and nothing leaves the house. The matcher can also route through OpenRouter, pinned to one provider with zero-data-retention and no fallback.
+Four points in the pipeline can ask a model. All four are **off by default** — without them BitAgent is a fully deterministic indexer — and each speaks to a configured OpenAI-compatible chat endpoint. The matcher and type fallback select their request contract explicitly: `openai` is the default, while `ollama` sends Ollama's token-limit and thinking controls. Set `CLASSIFIER_LLM_MATCH_CHAT_BACKEND` and `CLASSIFIER_LLM_CHAT_BACKEND` independently; endpoint or model names never infer the selection. See [LLM backend configuration](docs/configuration.md#optional-llm-chat-backends). Selecting a backend leaves the stages disabled and preserves their separate shadow/live gates. The matcher can also route through OpenRouter, pinned to one provider with zero-data-retention and no fallback.
 
 | Stage | Runs when | Decides |
 |---|---|---|
