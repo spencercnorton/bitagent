@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 3.2.0 — 2026-10-01
+
+- Apply startup vault settings as one validated batch. A rejected payload keeps
+  the original configuration intact, including operator roles and credentials.
 - Connect the user library and operator console with an admin-only Admin
   navigation entry and a Back to library link. Destinations use validated,
   startup-only configuration or the existing host allowlists; authorization

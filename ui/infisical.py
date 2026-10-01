@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+from copy import deepcopy
 
 import httpx
 
@@ -44,6 +45,9 @@ def hydrate_settings(settings) -> list[str]:
 
     applied: list[str] = []
     try:
+        # Assignment validation runs against a private copy. A malformed late
+        # field must not leave earlier secrets or authority settings changed.
+        staged = deepcopy(settings)
         with httpx.Client(timeout=6.0) as client:
             login = client.post(
                 f"{base}/api/v1/auth/universal-auth/login",
@@ -65,9 +69,18 @@ def hydrate_settings(settings) -> list[str]:
             for secret in resp.json().get("secrets", []):
                 field = secret.get("secretKey", "").lower()
                 value = secret.get("secretValue", "")
-                if field and value and hasattr(settings, field):
-                    setattr(settings, field, value)
+                if field and value and hasattr(staged, field):
+                    setattr(staged, field, value)
                     applied.append(field)
+        if applied:
+            # Settings and the lightweight fixtures store their field values
+            # in __dict__. Swap only after every assignment and client cleanup
+            # succeeds, preserving the object shared by imported modules.
+            values = staged.__dict__
+            fields_set = getattr(staged, "__pydantic_fields_set__", None)
+            object.__setattr__(settings, "__dict__", values)
+            if fields_set is not None:
+                object.__setattr__(settings, "__pydantic_fields_set__", fields_set)
     except Exception as exc:  # noqa: BLE001 — fail open on any error
         log.warning(
             "infisical: hydration failed (%s) — keeping env values",

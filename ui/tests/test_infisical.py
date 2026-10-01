@@ -6,6 +6,11 @@ and NEVER raises on a secret-store error. Application startup validation is a
 separate gate and is not bypassed by hydration's env-value fallback.
 """
 import infisical
+import config
+
+
+def _real_settings():
+    return config.Settings(_env_file=None, require_auth=True, operator_roles="OWNER", tmdb_api_key="initial-synthetic-key")
 
 
 class _Settings:
@@ -130,3 +135,76 @@ def test_fail_open_on_network_error(monkeypatch):
     s = _Settings()
     assert infisical.hydrate_settings(s) == []  # never raises
     assert s.tmdb_api_key == "env-literal-30char"
+
+
+def test_invalid_late_assignment_rolls_back_all_fields_and_model_metadata(monkeypatch, caplog):
+    _set_creds(monkeypatch)
+    monkeypatch.setattr(infisical.httpx, "Client", _FakeClient([
+        {"secretKey": "TMDB_API_KEY", "secretValue": "new-synthetic-secret-never-log"},
+        {"secretKey": "OPERATOR_ROLES", "secretValue": "MEMBER"},
+        {"secretKey": "REQUIRE_AUTH", "secretValue": "not-a-boolean"},
+    ]))
+    settings = _real_settings()
+    identity = id(settings)
+    original = settings.model_dump()
+    fields_set = set(settings.model_fields_set)
+    values = settings.__dict__
+    assert infisical.hydrate_settings(settings) == []
+    assert settings.model_dump() == original
+    assert settings.model_fields_set == fields_set
+    assert settings.__dict__ is values
+    assert id(settings) == identity
+    for sensitive in ("initial-synthetic-key", "new-synthetic-secret-never-log", "not-a-boolean"):
+        assert sensitive not in caplog.text
+
+
+def test_malformed_late_record_rolls_back_a_simple_settings_fixture(monkeypatch):
+    _set_creds(monkeypatch)
+    monkeypatch.setattr(infisical.httpx, "Client", _FakeClient([
+        {"secretKey": "TMDB_API_KEY", "secretValue": "staged-synthetic-secret"},
+        {"secretKey": "LOG_LEVEL", "secretValue": "debug"},
+        None,
+    ]))
+    settings = _Settings()
+    before = dict(vars(settings))
+    identity = id(settings)
+    assert infisical.hydrate_settings(settings) == []
+    assert vars(settings) == before
+    assert id(settings) == identity
+
+
+def test_client_cleanup_failure_does_not_publish_staged_fields(monkeypatch):
+    _set_creds(monkeypatch)
+    class FailedCleanup(_FakeClient):
+        def __exit__(self, *args):
+            raise RuntimeError("synthetic cleanup failure")
+    monkeypatch.setattr(infisical.httpx, "Client", FailedCleanup([
+        {"secretKey": "TMDB_API_KEY", "secretValue": "staged-synthetic-secret"},
+    ]))
+    settings = _real_settings()
+    original = settings.model_dump()
+    assert infisical.hydrate_settings(settings) == []
+    assert settings.model_dump() == original
+
+
+def test_successful_batch_keeps_vault_precedence_custom_roles_and_typed_values(monkeypatch):
+    _set_creds(monkeypatch)
+    monkeypatch.setattr(infisical.httpx, "Client", _FakeClient([
+        {"secretKey": "TMDB_API_KEY", "secretValue": "new-synthetic-secret"},
+        {"secretKey": "OPERATOR_ROLES", "secretValue": "OWNER,MAINTAINER"},
+        {"secretKey": "REQUIRE_AUTH", "secretValue": "false"},
+        {"secretKey": "TORZNAB_RATE_LIMIT_PER_MIN", "secretValue": "240"},
+        {"secretKey": "NOT_A_SETTING", "secretValue": "ignored"},
+    ]))
+    settings = _real_settings()
+    identity = id(settings)
+    assert infisical.hydrate_settings(settings) == [
+        "tmdb_api_key", "operator_roles", "require_auth", "torznab_rate_limit_per_min",
+    ]
+    assert id(settings) == identity
+    assert settings.tmdb_api_key == "new-synthetic-secret"
+    assert settings.operator_roles == "OWNER,MAINTAINER"
+    assert settings.require_auth is False
+    assert settings.torznab_rate_limit_per_min == 240
+    assert "torznab_rate_limit_per_min" in settings.model_fields_set
+    assert not hasattr(settings, "not_a_setting")
