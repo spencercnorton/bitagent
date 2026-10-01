@@ -56,9 +56,35 @@ initTheme();
 document.addEventListener('DOMContentLoaded', _syncThemeSwitchAria);
 
 /* ── Sidebar drawer (mobile) ─────────────────────────────────────────── */
-function setSidebarOpen(open) {
-  document.getElementById('sidebar').classList.toggle('open', open);
+const _mobileSidebar = window.matchMedia('(max-width: 768px)');
+let _sidebarReturnFocus = null;
+let _lastNavigationFocus = null;
+document.addEventListener('focusin', e => {
+  if (e.target !== document.body && e.target !== document.documentElement) _lastNavigationFocus = e.target;
+});
+function setSidebarOpen(open, { returnFocus = true } = {}) {
+  const sidebar = document.getElementById('sidebar');
+  const main = document.getElementById('mainContent');
+  const toggle = document.getElementById('navigationToggle');
+  const wasOpen = sidebar.classList.contains('open');
+  open = !!open && _mobileSidebar.matches;
+  if (open && !wasOpen) _sidebarReturnFocus = document.activeElement;
+  sidebar.classList.toggle('open', open);
+  sidebar.inert = _mobileSidebar.matches && !open;
+  sidebar.setAttribute('aria-hidden', String(sidebar.inert));
+  if (open) {
+    sidebar.setAttribute('role', 'dialog');
+    sidebar.setAttribute('aria-modal', 'true');
+  } else {
+    sidebar.removeAttribute('role');
+    sidebar.removeAttribute('aria-modal');
+  }
+  main.inert = open;
+  document.body.classList.toggle('navigation-open', open);
   document.getElementById('sidebarBackdrop').classList.toggle('visible', open);
+  toggle.setAttribute('aria-expanded', String(open));
+  if (open && !wasOpen) sidebar.querySelector('.nav-item.active').focus();
+  if (!open && wasOpen && returnFocus && _sidebarReturnFocus?.isConnected) _sidebarReturnFocus.focus();
 }
 function toggleSidebar() {
   setSidebarOpen(!document.getElementById('sidebar').classList.contains('open'));
@@ -67,30 +93,60 @@ function closeSidebar() { setSidebarOpen(false); }
 
 /* ── Navigation ───────────────────────────────────────────────────────── */
 const TAB_META = {
-  dashboard:  { title: 'Dashboard',  subtitle: 'System overview and live metrics' },
-  library:    { title: 'Library',    subtitle: 'Search the indexed catalog — press / to jump to search' },
-  wants:      { title: 'Wants',      subtitle: 'Operator-defined search targets' },
+  dashboard:  { title: 'Dashboard',  subtitle: 'Catalogue performance and source observations' },
+  library:    { title: 'Catalogue',    subtitle: 'Search the indexed catalog — press / to jump to search' },
+  wants:      { title: 'Wants',      subtitle: 'Requests from *arr applications and catalogue matches' },
   evidence:   { title: 'Evidence',   subtitle: 'Webhook events from *arr applications' },
   quarantine: { title: 'Quarantine', subtitle: 'Junk-classifier removals — review, restore, or purge' },
   ai:         { title: 'AI',         subtitle: 'Matcher, content filter and junk-purge judge — throughput, latency and quality' },
-  settings:   { title: 'Settings',   subtitle: 'Configuration, auth, and integrations' },
+  settings:   { title: 'Settings',   subtitle: 'Runtime overrides, integrations and configuration history' },
   system:     { title: 'System',     subtitle: 'Health checks, diagnostics, and tools' },
 };
-
-function switchTab(tab) {
+const SETTINGS_TABS = ['config', 'auth', 'integrations', 'retention', 'classifier', 'liveness', 'filters', 'blocklists', 'audit'];
+const SYSTEM_TABS = ['health', 'torznab', 'graphql', 'metrics'];
+let _settingsTab = 'config', _systemTab = 'health';
+function operatorRoute(hash) {
+  const [tab, section, extra] = String(hash || '').replace(/^#/, '').split('/');
+  if (!Object.prototype.hasOwnProperty.call(TAB_META, tab) || extra !== undefined) return null;
+  const sections = tab === 'settings' ? SETTINGS_TABS : tab === 'system' ? SYSTEM_TABS : [];
+  if (section && !sections.includes(section)) return null;
+  return { tab, section: section || sections[0] || '' };
+}
+function _writeOperatorRoute(mode = 'push') {
+  const section = currentTab === 'settings' ? _settingsTab : currentTab === 'system' ? _systemTab : '';
+  const hash = `#${currentTab}${section ? '/' + section : ''}`;
+  if (window.location.hash !== hash) window.history[mode === 'replace' ? 'replaceState' : 'pushState'](null, '', hash);
+}
+function switchTab(tab, { history = 'push', focus = true } = {}) {
+  if (!Object.prototype.hasOwnProperty.call(TAB_META, tab)) return;
   currentTab = tab;
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.tab === tab));
+  document.querySelectorAll('.nav-item[data-tab]').forEach(n => {
+    const active = n.dataset.tab === tab;
+    n.classList.toggle('active', active);
+    if (active) n.setAttribute('aria-current', 'page');
+    else n.removeAttribute('aria-current');
+  });
   document.querySelectorAll('.page-body > .tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${tab}`));
-  const meta = TAB_META[tab] || {};
-  document.getElementById('pageTitle').textContent = meta.title || tab;
-  document.getElementById('pageSubtitle').textContent = meta.subtitle || '';
-  closeSidebar();
+  const meta = TAB_META[tab];
+  const title = document.getElementById('pageTitle');
+  title.textContent = meta.title;
+  document.getElementById('pageSubtitle').textContent = meta.subtitle;
+  document.title = `${meta.title} · BitAgent Console`;
+  setSidebarOpen(false, { returnFocus: false });
+  if (history) _writeOperatorRoute(history);
+  if (focus) title.focus({ preventScroll: true });
   refreshCurrentTab();
 }
-
+function restoreOperatorRoute() {
+  const route = operatorRoute(window.location.hash);
+  if (!route) { switchTab('dashboard', { history: 'replace' }); return; }
+  if (route.tab === 'settings') switchSettingsTab(route.section, { history: false, load: false });
+  if (route.tab === 'system') switchSystemTab(route.section, { history: false, load: false });
+  switchTab(route.tab, { history: false });
+}
 function refreshCurrentTab() {
-  const loaders = { dashboard: loadDashboard, library: loadLibrary, wants: loadWants, evidence: loadEvidence, quarantine: loadQuarantine, ai: loadAiTab, settings: loadSettings, system: loadSystem };
-  (loaders[currentTab] || (() => {}))();
+  const loaders = { dashboard: loadDashboard, library: loadLibrary, wants: loadWants, evidence: loadEvidence, quarantine: loadQuarantine, ai: loadAiTab, settings: loadSettingsView, system: loadSystem };
+  return (loaders[currentTab] || (() => {}))();
 }
 
 /* ── Utility ──────────────────────────────────────────────────────────── */
@@ -166,14 +222,14 @@ function fmtRatePerMin(n) {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 function fmtBytes(b) {
-  if (!b) return '--';
+  if (b == null || !Number.isFinite(Number(b)) || Number(b) < 0) return '--';
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
   let i = 0;
   while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
   return `${b.toFixed(1)} ${u[i]}`;
 }
 function fmtTime(secs) {
-  if (!secs) return '--';
+  if (secs == null || !Number.isFinite(Number(secs)) || Number(secs) < 0) return '--';
   const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
@@ -279,7 +335,95 @@ function _metricEnvelope(stats, name) {
 
 function _metricValue(stats, name) {
   const metric = _metricEnvelope(stats, name);
-  return metric && metric.value !== null && metric.value !== undefined ? metric.value : null;
+  if (!metric || !['ok', 'partial', 'stale'].includes(metric.status)) return null;
+  const value = metric.value;
+  if (value === null || value === undefined || (typeof value === 'number' && !Number.isFinite(value))) return null;
+  return value;
+}
+
+const _DASHBOARD_METRIC_IDS = {
+  statTorrents: 'totalTorrents', statEvidence: 'totalEvidence',
+  statThroughput: 'indexerThroughput', statBlacklist: 'livenessBlacklistSize',
+  statUptime: 'uptimeSeconds', statGrabSuccess: 'grabSuccessRate',
+  statMatchRate: 'matchRate30d',
+};
+
+function _observationTime(timestamp) {
+  const date = new Date(timestamp);
+  return timestamp && Number.isFinite(date.getTime())
+    ? date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+    : '';
+}
+
+function _setViewStatus(id, state, label, detail = '') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.dataset.state = state;
+  el.textContent = label;
+  if (detail) el.title = detail;
+  else el.removeAttribute('title');
+}
+
+function _metricState(stats, name) {
+  const metric = _metricEnvelope(stats, name);
+  if (!stats) return 'failure';
+  if (!metric) return 'unavailable';
+  if (metric.status === 'error') return 'failure';
+  if (metric.status === 'unavailable') return 'unavailable';
+  if (metric.stale || metric.status === 'stale' || stats.snapshot?.stale) return 'stale';
+  if (metric.status === 'partial') return 'partial';
+  return metric.status === 'ok' && _metricValue(stats, name) !== null ? 'fresh' : 'unavailable';
+}
+
+function _renderMetricStatus(id, stats, name) {
+  const metric = _metricEnvelope(stats, name);
+  const state = _metricState(stats, name);
+  const labels = { fresh: 'Fresh', stale: 'Stale', partial: _metricValue(stats, name) === null ? 'Measuring…' : 'Partial', unavailable: 'Unavailable', failure: 'Failed' };
+  const time = _observationTime(metric?.observed_at);
+  const label = labels[state] + (time && ['fresh', 'stale'].includes(state) ? ` · ${time}` : '');
+  const detail = metric
+    ? [metric.source, metric.observed_at, metric.stale && 'stale', metric.error].filter(Boolean).join(' · ')
+    : !stats ? 'Snapshot request failed or timed out. Refresh to retry.' : 'This snapshot did not report this metric.';
+  _setViewStatus(id, state, label, detail);
+  return { state, detail };
+}
+
+function _startDashboardRefresh() {
+  for (const id of Object.keys(_DASHBOARD_METRIC_IDS)) {
+    const el = document.getElementById(id);
+    if (el) {
+      _cancelCountUp(el);
+      el.dataset.state = 'loading';
+    }
+    _setViewStatus(`${id}Status`, 'loading', 'Refreshing…', 'Waiting for a new snapshot. Displayed values belong to the previous snapshot.');
+  }
+  _setViewStatus('dashboardStatus', 'loading', 'Refreshing operational snapshot…');
+  _setViewStatus('categoryChartStatus', 'loading', 'Refreshing…');
+  _setViewStatus('winRateStatus', 'loading', 'Loading grab aggregate…');
+  _setViewStatus('activityStatus', 'loading', 'Loading recent events…');
+  const pulse = document.getElementById('statThroughputPulse');
+  if (pulse) pulse.hidden = true;
+}
+
+function _renderDashboardSnapshotStatus(stats) {
+  const probes = [['graphqlReachable', 'GraphQL'], ['metricsReachable', 'Prometheus'], ['evidenceReachable', 'Evidence'], ['sidecarDbReachable', 'SQLite']];
+  if (!stats) {
+    _setViewStatus('dashboardStatus', 'failure', 'Snapshot request failed. Refresh to retry.');
+    _setViewStatus('dashboardUpdatedAt', 'failure', 'No current observation');
+    return;
+  }
+  const failed = probes.filter(([name]) => _metricState(stats, name) === 'failure');
+  const unavailable = probes.filter(([name]) => _metricState(stats, name) === 'unavailable');
+  const partial = Object.values(_DASHBOARD_METRIC_IDS).some(name => ['partial', 'unavailable'].includes(_metricState(stats, name)));
+  const stale = stats.snapshot?.stale || probes.some(([name]) => _metricState(stats, name) === 'stale');
+  const state = stale ? 'stale' : failed.length ? 'failure' : unavailable.length || partial ? 'partial' : 'fresh';
+  const label = stale ? 'Stale snapshot. Refresh to retry.' : failed.length ? 'Some sources failed. Open System for diagnostics.'
+    : unavailable.length || partial ? 'Snapshot loaded · some metrics unavailable or measuring' : 'Operational snapshot is current';
+  const detail = probes.map(([name, label]) => `${label}: ${_metricState(stats, name)}`).join(' · ');
+  _setViewStatus('dashboardStatus', state, label, detail);
+  const time = _observationTime(stats.snapshot?.observed_at);
+  _setViewStatus('dashboardUpdatedAt', state, time ? `Observed ${time}` : 'Observation time unavailable',
+    [stats.snapshot?.observed_at, stats.snapshot?.cached && 'Served from the snapshot cache'].filter(Boolean).join(' · '));
 }
 
 const _REDUCED_MOTION = window.matchMedia
@@ -339,6 +483,8 @@ function _renderMetric(id, stats, name, formatter = fmtNum, opts = {}) {
   if (!el) return;
   const metric = _metricEnvelope(stats, name);
   const value = _metricValue(stats, name);
+  const { state, detail } = _renderMetricStatus(`${id}Status`, stats, name);
+  el.dataset.state = state;
   if (value === null) {
     _cancelCountUp(el);
     delete el.dataset.countValue;
@@ -346,9 +492,10 @@ function _renderMetric(id, stats, name, formatter = fmtNum, opts = {}) {
     el.classList.toggle('stat-value--pending', !!metric && metric.status === 'partial');
   } else {
     el.classList.remove('stat-value--pending');
-    if (opts.animate !== false && typeof value === 'number' && isFinite(value)) {
+    if (opts.animate !== false && state === 'fresh' && typeof value === 'number' && isFinite(value)) {
       _countUp(el, value, formatter);
     } else {
+      _cancelCountUp(el);
       el.textContent = formatter(value);
     }
   }
@@ -356,10 +503,7 @@ function _renderMetric(id, stats, name, formatter = fmtNum, opts = {}) {
     el.removeAttribute('title');
     return;
   }
-  const detail = [metric.source, metric.observed_at];
-  if (metric.stale) detail.push('stale');
-  if (metric.error) detail.push(metric.error);
-  el.title = detail.filter(Boolean).join(' · ');
+  el.title = detail;
 }
 
 // Blank a group of stat cards. A headline reset to "—" beside its previous
@@ -400,6 +544,11 @@ function _setProbePill(id, stats, name, okLabel, badLabel) {
   _setStatusPill(id, ok, okLabel, badLabel);
   const el = document.getElementById(id);
   const metric = _metricEnvelope(stats, name);
+  const state = _metricState(stats, name);
+  if (el && (!metric || ['stale', 'unavailable', 'partial'].includes(state))) {
+    el.className = `pill ${state === 'stale' || state === 'partial' ? 'pill-warning' : 'pill-neutral'}`;
+    el.textContent = state === 'stale' ? 'Stale' : state === 'partial' ? 'Measuring' : 'Unavailable';
+  }
   if (el && metric) {
     el.title = [metric.source, metric.observed_at, metric.error].filter(Boolean).join(' · ');
   } else if (el) {
@@ -413,8 +562,10 @@ function _setProbePill(id, stats, name, okLabel, badLabel) {
 
 async function loadDashboard() {
   const loadSeq = ++_dashboardLoadSeq;
+  _startDashboardRefresh();
   const stats = await api('/api/stats');
   if (loadSeq !== _dashboardLoadSeq) return;
+  _renderDashboardSnapshotStatus(stats);
   // The core answers totalCount from the Postgres planner's estimate once the
   // table outgrows an exact count, so render it rounded rather than to the
   // last digit. Anything that claims precision it does not have is a lie the
@@ -431,12 +582,12 @@ async function loadDashboard() {
   _renderMetric('statMatchRate', stats, 'matchRate30d', value => `${(value * 100).toFixed(1)}%`);
   if (stats) {
     const torrentsSub = document.getElementById('statTorrentsSub');
-    if (torrentsSub) torrentsSub.textContent = torrentsEstimated
-      ? 'catalogue size · planner estimate' : 'catalogue size';
+    if (torrentsSub) torrentsSub.textContent = _metricValue(stats, 'totalTorrents') === null ? 'catalogue size unavailable'
+      : torrentsEstimated ? 'catalogue size · planner estimate' : 'catalogue size';
 
     const throughput = _metricValue(stats, 'indexerThroughput');
     const pulse = document.getElementById('statThroughputPulse');
-    if (pulse) pulse.hidden = !(throughput > 0);
+    if (pulse) pulse.hidden = !(throughput > 0 && _metricState(stats, 'indexerThroughput') === 'fresh');
 
     // Grab success % (from the core's dashstats gauges). Pending attempts are
     // deliberately outside the ratio — an unresolved grab is neither outcome —
@@ -454,7 +605,7 @@ async function loadDashboard() {
         + (grabPending !== null ? ` · ${fmtNum(grabPending)} pending` : '')
       : 'unavailable';
     const grabRate = _metricValue(stats, 'grabSuccessRate');
-    _renderMeter('statGrabMeter', grabRate, _toneForRatio(grabRate, 0.7, 0.45));
+    _renderMeter('statGrabMeter', grabRate, _metricState(stats, 'grabSuccessRate') === 'fresh' ? _toneForRatio(grabRate, 0.7, 0.45) : 'neutral');
 
     const matchMatched = _metricValue(stats, 'matchMatched30d');
     const matchTotal = _metricValue(stats, 'matchTotal30d');
@@ -462,7 +613,7 @@ async function loadDashboard() {
     if (matchSub) matchSub.textContent = matchMatched !== null && matchTotal !== null
       ? `${fmtNum(matchMatched)} of ${fmtNum(matchTotal)} movie/TV` : 'unavailable';
     const matchRate = _metricValue(stats, 'matchRate30d');
-    _renderMeter('statMatchMeter', matchRate, _toneForRatio(matchRate, 0.8, 0.6));
+    _renderMeter('statMatchMeter', matchRate, _metricState(stats, 'matchRate30d') === 'fresh' ? _toneForRatio(matchRate, 0.8, 0.6) : 'neutral');
 
     // Lifetime exclusions, not a per-minute rate. The excluded counter moves a
     // few times an hour, so a /min figure on it was pure rounding noise.
@@ -473,7 +624,8 @@ async function loadDashboard() {
 
     const chart = document.getElementById('categoryChart');
     const categoryBreakdown = _metricValue(stats, 'categoryBreakdown');
-    if (Array.isArray(categoryBreakdown) && categoryBreakdown.length > 0) {
+    _renderMetricStatus('categoryChartStatus', stats, 'categoryBreakdown');
+    if (chart && Array.isArray(categoryBreakdown) && categoryBreakdown.length > 0) {
       // Sort largest first so the bar lengths form a clean visual descent
       const breakdown = [...categoryBreakdown].sort((a, b) => b.count - a.count);
       const total = breakdown.reduce((s, c) => s + c.count, 0);
@@ -493,9 +645,9 @@ async function loadDashboard() {
           <div class="cat-pct">${pct}%</div>
         </div>`;
       }).join('');
-    } else if (Array.isArray(categoryBreakdown)) {
+    } else if (chart && Array.isArray(categoryBreakdown)) {
       chart.innerHTML = '<div class="empty-state" style="padding:var(--space-8)"><p class="text-sm text-muted">No indexed categories reported</p></div>';
-    } else {
+    } else if (chart) {
       // Empty breakdown on a refresh must clear the prior bars, not leave them
       // stale (the `if` had no else, so a core hiccup froze the last good chart).
       chart.innerHTML = '<div class="empty-state" style="padding:var(--space-8)"><p class="text-sm text-muted">Category metrics unavailable</p></div>';
@@ -521,6 +673,7 @@ async function loadDashboard() {
       if (el) el.textContent = text;
     });
     if (chart) chart.innerHTML = '<div class="empty-state" style="padding:var(--space-8)"><p class="text-sm text-muted">Category metrics unavailable</p></div>';
+    _renderMetricStatus('categoryChartStatus', stats, 'categoryBreakdown');
   }
   loadRecentActivity(loadSeq);
   loadWinRate(loadSeq);
@@ -530,6 +683,17 @@ async function loadDashboard() {
 // win-rate sparkline, per-indexer breakdown. Data is aggregate counts only
 // (no release names cross the API). Degrades to a "requires core" note when
 // the core predates evidence.indexerStats.
+function _grabAggregateUsable(data) {
+  const count = value => Number.isSafeInteger(value) && value >= 0;
+  return data?.available === true && count(data.totalGrabs) && count(data.bitagentGrabs)
+    && data.bitagentGrabs <= data.totalGrabs
+    && typeof data.bitagentWinRate === 'number' && Number.isFinite(data.bitagentWinRate)
+    && data.bitagentWinRate >= 0 && data.bitagentWinRate <= 1
+    && (data.indexers === undefined || (Array.isArray(data.indexers) && data.indexers.every(i => i && typeof i.indexer === 'string' && count(i.grabs))))
+    && (data.days === undefined || (Array.isArray(data.days) && data.days.every(d => d && count(d.totalGrabs) && count(d.bitagentGrabs)
+      && d.bitagentGrabs <= d.totalGrabs && typeof d.date === 'string' && Number.isFinite(new Date(d.date).getTime()))));
+}
+
 async function loadWinRate(loadSeq) {
   const valueEl = document.getElementById('winRateValue');
   if (!valueEl) return;
@@ -539,13 +703,22 @@ async function loadWinRate(loadSeq) {
   const bdEl = document.getElementById('indexerBreakdown');
   const sparkEl = document.getElementById('winRateSpark');
 
-  if (!s || !s.available) {
-    valueEl.textContent = '--';
-    if (countsEl) countsEl.textContent = '';
-    if (bdEl) bdEl.innerHTML = '<div class="empty-state" style="padding:var(--space-8)"><p class="text-sm text-muted">Not available — requires core with evidence.indexerStats (≥ v0.40.0)</p></div>';
+  if (!_grabAggregateUsable(s)) {
+    const failed = !s || s.available === true;
+    const message = !s ? 'Grab aggregate request failed or timed out. Refresh to retry.'
+      : s.available === true ? 'The core returned an invalid grab aggregate.'
+        : 'Core unreachable or grab aggregate unsupported. Open System to check connectivity and core compatibility.';
+    valueEl.textContent = '—';
+    if (countsEl) countsEl.textContent = failed ? 'request failed' : 'unavailable';
+    _setViewStatus('winRateStatus', failed ? 'failure' : 'unavailable', failed ? 'Failed' : 'Unavailable', message);
+    if (bdEl) bdEl.innerHTML = `<div class="empty-state" style="padding:var(--space-8)"><p class="text-sm text-muted">${escHtml(message)}</p></div>`;
     if (sparkEl) sparkEl.innerHTML = '';
     return;
   }
+
+  const loadedAt = new Date().toISOString();
+  _setViewStatus('winRateStatus', 'fresh', `Loaded ${_observationTime(loadedAt)}`,
+    `Source: bitagent.graphql:evidence.indexerStats · Response loaded ${loadedAt}. The API may serve a cached aggregate and does not expose its source observation time.`);
 
   valueEl.textContent = s.totalGrabs > 0 ? `${(s.bitagentWinRate * 100).toFixed(1)}%` : '—';
   if (countsEl) countsEl.textContent = s.totalGrabs > 0
@@ -572,21 +745,41 @@ async function loadWinRate(loadSeq) {
     }
   }
 
-  // Sparkline: daily win-rate (wins/total per day) as a 0..100% polyline
-  // with a dashed 50% reference line. Days with zero grabs plot at 0.
+  // A day without grabs has no win rate. Leave a gap rather than plotting a
+  // false 0%, with a point for a single observed day between gaps.
   if (sparkEl) {
     const days = s.days || [];
     if (days.length > 1) {
       const W = 300, H = 60, P = 4;
-      const pts = days.map((d, i) => {
-        const x = P + (i * (W - 2 * P)) / (days.length - 1);
-        const r = d.totalGrabs > 0 ? d.bitagentGrabs / d.totalGrabs : 0;
+      const times = days.map(d => new Date(d.date).getTime());
+      const first = Math.min(...times), last = Math.max(...times);
+      const segments = [];
+      let segment = [];
+      let previousTime = null;
+      days.forEach((d, i) => {
+        // The core omits dates without grabs; it does not emit zero buckets.
+        // Space points by their actual dates and break across those gaps.
+        if (previousTime !== null && times[i] - previousTime > 36 * 60 * 60 * 1000) {
+          if (segment.length) segments.push(segment);
+          segment = [];
+        }
+        previousTime = times[i];
+        if (d.totalGrabs === 0) {
+          if (segment.length) segments.push(segment);
+          segment = [];
+          return;
+        }
+        const x = P + ((times[i] - first) * (W - 2 * P)) / Math.max(last - first, 1);
+        const r = d.bitagentGrabs / d.totalGrabs;
         const y = H - P - r * (H - 2 * P);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
+        segment.push([x.toFixed(1), y.toFixed(1)]);
       });
+      if (segment.length) segments.push(segment);
       sparkEl.innerHTML =
         `<line x1="${P}" y1="${H / 2}" x2="${W - P}" y2="${H / 2}" stroke="var(--color-border, rgba(255,255,255,0.12))" stroke-dasharray="4 4" vector-effect="non-scaling-stroke"/>` +
-        `<polyline points="${pts.join(' ')}" fill="none" stroke="var(--color-success)" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+        segments.map(points => points.length === 1
+          ? `<circle cx="${points[0][0]}" cy="${points[0][1]}" r="2" fill="var(--color-success)"/>`
+          : `<polyline points="${points.map(point => point.join(',')).join(' ')}" fill="none" stroke="var(--color-success)" stroke-width="2" vector-effect="non-scaling-stroke"/>`).join('');
     } else {
       sparkEl.innerHTML = '';
     }
@@ -640,8 +833,14 @@ async function loadRecentActivity(loadSeq) {
   const data = await api('/api/evidence?limit=10');
   if (loadSeq !== _dashboardLoadSeq) return;
   const tbody = document.getElementById('activityTable');
-  if (data === null) { tbody.innerHTML = loadFailedRow(5); return; }
+  if (!tbody) return;
+  if (!data || !Array.isArray(data.items)) {
+    tbody.innerHTML = loadFailedRow(5);
+    _setViewStatus('activityStatus', 'failure', 'Failed', 'Evidence request failed or timed out. Refresh to retry.');
+    return;
+  }
   if (data && data.items && data.items.length > 0) {
+    _setViewStatus('activityStatus', 'fresh', 'Events loaded', 'Source: bitagent.graphql:evidence.list. Event timestamps describe individual events; the API does not expose a source observation timestamp.');
     tbody.innerHTML = data.items.map(e =>
       `<tr>
         <td class="font-mono text-xs">${fmtAgo(e.timestamp)}</td>
@@ -652,7 +851,8 @@ async function loadRecentActivity(loadSeq) {
       </tr>`
     ).join('');
   } else {
-    tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-sm" style="text-align:center;padding:var(--space-6)">No recent activity yet. Events flow in from qBittorrent state polls and *arr webhooks/history.</td></tr>';
+    _setViewStatus('activityStatus', 'unavailable', 'No events returned', 'The evidence list API also returns an empty page when the upstream source is unavailable. Check System for source reachability.');
+    tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-sm" style="text-align:center;padding:var(--space-6)">No recent events returned. An empty response can also mean the evidence source is unavailable; check System before treating it as no activity.</td></tr>';
   }
 }
 
@@ -1690,81 +1890,296 @@ async function loadEvidence() {
 function evPage(dir) { evOffset = Math.max(0, evOffset + dir * evLimit); loadEvidence(); }
 
 /* ── Settings ─────────────────────────────────────────────────────────── */
-async function loadSettings() {
-  const data = await api('/api/settings');
-  if (!data) return;
-  const grid = document.getElementById('settingsGrid');
+let _settingsFields = null;
+const _settingsDrafts = Object.create(null);
+const _settingsMessages = Object.create(null);
+const _settingsPending = new Set();
+const _settingsResetConfirm = new Set();
+let _settingsLoadPromise = null;
+let _settingsLoadedAt = null;
+
+function _settingDescription(key) {
   const descriptions = {
-    bitagent_graphql_url: 'GraphQL endpoint for the BitAgent core service',
-    bitagent_metrics_url: 'Prometheus metrics endpoint',
-    tmdb_api_key: 'TMDB API key for poster art in Library',
-    log_level: 'Logging verbosity (debug, info, warn, error)',
-    torznab_api_key: 'API key for Torznab endpoint auth',
+    tmdb_api_key: 'TMDB API key for poster art in the public library.',
+    log_level: 'Logging verbosity: debug, info, warn, or error.',
+    torznab_api_key: 'Shared API key for the Torznab endpoint.',
   };
-  grid.innerHTML = Object.entries(data.fields).map(([key, f]) => {
+  if (descriptions[key]) return descriptions[key];
+  const app = key.split('_')[0];
+  if (key.endsWith('_base_url')) return `Base URL reachable by this service for ${app}.`;
+  if (key.endsWith('_api_key')) return `API key used to send library releases to ${app}.`;
+  return 'Runtime setting supported by this service.';
+}
+
+function _settingHasDraft(key) {
+  return Object.prototype.hasOwnProperty.call(_settingsDrafts, key);
+}
+
+function _rememberSettingDrafts() {
+  for (const [key, field] of Object.entries(_settingsFields || {})) {
+    const input = document.getElementById(`setting-${key}`);
+    if (!input) continue;
+    if (field.sensitive ? input.value !== '' : input.value !== String(field.current ?? '')) {
+      _settingsDrafts[key] = input.value;
+    } else delete _settingsDrafts[key];
+  }
+}
+
+function _settingsStatus(message, state) {
+  const status = document.getElementById('settingsStatus');
+  if (status) { status.textContent = message; status.dataset.state = state; }
+  const grid = document.getElementById('settingsGrid');
+  if (grid) grid.setAttribute('aria-busy', String(state === 'loading'));
+  const reload = document.getElementById('settingsReload');
+  if (reload) reload.disabled = state === 'loading' || _settingsPending.size > 0;
+}
+
+function _updateSettingActions(key) {
+  const field = (_settingsFields || {})[key];
+  if (!field) return;
+  const pending = _settingsPending.has(key);
+  const busy = pending || !!_settingsLoadPromise;
+  const item = document.getElementById(`setting-item-${key}`);
+  if (item) item.dataset.dirty = String(_settingHasDraft(key));
+  const input = document.getElementById(`setting-${key}`);
+  if (input) input.disabled = pending;
+  const save = document.getElementById(`setting-save-${key}`);
+  if (save) { save.disabled = busy || !_settingHasDraft(key); save.textContent = pending ? 'Working…' : 'Save'; }
+  const reset = document.getElementById(`setting-reset-${key}`);
+  if (reset) {
+    reset.disabled = busy;
+    reset.textContent = _settingsResetConfirm.has(key) ? 'Confirm reset' : 'Reset override';
+  }
+  const cancel = document.getElementById(`setting-cancel-${key}`);
+  if (cancel) { cancel.hidden = !_settingsResetConfirm.has(key); cancel.disabled = busy; }
+  const status = document.getElementById(`setting-status-${key}`);
+  if (status) {
+    const message = _settingsMessages[key];
+    status.textContent = message ? message.text : (_settingHasDraft(key) ? 'Unsaved change' : '');
+    status.dataset.state = message ? message.state : (_settingHasDraft(key) ? 'draft' : 'ready');
+  }
+}
+
+function editSetting(key) {
+  if (!Object.prototype.hasOwnProperty.call(_settingsFields || {}, key)) return;
+  _rememberSettingDrafts();
+  _settingsResetConfirm.delete(key);
+  delete _settingsMessages[key];
+  _updateSettingActions(key);
+  filterSettings();
+}
+
+function filterSettings() {
+  const search = document.getElementById('settingsSearch');
+  const query = search ? search.value.trim().toLowerCase() : '';
+  let visible = 0;
+  const entries = Object.entries(_settingsFields || {});
+  for (const [key, field] of entries) {
+    const item = document.getElementById(`setting-item-${key}`);
+    const matches = `${key.replaceAll('_', ' ')} ${key} ${_settingDescription(key)} ${field.overridden ? 'override' : 'startup'}`.toLowerCase().includes(query);
+    if (item) item.hidden = !matches;
+    if (matches) visible++;
+  }
+  const summary = document.getElementById('settingsSummary');
+  const draftCount = Object.keys(_settingsDrafts).length;
+  if (summary) summary.textContent = _settingsFields
+    ? `${visible} of ${entries.length} settings${draftCount ? ` · ${draftCount} unsaved ${draftCount === 1 ? 'change' : 'changes'}` : ''}`
+    : '';
+  const empty = document.getElementById('settingsEmpty');
+  if (empty) empty.hidden = !_settingsFields || visible > 0;
+}
+
+function _renderSettings() {
+  const grid = document.getElementById('settingsGrid');
+  if (!grid || !_settingsFields) return;
+  // Reloads keep drafts in memory only, and restore keyboard focus after
+  // replacing rows. Never write configuration values into browser storage.
+  const active = document.activeElement;
+  const focusId = active && grid.contains(active) ? active.id : null;
+  const selection = focusId && typeof active.selectionStart === 'number'
+    ? [active.selectionStart, active.selectionEnd] : null;
+  grid.innerHTML = Object.entries(_settingsFields).map(([key, f]) => {
     const isSecret = !!f.sensitive;
-    const secretState = f.configured ? `configured (${f.source})` : 'not configured';
-    const inputValue = isSecret ? '' : (f.current || '');
+    const secretState = f.configured == null ? 'Checking configured state' : (f.configured ? `configured (${f.source})` : 'not configured');
+    const inputValue = _settingHasDraft(key) ? _settingsDrafts[key] : (isSecret ? '' : (f.current ?? ''));
     const inputPlaceholder = isSecret
       ? (f.configured ? 'Enter a replacement value' : 'Enter a value')
-      : (f.default || '');
-    return `<div class="setting-item">
+      : (f.default ?? '');
+    return `<div class="setting-item" id="setting-item-${escHtml(key)}">
       <div class="setting-item-header">
-        <span class="setting-key">${escHtml(key)}</span>
+        <label class="setting-key" for="setting-${escHtml(key)}">${escHtml(key)}</label>
         ${f.overridden ? '<span class="pill pill-info setting-override-pill">overridden</span>' : ''}
       </div>
-      <div class="setting-default">${isSecret ? 'State' : 'Default'}: <code>${isSecret ? escHtml(secretState) : escHtml(f.default)}</code></div>
-      <p class="text-xs text-muted mb-4">${descriptions[key] || ''}</p>
+      <div class="setting-default">${isSecret ? 'State' : 'Startup value'}: <code>${isSecret ? escHtml(secretState) : escHtml(f.default ?? '')}</code></div>
+      <p class="text-xs text-muted mb-4" id="setting-description-${escHtml(key)}">${escHtml(_settingDescription(key))}</p>
       <div class="flex gap-2">
-        <input class="input font-mono" id="setting-${key}" data-sensitive="${isSecret}" type="${isSecret ? 'password' : 'text'}" value="${escHtml(inputValue)}" style="flex:1" placeholder="${escHtml(inputPlaceholder)}" autocomplete="off">
+        <input class="input font-mono" id="setting-${escHtml(key)}" data-sensitive="${isSecret}" type="${isSecret ? 'password' : 'text'}" value="${isSecret ? '' : escHtml(inputValue)}" placeholder="${escHtml(inputPlaceholder)}" autocomplete="off" spellcheck="false" aria-describedby="setting-description-${escHtml(key)} setting-status-${escHtml(key)}" oninput="editSetting('${escHtml(key)}')">
       </div>
       <div class="setting-actions">
-        <button class="btn btn-primary btn-sm" onclick="saveSetting('${key}')">Save</button>
-        ${f.overridden ? `<button class="btn btn-ghost btn-sm" style="color:var(--color-danger)" onclick="resetSetting('${key}')">Reset</button>` : ''}
+        <button type="button" class="btn btn-primary btn-sm" id="setting-save-${escHtml(key)}" onclick="saveSetting('${escHtml(key)}')">Save</button>
+        ${f.overridden ? `<button type="button" class="btn btn-ghost btn-sm" id="setting-reset-${escHtml(key)}" onclick="resetSetting('${escHtml(key)}')">Reset override</button><button type="button" class="btn btn-ghost btn-sm" id="setting-cancel-${escHtml(key)}" onclick="cancelSettingReset('${escHtml(key)}')" hidden>Cancel</button>` : ''}
       </div>
+      <p class="setting-message text-xs" id="setting-status-${escHtml(key)}" role="status" aria-live="polite"></p>
     </div>`;
   }).join('');
-
-  // Sensitive settings are state-only. Values never leave the server; blank
-  // inputs mean "preserve", and a typed value explicitly replaces the secret.
-  const fields = data.fields || {};
-  const tzConfigured = !!((fields.torznab_api_key || {}).configured);
-  const tzEl = document.getElementById('tzKeyDisplay');
-  if (tzEl) { tzEl.value = ''; tzEl.placeholder = tzConfigured ? 'configured (value hidden)' : 'not set'; }
-  const tmdbConfigured = !!((fields.tmdb_api_key || {}).configured);
-  const tmdbPill = document.getElementById('tmdbStatus');
-  if (tmdbPill) {
-    tmdbPill.textContent = tmdbConfigured ? 'Configured' : 'Not configured';
-    tmdbPill.className = `pill ${tmdbConfigured ? 'pill-success' : 'pill-neutral'}`;
+  for (const [key, field] of Object.entries(_settingsFields)) {
+    const input = document.getElementById(`setting-${key}`);
+    if (input && field.sensitive && _settingHasDraft(key)) input.value = _settingsDrafts[key];
   }
-  // The dashboard API key is env-only (not a mutable setting) — reflect
-  // whether the tier is active rather than pretending to know the value.
-  const tiers = await api('/api/auth/tiers');
-  const dashEl = document.getElementById('dashKeyDisplay');
-  if (dashEl && tiers) {
-    dashEl.value = '';
-    dashEl.placeholder = tiers.apiKey ? 'configured via env (value not exposed)' : 'not set';
+  Object.keys(_settingsFields).forEach(_updateSettingActions);
+  filterSettings();
+  let focused = focusId && document.getElementById(focusId);
+  if (focusId && (!focused || focused.disabled || focused.hidden)) {
+    const action = focusId.match(/^setting-(?:save|reset|cancel)-(.+)$/);
+    if (action) focused = document.getElementById(`setting-${action[1]}`);
   }
+  if (focused && !focused.disabled && !focused.hidden) {
+    focused.focus({ preventScroll: true });
+    if (selection && typeof focused.setSelectionRange === 'function') focused.setSelectionRange(...selection);
+  }
+}
 
-  loadAuditLog();
-  loadAuthStatus();
+function _validSettingsSnapshot(data) {
+  return !!data && !!data.fields && typeof data.fields === 'object' && !Array.isArray(data.fields)
+    && Object.entries(data.fields).every(([key, field]) => /^[a-z0-9_]+$/.test(key)
+      && field && typeof field.sensitive === 'boolean' && typeof field.overridden === 'boolean'
+      && (field.sensitive ? typeof field.configured === 'boolean'
+        : typeof field.current === 'string' && typeof field.default === 'string'));
+}
+
+async function loadSettings() {
+  if (_settingsLoadPromise) return _settingsLoadPromise;
+  if (_settingsPending.size > 0) return;
+  _rememberSettingDrafts();
+  _settingsResetConfirm.clear();
+  _settingsStatus('Loading runtime configuration… Unsaved edits will be retained.', 'loading');
+  _settingsLoadPromise = (async () => {
+    const data = await api('/api/settings');
+    // Include edits typed while this request was in flight.
+    _rememberSettingDrafts();
+    if (!_validSettingsSnapshot(data)) {
+      _settingsStatus(_settingsLoadedAt
+        ? 'Configuration refresh failed. Showing the previous snapshot; unsaved edits are retained.'
+        : 'Could not load runtime configuration. Use Reload to try again.', _settingsLoadedAt ? 'stale' : 'error');
+      return;
+    }
+    _settingsFields = data.fields;
+    for (const key of Object.keys(_settingsDrafts)) {
+      if (!Object.prototype.hasOwnProperty.call(_settingsFields, key)) delete _settingsDrafts[key];
+    }
+    _settingsLoadedAt = new Date();
+    _renderSettings();
+    _settingsStatus(`Configuration checked at ${_settingsLoadedAt.toLocaleTimeString()}. Unsaved edits stay in this page until saved.`, 'ready');
+
+    // Sensitive settings are state-only. Values never leave the server;
+    // integration/reference controls receive configured state only.
+    const fields = data.fields;
+    const tzEl = document.getElementById('tzKeyDisplay');
+    if (tzEl) { tzEl.value = ''; tzEl.placeholder = (fields.torznab_api_key || {}).configured ? 'configured (value hidden)' : 'not set'; }
+  })();
+  Object.keys(_settingsFields || {}).forEach(_updateSettingActions);
+  try { return await _settingsLoadPromise; }
+  finally {
+    _settingsLoadPromise = null;
+    Object.keys(_settingsFields || {}).forEach(_updateSettingActions);
+    const reload = document.getElementById('settingsReload');
+    if (reload) reload.disabled = _settingsPending.size > 0;
+  }
 }
 
 async function saveSetting(key) {
+  if (_settingsLoadPromise || _settingsPending.has(key) || !Object.prototype.hasOwnProperty.call(_settingsFields || {}, key)) return;
+  if (key === 'tmdb_api_key' && _tmdbSavePending) return;
   const input = document.getElementById(`setting-${key}`);
+  if (!input) return;
+  _rememberSettingDrafts();
   const value = input.value;
-  if (input.dataset.sensitive === 'true' && !value) {
-    toast('Enter a replacement value; blank preserves the existing secret', 'error');
+  if (_settingsFields[key].sensitive && !value) {
+    _settingsMessages[key] = { text: 'Enter a replacement value. Blank preserves the existing secret.', state: 'error' };
+    _updateSettingActions(key);
     return;
   }
+  if (!_settingHasDraft(key)) return;
+  if (key === 'tmdb_api_key') _tmdbSettingsRevision++;
+  _settingsPending.add(key);
+  _settingsResetConfirm.delete(key);
+  _settingsMessages[key] = { text: 'Saving…', state: 'loading' };
+  _settingsStatus('Saving configuration…', 'loading');
+  _updateSettingActions(key);
   const r = await api(`/api/settings/overrides/${key}`, { method: 'PUT', body: JSON.stringify({ value }) });
-  if (r) { toast(`Setting "${key}" saved`, 'success'); loadSettings(); }
-  else toast(`Failed to save "${key}"`, 'error');
+  if (key === 'tmdb_api_key') _tmdbSettingsRevision++;
+  _rememberSettingDrafts();
+  _settingsPending.delete(key);
+  if (r) {
+    const field = _settingsFields[key];
+    _settingsFields[key] = { ...field, overridden: true, source: 'override', ...(field.sensitive ? { configured: true } : { current: value }) };
+    delete _settingsDrafts[key];
+    // Clear a saved secret before any subsequent read or render can fail.
+    if (field.sensitive) input.value = '';
+    if (key === 'tmdb_api_key') _renderTmdbConfigured(true);
+    _settingsMessages[key] = { text: 'Saved.', state: 'success' };
+    _renderSettings();
+    toast(`Setting "${key}" saved`, 'success');
+    await loadSettings();
+  } else {
+    if (key === 'tmdb_api_key') _renderTmdbConfigured(null);
+    _settingsMessages[key] = { text: 'Save failed. Your edit is retained; retry after checking the connection.', state: 'error' };
+    _settingsStatus('A configuration change could not be saved. Unsaved edits are retained.', 'error');
+    _updateSettingActions(key);
+    toast(`Failed to save "${key}"`, 'error');
+  }
+  filterSettings();
 }
+
+function cancelSettingReset(key) {
+  _settingsResetConfirm.delete(key);
+  delete _settingsMessages[key];
+  _updateSettingActions(key);
+  const reset = document.getElementById(`setting-reset-${key}`);
+  if (reset) reset.focus();
+}
+
 async function resetSetting(key) {
+  const field = (_settingsFields || {})[key];
+  if (!field || !field.overridden || _settingsLoadPromise || _settingsPending.has(key)) return;
+  if (key === 'tmdb_api_key' && _tmdbSavePending) return;
+  _rememberSettingDrafts();
+  if (!_settingsResetConfirm.has(key)) {
+    _settingsResetConfirm.add(key);
+    _settingsMessages[key] = { text: 'Remove this override and use its startup value? Confirm reset or cancel. Any edit to this setting will be discarded.', state: 'confirm' };
+    _updateSettingActions(key);
+    return;
+  }
+  if (key === 'tmdb_api_key') _tmdbSettingsRevision++;
+  _settingsPending.add(key);
+  _settingsMessages[key] = { text: 'Resetting…', state: 'loading' };
+  _settingsStatus('Resetting configuration…', 'loading');
+  _updateSettingActions(key);
   const r = await api(`/api/settings/overrides/${key}`, { method: 'DELETE' });
-  if (r) { toast(`Setting "${key}" reset to default`, 'success'); loadSettings(); }
-  else toast(`Failed to reset "${key}"`, 'error');
+  if (key === 'tmdb_api_key') _tmdbSettingsRevision++;
+  _rememberSettingDrafts();
+  _settingsPending.delete(key);
+  _settingsResetConfirm.delete(key);
+  if (r) {
+    delete _settingsDrafts[key];
+    _settingsFields[key] = { ...field, overridden: false, source: 'startup', ...(field.sensitive ? { configured: null } : { current: field.default }) };
+    const tmdbRevision = _tmdbSettingsRevision;
+    if (key === 'tmdb_api_key') _renderTmdbConfigured(null);
+    _settingsMessages[key] = { text: 'Override removed.', state: 'success' };
+    _renderSettings();
+    const input = document.getElementById(`setting-${key}`);
+    if (input) input.focus();
+    toast(`Setting "${key}" reset to startup value`, 'success');
+    await loadSettings();
+    if (key === 'tmdb_api_key' && tmdbRevision === _tmdbSettingsRevision) _renderTmdbConfigured(_settingsFields[key].configured);
+  } else {
+    if (key === 'tmdb_api_key') _renderTmdbConfigured(null);
+    _settingsMessages[key] = { text: 'Reset failed. The previous snapshot and your edit are retained.', state: 'error' };
+    _settingsStatus('A configuration override could not be reset. Use Reload to check its current state.', 'error');
+    _updateSettingActions(key);
+    toast(`Failed to reset "${key}"`, 'error');
+  }
+  filterSettings();
 }
 
 async function loadAuditLog() {
@@ -1805,6 +2220,8 @@ async function loadAuthStatus() {
   };
   // Reflect startup-only trust config from the backend resolver.
   const tiers = await api('/api/auth/tiers');
+  const dashEl = document.getElementById('dashKeyDisplay');
+  if (dashEl) { dashEl.value = ''; dashEl.placeholder = !tiers ? 'status unavailable' : tiers.apiKey ? 'configured via env (value hidden)' : 'not configured'; }
   if (!tiers) {
     // Couldn't reach the endpoint — show unknown rather than a fictional status.
     ['authTierApi', 'authTierNpm', 'authTierFwd', 'authTierSso'].forEach(id => {
@@ -1819,17 +2236,26 @@ async function loadAuthStatus() {
   updatePill('authTierSso', !!tiers.sso);
 }
 
-function switchSettingsTab(tab) {
-  document.querySelectorAll('#tab-settings .tab-btn').forEach(b => b.classList.toggle('active', b.dataset.stab === tab));
+function loadSettingsView() {
+  const sectionLoaders = { config: loadSettings, integrations: loadArrSettings,
+    classifier: loadClassifierRules, liveness: loadLivenessOps, filters: loadFiltersStatus,
+    blocklists: loadBlockLists, audit: loadAuditLog };
+  // Auth displays the configured Torznab-key state as well as startup tiers.
+  if (_settingsTab === 'auth') return Promise.all([loadSettings(), loadAuthStatus()]);
+  return sectionLoaders[_settingsTab]?.();
+}
+function switchSettingsTab(tab, { history = 'push', load = true } = {}) {
+  if (!SETTINGS_TABS.includes(tab)) return;
+  _settingsTab = tab;
+  if (history && currentTab === 'settings') _writeOperatorRoute(history);
+  document.querySelectorAll('#tab-settings .tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.stab === tab);
+    b.setAttribute('aria-pressed', String(b.dataset.stab === tab));
+  });
   document.querySelectorAll('#tab-settings .tab-panel').forEach(p => {
     if (p.id && p.id.startsWith('stab-')) p.classList.toggle('active', p.id === `stab-${tab}`);
   });
-  if (tab === 'audit') loadAuditLog();
-  if (tab === 'classifier') loadClassifierRules();
-  if (tab === 'liveness') loadLivenessOps();
-  if (tab === 'filters') loadFiltersStatus();
-  if (tab === 'blocklists') loadBlockLists();
-  if (tab === 'integrations') loadArrSettings();
+  if (load) loadSettingsView();
 }
 
 async function loadFiltersStatus() {
@@ -1983,52 +2409,202 @@ async function loadLivenessOps() {
   );
 }
 
-async function loadArrSettings() {
-  const data = await api('/api/settings');
-  if (!data) return;
-  const fields = data.fields || {};
-  for (const arr of ['sonarr', 'radarr', 'lidarr']) {
-    const urlEl = document.getElementById(`arr-${arr}-url`);
-    const keyEl = document.getElementById(`arr-${arr}-key`);
-    if (urlEl && fields[`${arr}_base_url`]) urlEl.value = fields[`${arr}_base_url`].current || '';
-    if (keyEl && fields[`${arr}_api_key`]) {
-      const field = fields[`${arr}_api_key`];
-      keyEl.value = '';
-      keyEl.placeholder = field.configured ? 'configured — enter to replace' : 'Enter API key';
+/* ── Integration configuration ──────────────────────────────────────── */
+let _tmdbSavePending = false;
+let _tmdbSettingsRevision = 0;
+const _arrNames = ['sonarr', 'radarr', 'lidarr'];
+const _arrSnapshots = Object.create(null);
+const _arrDrafts = Object.create(null);
+const _arrMessages = Object.create(null);
+const _arrPending = new Set();
+let _arrLoadPromise = null;
+let _arrLoadedAt = null;
+let _arrRefreshNeeded = false;
+
+function _renderTmdbConfigured(configured) {
+  const pill = document.getElementById('tmdbStatus');
+  if (!pill) return;
+  pill.textContent = configured == null ? 'Unavailable' : (configured ? 'Configured' : 'Not configured');
+  pill.className = `pill ${configured === true ? 'pill-success' : 'pill-neutral'}`;
+}
+
+function _arrName(arr) { return arr.charAt(0).toUpperCase() + arr.slice(1); }
+function _arrHasDraft(arr, field) {
+  return Object.prototype.hasOwnProperty.call(_arrDrafts[arr] || {}, field);
+}
+
+function _rememberArrDrafts() {
+  for (const arr of _arrNames) {
+    const url = document.getElementById(`arr-${arr}-url`);
+    const key = document.getElementById(`arr-${arr}-key`);
+    const draft = _arrDrafts[arr] || (_arrDrafts[arr] = Object.create(null));
+    const snapshot = _arrSnapshots[arr];
+    if (url) {
+      const dirty = snapshot && typeof snapshot.url === 'string' ? url.value !== snapshot.url : (url.value !== '' || _arrHasDraft(arr, 'url'));
+      if (dirty) draft.url = url.value;
+      else delete draft.url;
     }
+    if (key && key.value !== '') draft.key = key.value;
+    else delete draft.key;
   }
+}
+
+function _integrationsStatus(text, state) {
+  const status = document.getElementById('integrationsStatus');
+  if (status) { status.textContent = text; status.dataset.state = state; }
+  const grid = document.getElementById('arrSettingsGrid');
+  if (grid) grid.setAttribute('aria-busy', String(state === 'loading'));
+}
+
+function _updateArrActions(arr) {
+  const pending = _arrPending.has(arr);
+  for (const field of ['url', 'key']) {
+    const input = document.getElementById(`arr-${arr}-${field}`);
+    if (input) input.readOnly = pending;
+  }
+  const dirty = _arrHasDraft(arr, 'url') || (_arrHasDraft(arr, 'key') && !!_arrDrafts[arr].key.trim());
+  const save = document.getElementById(`arr-save-${arr}`);
+  if (save) { save.disabled = pending || !!_arrLoadPromise || !dirty; save.textContent = pending ? 'Saving…' : `Save ${_arrName(arr)}`; }
+  const status = document.getElementById(`arr-${arr}-status`);
+  if (status) {
+    const message = _arrMessages[arr];
+    status.textContent = message ? message.text : (dirty ? 'Unsaved changes' : '');
+    status.dataset.state = message ? message.state : (dirty ? 'draft' : 'ready');
+  }
+}
+
+function editArrSetting(arr, field) {
+  if (!_arrNames.includes(arr) || _arrPending.has(arr)) return;
+  // Explicit initial edits can include clearing a URL while the first read
+  // is pending; retain that intent rather than replacing it with the server.
+  if (field === 'url' && !_arrSnapshots[arr]) {
+    const input = document.getElementById(`arr-${arr}-url`);
+    if (input) (_arrDrafts[arr] || (_arrDrafts[arr] = Object.create(null))).url = input.value;
+  }
+  _rememberArrDrafts();
+  delete _arrMessages[arr];
+  _updateArrActions(arr);
+}
+
+function _validArrSnapshot(data) {
+  return !!data && !!data.fields && _arrNames.every(arr => {
+    const url = data.fields[`${arr}_base_url`];
+    const key = data.fields[`${arr}_api_key`];
+    return url && url.sensitive === false && typeof url.current === 'string'
+      && key && key.sensitive === true && typeof key.configured === 'boolean';
+  });
+}
+
+async function loadArrSettings() {
+  if (_arrLoadPromise) return _arrLoadPromise;
+  if (_arrPending.size > 0) return;
+  _rememberArrDrafts();
+  const tmdbRevision = _tmdbSettingsRevision;
+  _integrationsStatus('Loading integration configuration… Unsaved edits will be retained.', 'loading');
+  _arrLoadPromise = (async () => {
+    const data = await api('/api/settings');
+    _rememberArrDrafts();
+    if (!_validArrSnapshot(data)) {
+      _integrationsStatus(_arrLoadedAt
+        ? 'Integration refresh failed. Showing the previous snapshot; unsaved edits are retained.'
+        : 'Could not load integration configuration. Refresh to try again; your edits are retained.', _arrLoadedAt ? 'stale' : 'error');
+      return;
+    }
+    for (const arr of _arrNames) {
+      const fields = data.fields;
+      _arrSnapshots[arr] = { url: fields[`${arr}_base_url`].current, configured: fields[`${arr}_api_key`].configured };
+      const url = document.getElementById(`arr-${arr}-url`);
+      const key = document.getElementById(`arr-${arr}-key`);
+      if (url && !_arrHasDraft(arr, 'url')) url.value = _arrSnapshots[arr].url;
+      if (key) key.placeholder = _arrSnapshots[arr].configured ? 'configured — enter to replace' : 'Enter API key';
+    }
+    const tmdbField = data.fields.tmdb_api_key;
+    if (tmdbRevision === _tmdbSettingsRevision && !_tmdbSavePending && !_settingsPending.has('tmdb_api_key') && tmdbField && typeof tmdbField.configured === 'boolean') {
+      _renderTmdbConfigured(tmdbField.configured);
+    }
+    _arrLoadedAt = new Date();
+    _arrRefreshNeeded = false;
+    _rememberArrDrafts();
+    _integrationsStatus(`Integration configuration checked at ${_arrLoadedAt.toLocaleTimeString()}. Unsaved edits stay in this page until saved.`, 'ready');
+  })();
+  _arrNames.forEach(_updateArrActions);
+  try { return await _arrLoadPromise; }
+  finally { _arrLoadPromise = null; _arrNames.forEach(_updateArrActions); }
 }
 
 async function saveArrSettings(arr) {
-  const urlEl = document.getElementById(`arr-${arr}-url`);
-  const keyEl = document.getElementById(`arr-${arr}-key`);
-  const url = urlEl?.value?.trim();
-  const key = keyEl?.value?.trim();
-  if (!url && !key) { toast('Enter at least URL or key', 'error'); return; }
-  const saves = [];
-  if (url) saves.push(api(`/api/settings/overrides/${arr}_base_url`, { method: 'PUT', body: JSON.stringify({ value: url }) }));
-  if (key) saves.push(api(`/api/settings/overrides/${arr}_api_key`, { method: 'PUT', body: JSON.stringify({ value: key }) }));
-  const results = await Promise.all(saves);
-  const name = arr.charAt(0).toUpperCase() + arr.slice(1);
-  if (results.every(Boolean)) {
-    toast(`${name} settings saved`, 'success');
-    if (keyEl) keyEl.value = '';
-    loadArrSettings();
+  if (!_arrNames.includes(arr) || _arrPending.has(arr) || _arrLoadPromise) return;
+  _rememberArrDrafts();
+  const operations = [];
+  if (_arrHasDraft(arr, 'url')) operations.push({ field: 'url', key: `${arr}_base_url`, value: _arrDrafts[arr].url.trim(), label: 'Base URL' });
+  if (_arrHasDraft(arr, 'key') && _arrDrafts[arr].key.trim()) operations.push({ field: 'key', key: `${arr}_api_key`, value: _arrDrafts[arr].key.trim(), label: 'API key' });
+  if (!operations.length) {
+    _arrMessages[arr] = { text: 'No changes to save. Blank API keys preserve the configured key.', state: 'ready' };
+    _updateArrActions(arr);
+    return;
   }
-  else toast(`Failed to save ${name} settings`, 'error');
+  _arrPending.add(arr);
+  _arrMessages[arr] = { text: 'Saving configuration…', state: 'loading' };
+  _integrationsStatus('Saving integration configuration…', 'loading');
+  _updateArrActions(arr);
+  const results = await Promise.all(operations.map(async operation => {
+    const result = await api(`/api/settings/overrides/${operation.key}`, { method: 'PUT', body: JSON.stringify({ value: operation.value }) });
+    if (result) {
+      const input = document.getElementById(`arr-${arr}-${operation.field}`);
+      // An accepted key is cleared as soon as its own request succeeds,
+      // including partial saves and a failed later configuration read.
+      if (input) input.value = operation.field === 'key' ? '' : operation.value;
+      if (input && operation.field === 'key') input.placeholder = 'configured — enter to replace';
+      delete _arrDrafts[arr][operation.field];
+      _arrSnapshots[arr] = { ...(_arrSnapshots[arr] || {}), ...(operation.field === 'key' ? { configured: true } : { url: operation.value }) };
+      _arrRefreshNeeded = true;
+    }
+    return { field: operation.field, label: operation.label, ok: !!result };
+  }));
+  _arrPending.delete(arr);
+  const failed = results.filter(result => !result.ok);
+  const saved = results.filter(result => result.ok);
+  const text = results.map(result => result.ok ? `${result.label} saved.` : `${result.label} save could not be confirmed; its draft is retained.`).join(' ');
+  _arrMessages[arr] = { text, state: failed.length ? 'error' : 'success' };
+  _rememberArrDrafts();
+  _updateArrActions(arr);
+  _integrationsStatus(_arrPending.size > 0 ? 'Other integration changes are still saving. Check completed field results below.'
+    : (failed.length ? 'Some integration changes could not be saved. Check the field results below.' : `${_arrName(arr)} configuration saved.`),
+  _arrPending.size > 0 ? 'loading' : (failed.length ? 'error' : 'ready'));
+  toast(failed.length ? `${_arrName(arr)} ${saved.length ? 'partially saved' : 'save failed'}` : `${_arrName(arr)} settings saved`, failed.length ? 'error' : 'success');
+  if (_arrPending.size === 0 && _arrRefreshNeeded) await loadArrSettings();
 }
 
 async function saveTmdbKey() {
-  const value = document.getElementById('tmdbKeyInput').value;
-  if (!value) { toast('Enter a TMDB API key', 'error'); return; }
+  if (_tmdbSavePending || _settingsPending.has('tmdb_api_key')) return;
+  const input = document.getElementById('tmdbKeyInput');
+  if (!input) return;
+  const value = input.value;
+  const status = document.getElementById('tmdb-save-status');
+  const button = document.getElementById('tmdb-save');
+  const message = (text, state) => {
+    if (status) { status.textContent = text; status.dataset.state = state; }
+  };
+  if (!value) { message('Enter a replacement TMDB API key. Blank preserves the configured key.', 'error'); toast('Enter a TMDB API key', 'error'); return; }
+  _tmdbSavePending = true;
+  _tmdbSettingsRevision++;
+  input.readOnly = true;
+  if (button) { button.disabled = true; button.textContent = 'Saving…'; }
+  message('Saving TMDB API key…', 'loading');
   const r = await api('/api/settings/overrides/tmdb_api_key', { method: 'PUT', body: JSON.stringify({ value }) });
   if (r) {
+    input.value = '';
     toast('TMDB key saved', 'success');
-    document.getElementById('tmdbKeyInput').value = '';
-    document.getElementById('tmdbStatus').textContent = 'Configured';
-    document.getElementById('tmdbStatus').className = 'pill pill-success';
+    _renderTmdbConfigured(true);
+    message('TMDB API key saved.', 'success');
+  } else {
+    message('TMDB API key save could not be confirmed; your draft is retained.', 'error');
+    toast('Failed to save TMDB key', 'error');
   }
-  else toast('Failed to save TMDB key', 'error');
+  _tmdbSettingsRevision++;
+  _tmdbSavePending = false;
+  input.readOnly = false;
+  if (button) { button.disabled = false; button.textContent = 'Save'; }
 }
 
 /* ── AI (LLM cost + stage scorecards) ─────────────────────────────────── */
@@ -2337,16 +2913,14 @@ function renderAiSummary(s) {
 }
 
 /* ── System ────────────────────────────────────────────────────────────── */
-function loadSystem() { loadRawMetrics(); _loadSystemStatus(); }
+function loadSystem() { return Promise.all([_loadSystemStatus(), _systemTab === 'metrics' ? loadRawMetrics() : undefined]); }
 
 // Health-check + network cards: everything here is fetched, not asserted.
 // Core/SQLite pills consume the source probes in /api/stats. Torznab has no
 // dedicated unauthenticated health probe, so it is explicitly not inferred
 // from GraphQL reachability.
 async function _loadSystemStatus() {
-  const [stats, tiers, settings] = await Promise.all([
-    api('/api/stats'), api('/api/auth/tiers'), api('/api/settings'),
-  ]);
+  const [stats, tiers] = await Promise.all([api('/api/stats'), api('/api/auth/tiers')]);
   _setProbePill('sysGql', stats, 'graphqlReachable', 'OK', 'Unreachable');
   _setProbePill('sysMetrics', stats, 'metricsReachable', 'OK', 'Unreachable');
   _setProbePill('sysDb', stats, 'sidecarDbReachable', 'Connected', 'Error');
@@ -2359,32 +2933,41 @@ async function _loadSystemStatus() {
 
   const authEl = document.getElementById('sysAuthMode');
   if (authEl && tiers) {
+    authEl.removeAttribute('title');
     const active = [
       tiers.sso && 'SSO', tiers.forwardedUser && 'Fwd headers',
       tiers.npmHeaders && 'NPM headers', tiers.apiKey && 'API key',
     ].filter(Boolean);
     authEl.className = `pill ${active.length ? 'pill-info' : 'pill-warning'}`;
     authEl.textContent = active.length ? active.join(' + ') : 'Open (no auth)';
+  } else if (authEl) {
+    authEl.className = 'pill pill-neutral';
+    authEl.textContent = 'Unavailable';
+    authEl.title = 'Auth status request failed or timed out. Refresh to retry.';
   }
 
-  const fields = (settings && settings.fields) || {};
-  const setUrl = (id, field) => {
+  // Core endpoints are startup-only and absent from the mutable settings API.
+  for (const id of ['sysCoreUrl', 'sysMetricsUrl']) {
     const el = document.getElementById(id);
-    const val = (fields[field] && fields[field].current) || '--';
-    if (el) { el.textContent = val; el.title = val; }
-  };
-  setUrl('sysCoreUrl', 'bitagent_graphql_url');
-  setUrl('sysMetricsUrl', 'bitagent_metrics_url');
+    if (el) { el.textContent = 'Startup configuration'; el.title = 'Inspect the configured endpoint in your deployment settings.'; }
+  }
   const dashEl = document.getElementById('sysDashOrigin');
   if (dashEl) dashEl.textContent = window.location.host;
 }
 
-function switchSystemTab(tab) {
-  document.querySelectorAll('#tab-system .tab-btn').forEach(b => b.classList.toggle('active', b.dataset.systab === tab));
+function switchSystemTab(tab, { history = 'push', load = true } = {}) {
+  if (!SYSTEM_TABS.includes(tab)) return;
+  _systemTab = tab;
+  if (history && currentTab === 'system') _writeOperatorRoute(history);
+  document.querySelectorAll('#tab-system .tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.systab === tab);
+    b.setAttribute('aria-pressed', String(b.dataset.systab === tab));
+  });
   document.querySelectorAll('#tab-system > .tab-panel, #tab-system .tab-panel').forEach(p => {
     if (p.id && p.id.startsWith('systab-')) p.classList.toggle('active', p.id === `systab-${tab}`);
   });
-  if (tab === 'metrics') loadRawMetrics();
+  if (load && tab === 'metrics') loadRawMetrics();
+  if (load && tab === 'health') _loadSystemStatus();
 }
 
 async function runHealthChecks() {
@@ -2393,20 +2976,22 @@ async function runHealthChecks() {
   const checks = [
     { name: 'Dashboard API', url: '/healthz' },
     { name: 'Auth Endpoint', url: '/api/me' },
-    { name: 'GraphQL Proxy', url: '/api/stats' },
-    { name: 'Metrics Proxy', url: '/api/metrics' },
+    { name: 'Stats API response', url: '/api/stats' },
+    { name: 'Metrics API response', url: '/api/metrics' },
   ];
   const results = await Promise.all(checks.map(async c => {
     const t0 = performance.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
     try {
-      const r = await fetch(c.url);
+      const r = await fetch(c.url, { signal: controller.signal, redirect: 'error' });
       const ms = (performance.now() - t0).toFixed(0);
       return { ...c, ok: r.ok, status: r.status, ms };
     } catch (e) {
       return { ...c, ok: false, status: 'ERR', ms: '--' };
-    }
+    } finally { clearTimeout(timeout); }
   }));
-  container.innerHTML = results.map(r =>
+  container.innerHTML = '<p class="text-xs text-muted mb-4">These checks report HTTP responses from the console. Source health is shown in the cards above.</p>' + results.map(r =>
     `<div class="flex items-center justify-between" style="padding:var(--space-3) 0;border-bottom:1px solid var(--color-border-subtle)">
       <div class="flex items-center gap-3">
         <span class="pill ${r.ok ? 'pill-success' : 'pill-danger'}"><span class="pill-dot"></span>${r.ok ? 'OK' : 'FAIL'}</span>
@@ -2445,8 +3030,12 @@ async function runGqlQuery() {
   result.textContent = JSON.stringify(data, null, 2);
 }
 
+let _rawMetricsLoadSeq = 0;
 async function loadRawMetrics() {
+  const sequence = ++_rawMetricsLoadSeq;
+  document.getElementById('rawMetrics').textContent = 'Loading metric series…';
   const data = await api('/api/metrics');
+  if (sequence !== _rawMetricsLoadSeq) return;
   document.getElementById('rawMetrics').textContent = data ? JSON.stringify(data, null, 2) : 'Could not fetch metrics. Ensure BitAgent core is running.';
 }
 
@@ -2562,13 +3151,27 @@ function loadClassifierRules() {
 document.addEventListener('DOMContentLoaded', () => {
   // Make the click-only controls keyboard-reachable (they're <a>/<div>, not
   // <button>). The keydown handler above turns Enter/Space into a click.
-  document.querySelectorAll('.nav-item').forEach(n => {
-    n.setAttribute('tabindex', '0');
-    n.setAttribute('role', 'button');
-  });
+  document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.setAttribute('title', `${TAB_META[n.dataset.tab].title} · Alt+${Object.keys(TAB_META).indexOf(n.dataset.tab) + 1}`));
   const tog = document.querySelector('.theme-toggle-switch');
   if (tog) { tog.setAttribute('tabindex', '0'); tog.setAttribute('role', 'switch'); tog.setAttribute('aria-label', 'Toggle dark mode'); }
-  loadDashboard();
+  setSidebarOpen(false);
+  _mobileSidebar.addEventListener('change', () => {
+    const sidebar = document.getElementById('sidebar');
+    const active = document.activeElement === document.body ? _lastNavigationFocus : document.activeElement;
+    const wasInSidebar = sidebar.contains(active);
+    const wasToggle = active === document.getElementById('navigationToggle');
+    setSidebarOpen(false, { returnFocus: false });
+    if (_mobileSidebar.matches && wasInSidebar) document.getElementById('navigationToggle').focus();
+    else if (!_mobileSidebar.matches && (wasToggle || active?.matches('.sidebar-close'))) sidebar.querySelector('.nav-item.active').focus();
+  });
+  window.addEventListener('hashchange', restoreOperatorRoute);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && ['dashboard', 'ai'].includes(currentTab)) refreshCurrentTab();
+  });
+  const initialRoute = operatorRoute(window.location.hash) || { tab: 'dashboard', section: '' };
+  if (initialRoute.tab === 'settings') switchSettingsTab(initialRoute.section, { history: false, load: false });
+  if (initialRoute.tab === 'system') switchSystemTab(initialRoute.section, { history: false, load: false });
+  switchTab(initialRoute.tab, { history: 'replace', focus: false });
   loadNotifications();
   setInterval(() => {
     if (document.hidden) return;  // don't poll from background browser tabs
@@ -2591,6 +3194,7 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
 // Keyboard shortcuts
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
+    closeSidebar();
     document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
     if (notifPanelOpen) { notifPanelOpen = false; document.getElementById('notifPanel').classList.remove('open'); }
   }
@@ -2621,7 +3225,8 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keydown', e => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
   const t = e.target;
-  if (t.matches('.nav-item, .theme-toggle-switch')) { e.preventDefault(); t.click(); }
+  if (t.matches('.nav-item[data-tab]') && e.key === ' ') { e.preventDefault(); t.click(); return; }
+
 });
 
 // ── Help tooltips ───────────────────────────────────────────────────
@@ -2716,3 +3321,17 @@ function initCardHelp() {
   window.addEventListener('resize', () => _helpHide());
 }
 document.addEventListener('DOMContentLoaded', initCardHelp);
+
+// The mobile drawer contains keyboard focus until it closes.
+document.addEventListener('keydown', e => {
+  const sidebar = document.getElementById('sidebar');
+  if (e.key !== 'Tab' || !_mobileSidebar.matches || !sidebar.classList.contains('open')) return;
+  const controls = [...sidebar.querySelectorAll('a[href], button, [tabindex="0"]')].filter(el => !el.disabled && el.getClientRects().length);
+  if (!controls.length) return;
+  const first = controls[0], last = controls[controls.length - 1];
+  if (e.shiftKey && (document.activeElement === first || !sidebar.contains(document.activeElement))) {
+    e.preventDefault(); last.focus();
+  } else if (!e.shiftKey && (document.activeElement === last || !sidebar.contains(document.activeElement))) {
+    e.preventDefault(); first.focus();
+  }
+});

@@ -20,46 +20,47 @@
   <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
 </head>
 <body>
+<a class="skip-link" href="#mainContent" onclick="event.preventDefault();document.getElementById('mainContent').focus()">Skip to content</a>
 <div class="app-layout">
   <!-- ── Sidebar ──────────────────────────────────────────────────── -->
-  <aside class="sidebar" id="sidebar">
+  <aside class="sidebar" id="sidebar" aria-label="Operator navigation">
     <div class="sidebar-brand">
       <svg viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="var(--color-accent)"/><path d="M8 11h6v2H8zm0 4h10v2H8zm0 4h8v2H8zm18-7l-5 5-3-3 1.4-1.4L21 14.2l3.6-3.6L26 12z" fill="#fff"/></svg>
       <div>
         <h1>BitAgent</h1>
-        <small>v{{ app_version }}</small>
+        <small>Operator console · v{{ app_version }}</small>
       </div>
     </div>
-    <nav class="sidebar-nav">
+    <nav class="sidebar-nav" aria-label="Administration">
       {% if private_indexer_enabled %}<a class="nav-item" href="/private-admin">Private library members</a>{% endif %}
       <div class="sidebar-nav-group">
         <div class="sidebar-nav-label">Overview</div>
-        <a class="nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
+        <a class="nav-item active" data-tab="dashboard" href="#dashboard" onclick="event.preventDefault();switchTab('dashboard')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           Dashboard
         </a>
-        <a class="nav-item" data-tab="library" onclick="switchTab('library')">
+        <a class="nav-item" data-tab="library" href="#library" onclick="event.preventDefault();switchTab('library')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-          Library
-          <span class="badge" id="libCount">0</span>
+          Catalogue
+          <span class="badge" id="libCount">—</span>
         </a>
       </div>
 
       <div class="sidebar-nav-group">
         <div class="sidebar-nav-label">Operations</div>
-        <a class="nav-item" data-tab="wants" onclick="switchTab('wants')">
+        <a class="nav-item" data-tab="wants" href="#wants" onclick="event.preventDefault();switchTab('wants')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
           Wants
         </a>
-        <a class="nav-item" data-tab="evidence" onclick="switchTab('evidence')">
+        <a class="nav-item" data-tab="evidence" href="#evidence" onclick="event.preventDefault();switchTab('evidence')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           Evidence
         </a>
-        <a class="nav-item" data-tab="quarantine" onclick="switchTab('quarantine')">
+        <a class="nav-item" data-tab="quarantine" href="#quarantine" onclick="event.preventDefault();switchTab('quarantine')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           Quarantine
         </a>
-        <a class="nav-item" data-tab="ai" onclick="switchTab('ai')">
+        <a class="nav-item" data-tab="ai" href="#ai" onclick="event.preventDefault();switchTab('ai')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
           AI
         </a>
@@ -67,17 +68,18 @@
 
       <div class="sidebar-nav-group">
         <div class="sidebar-nav-label">System</div>
-        <a class="nav-item" data-tab="settings" onclick="switchTab('settings')">
+        <a class="nav-item" data-tab="settings" href="#settings" onclick="event.preventDefault();switchTab('settings')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.32 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
           Settings
         </a>
-        <a class="nav-item" data-tab="system" onclick="switchTab('system')">
+        <a class="nav-item" data-tab="system" href="#system" onclick="event.preventDefault();switchTab('system')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           System
         </a>
       </div>
     </nav>
 
+    <button class="btn btn-ghost sidebar-close" onclick="closeSidebar()" aria-label="Close navigation">Close navigation <span aria-hidden="true">×</span></button>
     <div class="sidebar-footer">
       <div class="theme-toggle">
         <span id="darkModeLabel">Dark mode</span>
@@ -100,14 +102,14 @@
   <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
 
   <!-- ── Main Content ─────────────────────────────────────────────── -->
-  <main class="main-content">
+  <main class="main-content" id="mainContent" tabindex="-1">
     <header class="page-header">
       <div class="page-header-left">
-        <button class="mobile-toggle btn-icon" onclick="toggleSidebar()" aria-label="Toggle navigation">
+        <button class="mobile-toggle btn-icon" id="navigationToggle" onclick="toggleSidebar()" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         <div>
-          <h2 class="page-title" id="pageTitle">Dashboard</h2>
+          <h2 class="page-title" id="pageTitle" tabindex="-1">Dashboard</h2>
           <p class="page-subtitle" id="pageSubtitle">System overview and live metrics</p>
         </div>
       </div>
@@ -128,7 +130,7 @@
             </div>
           </div>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="refreshCurrentTab()">
+        <button class="btn btn-secondary btn-sm" id="refreshButton" onclick="refreshCurrentTab()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
           Refresh
         </button>
@@ -138,6 +140,10 @@
     <div class="page-body">
       <!-- ═══════════════════════ DASHBOARD TAB ═══════════════════════ -->
       <div class="tab-panel active" id="tab-dashboard">
+        <div class="observation-bar section-gap">
+          <div><span class="observation-label">Operational snapshot</span><p id="dashboardStatus" class="operator-status" data-state="loading" role="status">Loading source observations…</p></div>
+          <span id="dashboardUpdatedAt" class="text-xs text-subtle"></span>
+        </div>
         <div class="card section-gap" id="winRateCard">
           <div class="card-header">
             <span class="card-title" data-help="North-star KPI: share of *arr grabs won by the BitAgent indexer vs. every other indexer, from the core's label_evidence grab webhooks. Aggregate counts only.">Indexer Win Rate <span class="text-xs text-subtle">30d</span></span>
@@ -147,6 +153,7 @@
             <div class="winrate-layout">
               <div class="winrate-headline">
                 <div class="stat-value" id="winRateValue">--</div>
+                <p class="metric-state operator-status" id="winRateStatus" data-state="loading">Loading…</p>
                 <div class="text-xs text-subtle">of grabs won by BitAgent</div>
                 <svg id="winRateSpark" viewBox="0 0 300 60" preserveAspectRatio="none" aria-label="Daily win-rate trend"></svg>
               </div>
@@ -168,6 +175,7 @@
             </div>
             <div class="stat-label">Match Rate <span class="stat-window">30d</span></div>
             <div class="stat-value" id="statMatchRate">--</div>
+            <p class="metric-state operator-status" id="statMatchRateStatus" data-state="loading">Loading…</p>
             <div class="stat-meter"><i id="statMatchMeter"></i></div>
             <div class="text-xs text-subtle" id="statMatchSub">movie/TV</div>
           </div>
@@ -179,10 +187,11 @@
             </div>
             <div class="stat-label">Grab Liveness</div>
             <div class="stat-value" id="statGrabSuccess">--</div>
+            <p class="metric-state operator-status" id="statGrabSuccessStatus" data-state="loading">Loading…</p>
             <div class="stat-meter"><i id="statGrabMeter"></i></div>
             <div class="text-xs text-subtle" id="statGrabSub">live / dead / pending</div>
           </div>
-          <div class="stat-card" data-accent="orange" data-help="Torrents per minute reaching the content filter — the crawler's actual end-to-end productivity, not DHT packet chatter. Measured in-process from two scrapes at least ten seconds apart, so it reads 'measuring…' for the first poll after a page load.">
+          <div class="stat-card" data-accent="orange" data-help="Torrents per minute reaching the content filter — the content filter's observed examination rate, not DHT packet chatter. Measured in-process from two scrapes at least ten seconds apart, so it reads 'measuring…' for the first poll after a page load.">
             <div class="stat-card-head">
               <div class="stat-icon orange">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -191,6 +200,7 @@
             </div>
             <div class="stat-label">Crawl Throughput</div>
             <div class="stat-value" id="statThroughput">--</div>
+            <p class="metric-state operator-status" id="statThroughputStatus" data-state="loading">Loading…</p>
             <div class="text-xs text-subtle">torrents examined / min</div>
           </div>
           <div class="stat-card" data-accent="violet" data-help="Rows in the core's torrent_contents table — indexed torrents that carry a classified content row. The core answers this from the Postgres planner's estimate once the table is too large for an exact count, so it is shown rounded; the exact figure is not available and rendering one would be a fiction.">
@@ -201,6 +211,7 @@
             </div>
             <div class="stat-label">Indexed Torrents</div>
             <div class="stat-value" id="statTorrents">--</div>
+            <p class="metric-state operator-status" id="statTorrentsStatus" data-state="loading">Loading…</p>
             <div class="text-xs text-subtle" id="statTorrentsSub">catalogue size</div>
           </div>
           <div class="stat-card" data-accent="red" data-help="Per-infohash liveness blocklist size. Torrents marked dead by the qB stall observer or *arr download-failed events; excluded from Torznab responses until revalidation succeeds.">
@@ -211,6 +222,7 @@
             </div>
             <div class="stat-label">Dead Blocked</div>
             <div class="stat-value" id="statBlacklist">--</div>
+            <p class="metric-state operator-status" id="statBlacklistStatus" data-state="loading">Loading…</p>
             <div class="text-xs text-subtle" id="statBlacklistSub">currently blocked</div>
           </div>
         </div>
@@ -220,6 +232,7 @@
             <div class="card-header">
               <span class="card-title" data-help="Count of indexed torrents per media type (Movie, TV, Music, etc.), from the core GraphQL contentType aggregation; bars scale to the largest slice, the percent is share of total.">Category Breakdown</span>
             </div>
+            <p id="categoryChartStatus" class="operator-status observation-detail" data-state="loading">Loading…</p>
             <div class="card-body" id="categoryChart">
               <div class="empty-state" style="padding:var(--space-8)">
                 <p class="text-sm text-muted">Connect to BitAgent core to see category data</p>
@@ -234,6 +247,7 @@
             <div class="card-body">
               <div class="uptime-readout">
                 <div class="stat-value" id="statUptime">--</div>
+            <p class="metric-state operator-status" id="statUptimeStatus" data-state="loading">Loading…</p>
                 <div class="text-xs text-subtle">bitagent-ui service</div>
               </div>
             </div>
@@ -245,6 +259,7 @@
             <span class="card-title" data-help="Latest evidence events from the core's label_evidence table (qBittorrent state polls and *arr webhooks/history); shows the 10 most recent.">Recent Activity</span>
             <button class="btn btn-ghost btn-sm" onclick="switchTab('evidence')">View all</button>
           </div>
+          <p id="activityStatus" class="operator-status observation-detail" data-state="loading">Loading…</p>
           <div class="card-body table-wrap">
             <table>
               <thead>
@@ -632,14 +647,20 @@
           <div class="flex items-center justify-between mb-6">
             <div>
               <h3 style="font-size:var(--text-lg);font-weight:var(--weight-semibold);" data-help="Live editor for non-security mutable settings. Security trust, hosts, proxy CIDRs, proof, and operator roles are startup-only deployment configuration.">Runtime Configuration</h3>
-              <p class="text-sm text-muted mt-2">Override application settings without restarting. Secrets are never displayed; enter a value only to replace one.</p>
+              <p class="text-sm text-muted mt-2">Overrides take effect in this console immediately. Secrets are never displayed; enter a value only to replace one.</p>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="loadSettings()">
+            <button class="btn btn-secondary btn-sm" id="settingsReload" onclick="loadSettings()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
               Reload
             </button>
           </div>
-          <div class="settings-grid" id="settingsGrid"></div>
+          <div class="settings-toolbar">
+            <div><label class="text-sm" for="settingsSearch">Find a setting</label><input class="input" id="settingsSearch" type="search" placeholder="Search names or descriptions" oninput="filterSettings()"></div>
+            <span class="text-xs text-muted" id="settingsSummary"></span>
+          </div>
+          <p class="operator-status settings-status" id="settingsStatus" role="status" aria-live="polite">Loading runtime configuration…</p>
+          <p class="text-sm text-muted" id="settingsEmpty" hidden>No settings match your search.</p>
+          <div class="settings-grid" id="settingsGrid" aria-busy="true"></div>
         </div>
 
         <!-- Auth sub-tab -->
@@ -684,6 +705,7 @@
 
         <!-- Integrations sub-tab -->
         <div class="tab-panel" id="stab-integrations">
+          <p class="operator-status settings-status" id="integrationsStatus" role="status" aria-live="polite">Integration settings have not been loaded.</p>
           <div class="grid-2">
             <div class="card">
               <div class="card-header">
@@ -746,38 +768,41 @@ Categories: 3000, 3010, 3020</div>
                 <div>
                   <div style="font-weight:var(--weight-semibold);font-size:var(--text-sm);margin-bottom:var(--space-3)">Sonarr</div>
                   <div class="input-group mb-2">
-                    <label class="input-label">Base URL</label>
-                    <input class="input font-mono" id="arr-sonarr-url" placeholder="http://sonarr:8989">
+                    <label class="input-label" for="arr-sonarr-url">Sonarr Base URL</label>
+                    <input class="input font-mono" id="arr-sonarr-url" oninput="editArrSetting('sonarr','url')" aria-describedby="arr-sonarr-status" placeholder="http://sonarr:8989">
                   </div>
                   <div class="input-group">
-                    <label class="input-label">API Key</label>
-                    <input class="input font-mono" type="password" id="arr-sonarr-key" placeholder="32-char hex key">
+                    <label class="input-label" for="arr-sonarr-key">Sonarr API Key</label>
+                    <input class="input font-mono" type="password" id="arr-sonarr-key" oninput="editArrSetting('sonarr')" aria-describedby="arr-sonarr-status" autocomplete="off" placeholder="32-char hex key">
                   </div>
-                  <button class="btn btn-primary btn-sm mt-2" onclick="saveArrSettings('sonarr')">Save Sonarr</button>
+                  <button class="btn btn-primary btn-sm mt-2" id="arr-save-sonarr" onclick="saveArrSettings('sonarr')">Save Sonarr</button>
+                  <p class="operator-status setting-message" id="arr-sonarr-status" role="status" aria-live="polite"></p>
                 </div>
                 <div>
                   <div style="font-weight:var(--weight-semibold);font-size:var(--text-sm);margin-bottom:var(--space-3)">Radarr</div>
                   <div class="input-group mb-2">
-                    <label class="input-label">Base URL</label>
-                    <input class="input font-mono" id="arr-radarr-url" placeholder="http://radarr:7878">
+                    <label class="input-label" for="arr-radarr-url">Radarr Base URL</label>
+                    <input class="input font-mono" id="arr-radarr-url" oninput="editArrSetting('radarr','url')" aria-describedby="arr-radarr-status" placeholder="http://radarr:7878">
                   </div>
                   <div class="input-group">
-                    <label class="input-label">API Key</label>
-                    <input class="input font-mono" type="password" id="arr-radarr-key" placeholder="32-char hex key">
+                    <label class="input-label" for="arr-radarr-key">Radarr API Key</label>
+                    <input class="input font-mono" type="password" id="arr-radarr-key" oninput="editArrSetting('radarr')" aria-describedby="arr-radarr-status" autocomplete="off" placeholder="32-char hex key">
                   </div>
-                  <button class="btn btn-primary btn-sm mt-2" onclick="saveArrSettings('radarr')">Save Radarr</button>
+                  <button class="btn btn-primary btn-sm mt-2" id="arr-save-radarr" onclick="saveArrSettings('radarr')">Save Radarr</button>
+                  <p class="operator-status setting-message" id="arr-radarr-status" role="status" aria-live="polite"></p>
                 </div>
                 <div>
                   <div style="font-weight:var(--weight-semibold);font-size:var(--text-sm);margin-bottom:var(--space-3)">Lidarr</div>
                   <div class="input-group mb-2">
-                    <label class="input-label">Base URL</label>
-                    <input class="input font-mono" id="arr-lidarr-url" placeholder="http://lidarr:8686">
+                    <label class="input-label" for="arr-lidarr-url">Lidarr Base URL</label>
+                    <input class="input font-mono" id="arr-lidarr-url" oninput="editArrSetting('lidarr','url')" aria-describedby="arr-lidarr-status" placeholder="http://lidarr:8686">
                   </div>
                   <div class="input-group">
-                    <label class="input-label">API Key</label>
-                    <input class="input font-mono" type="password" id="arr-lidarr-key" placeholder="32-char hex key">
+                    <label class="input-label" for="arr-lidarr-key">Lidarr API Key</label>
+                    <input class="input font-mono" type="password" id="arr-lidarr-key" oninput="editArrSetting('lidarr')" aria-describedby="arr-lidarr-status" autocomplete="off" placeholder="32-char hex key">
                   </div>
-                  <button class="btn btn-primary btn-sm mt-2" onclick="saveArrSettings('lidarr')">Save Lidarr</button>
+                  <button class="btn btn-primary btn-sm mt-2" id="arr-save-lidarr" onclick="saveArrSettings('lidarr')">Save Lidarr</button>
+                  <p class="operator-status setting-message" id="arr-lidarr-status" role="status" aria-live="polite"></p>
                 </div>
               </div>
             </div>
@@ -801,11 +826,12 @@ Categories: 3000, 3010, 3020</div>
             <div class="card-body">
               <p class="text-sm text-muted mb-4">Optional. Provides poster art for the Library tab. Set TMDB_API_KEY in settings.</p>
               <div class="input-group">
-                <label class="input-label">TMDB API Key</label>
+                <label class="input-label" for="tmdbKeyInput">TMDB API Key</label>
                 <div class="flex gap-2">
-                  <input class="input font-mono" type="password" id="tmdbKeyInput" placeholder="Enter TMDB API key...">
-                  <button class="btn btn-primary btn-sm" onclick="saveTmdbKey()">Save</button>
+                  <input class="input font-mono" type="password" id="tmdbKeyInput" aria-describedby="tmdb-save-status" autocomplete="off" placeholder="Enter TMDB API key...">
+                  <button class="btn btn-primary btn-sm" id="tmdb-save" onclick="saveTmdbKey()">Save</button>
                 </div>
+                <p id="tmdb-save-status" class="operator-status setting-message" role="status" aria-live="polite"></p>
               </div>
             </div>
           </div>
@@ -1282,14 +1308,14 @@ Categories: 3000, 3010, 3020</div>
               </div>
             </div>
             <div class="card">
-              <div class="card-header"><span class="card-title" data-help="The endpoint URLs this dashboard is configured to talk to: the core's GraphQL and metrics addresses (from settings) and this page's own origin.">Network</span></div>
+              <div class="card-header"><span class="card-title" data-help="The endpoint URLs this dashboard is configured to talk to: the core's GraphQL and metrics addresses (in deployment configuration) and this page's own origin.">Network</span></div>
               <div class="card-body flex flex-col gap-3">
                 <div class="flex items-center justify-between">
-                  <span class="text-sm" data-help="The configured GraphQL endpoint URL the dashboard queries the core through (settings field bitagent_graphql_url).">Core GraphQL</span>
+                  <span class="text-sm" data-help="Core GraphQL is a startup-only endpoint. Inspect the deployment configuration for its configured URL.">Core GraphQL</span>
                   <span class="font-mono text-xs truncate sys-url" id="sysCoreUrl" title="">--</span>
                 </div>
                 <div class="flex items-center justify-between">
-                  <span class="text-sm" data-help="The configured Prometheus metrics endpoint URL the dashboard scrapes the core through (settings field bitagent_metrics_url).">Core Metrics</span>
+                  <span class="text-sm" data-help="Core Prometheus is a startup-only endpoint. Inspect the deployment configuration for its configured URL.">Core Metrics</span>
                   <span class="font-mono text-xs truncate sys-url" id="sysMetricsUrl" title="">--</span>
                 </div>
                 <div class="flex items-center justify-between">

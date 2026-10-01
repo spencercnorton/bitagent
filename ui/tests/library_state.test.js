@@ -6,6 +6,10 @@ require('./library_interactions.test.js');
 require('./library_discovery.test.js');
 require('./library_preferences.test.js');
 require('./invitations.test.js');
+require('./operator_navigation.test.js');
+require('./operator_metrics.test.js');
+require('./operator_settings.test.js');
+require('./operator_integrations.test.js');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

@@ -1646,3 +1646,70 @@ tr:hover td { background: var(--color-bg-subtle); }
     scroll-behavior: auto !important;
   }
 }
+
+/* Operator navigation, observations and runtime configuration. */
+.skip-link { position: fixed; left: 16px; top: -80px; z-index: 3000; padding: 12px 18px; background: var(--color-accent); color: var(--color-accent-fg); border-radius: var(--radius-md); }
+.skip-link:focus { top: 16px; }
+:where(a, button, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+#pageTitle:focus, #mainContent:focus { outline: none; }
+.nav-item { min-height: 44px; }
+.sidebar-brand small { display: block; font-size: 11px; margin-top: 2px; }
+.sidebar-close { display: none; }
+.observation-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 16px 20px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-bg-raised); }
+.observation-label { display: block; font-size: var(--text-xs); font-weight: var(--weight-semibold); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 4px; color: var(--color-fg-subtle); }
+.operator-status { font-size: var(--text-xs); color: var(--color-fg-muted); line-height: 1.6; overflow-wrap: anywhere; }
+.operator-status[data-state="failure"], .operator-status[data-state="error"] { color: var(--color-danger); }
+.operator-status[data-state="stale"], .operator-status[data-state="partial"] { color: var(--color-warning); }
+.metric-state { margin: 4px 0 8px; }
+.metric-state::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--color-fg-subtle); margin-right: 6px; vertical-align: middle; }
+.metric-state[data-state="fresh"]::before { background: var(--color-success); }
+.metric-state[data-state="stale"]::before, .metric-state[data-state="partial"]::before { background: var(--color-warning); }
+.metric-state[data-state="failure"]::before, .metric-state[data-state="error"]::before { background: var(--color-danger); }
+.settings-toolbar { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.settings-toolbar > div { width: min(100%, 420px); }
+.settings-toolbar label { display: block; margin-bottom: 6px; font-weight: var(--weight-medium); }
+.settings-status { margin-bottom: 20px; }
+.settings-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr)); }
+.setting-item { min-width: 0; }
+.setting-item[hidden] { display: none; }
+.setting-item-header { flex-wrap: wrap; gap: 8px; }
+.setting-key, .setting-default code { overflow-wrap: anywhere; }
+.setting-item .input { min-width: 0; width: 100%; }
+.setting-actions { flex-wrap: wrap; }
+.setting-actions .btn { min-height: 36px; }
+.setting-message { font-size: var(--text-xs); margin-top: 8px; min-height: 20px; overflow-wrap: anywhere; }
+.setting-message[data-state="error"], .setting-message[data-state="failure"] { color: var(--color-danger); }
+.setting-message[data-state="success"] { color: var(--color-success); }
+.setting-item[data-dirty="true"] { border-color: var(--color-accent); }
+.tab-bar { max-width: 100%; }
+@media (max-width: 768px) {
+  body.navigation-open { overflow: hidden; }
+  .sidebar-close { display: flex; align-items: center; justify-content: space-between; margin: 8px 16px; min-height: 44px; flex-shrink: 0; }
+  .sidebar { width: min(290px, calc(100vw - 36px)); }
+  .sidebar-nav { min-height: 0; }
+  .sidebar-footer { flex-shrink: 0; }
+  .page-header-left { min-width: 0; gap: 12px; }
+  .page-title { font-size: 20px; }
+  .settings-toolbar { align-items: start; flex-direction: column; }
+  .setting-actions .btn { min-height: 44px; }
+}
+@media (max-width: 480px) {
+  .page-header-actions { width: 100%; justify-content: flex-end; }
+  .observation-bar { padding: 12px 16px; }
+  .setting-item { padding: 16px; }
+}
+@media (max-height: 480px) and (max-width: 768px) {
+  .sidebar-brand, .sidebar-footer { padding: 8px 12px; }
+  .sidebar-nav-group { margin-bottom: 8px; }
+}
+
+.observation-detail { padding: 8px 20px 0; }
+[hidden] { display: none !important; }
+.tab-bar { overflow-x: auto; overscroll-behavior-x: contain; }
+.tab-btn { flex-shrink: 0; white-space: nowrap; min-height: 44px; }
+@media (max-width: 480px) {
+  #stab-config > .flex { flex-wrap: wrap; gap: 12px; }
+}
+/* Closed overlays must also leave the accessibility tree and tab order. */
+.modal-overlay { visibility: hidden; }
+.modal-overlay.open { visibility: visible; }

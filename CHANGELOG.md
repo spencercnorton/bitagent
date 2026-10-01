@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Refine the operator console with bookmarkable navigation, keyboard-safe mobile
+  navigation, responsive settings search and per-field draft preservation.
+  Runtime overrides expose save/reset progress and failures, with an explicit
+  reset step and no browser persistence of replacement secrets.
+- Show loading, stale, measuring, unavailable and failed operational observations
+  alongside their values. Suppress live indicators on stale snapshots, distinguish
+  aggregate response time from source observation time, and leave gaps in grab
+  trends where no ratio was measured.
+
 ## 3.1.0 — 2026-10-01
 
 - Automatically open profile enrollment for every invitation recipient when the optional
