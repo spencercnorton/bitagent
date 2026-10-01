@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 2.15.0 — 2026-09-30
+
+- Add an optional explicit SSO enrollment subject format while preserving
+  legacy account IDs by default. Bind enrollments to their startup format,
+  reject cross-format membership collisions and require a separate reviewed
+  account-data migration before enabling canonical principal subjects.
+
 ## 2.14.0 — 2026-09-30
 
 - Add optional single-use member invitations with a permanent UTC-year
