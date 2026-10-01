@@ -54,6 +54,10 @@ Suspending membership revokes its indexer keys and removes tracker peers;
 reapproval requires a new key. Key rotation also revokes earlier tracker
 credentials. Neither action terminates already-established peer connections.
 
+Optional [member invitations](invitations.md) grant existing SSO identities
+application membership. They preserve those IDs and never enroll a network
+peer or make unverified content ready.
+
 ### Optional tracker address ownership
 
 Enable `PRIVATE_PEER_BINDINGS_REQUIRED` only when the seed management boundary

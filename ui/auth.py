@@ -178,6 +178,25 @@ def require_auth(request: Request) -> dict:
     return resolve_identity(request)
 
 
+def require_human_sso(request: Request) -> dict:
+    """Require an existing verified proxy identity, preserving its ledger ID.
+
+    A machine key, development bypass or role label cannot mint or redeem a
+    human invitation. The configured proxy remains the identity authority.
+    """
+    if (any(key.lower() in {"apikey", "api_key"} for key in request.query_params)
+            or request.headers.get("x-api-key") or request.headers.get("authorization")):
+        raise HTTPException(403, "Verified human SSO required")
+    identity = resolve_identity(request)
+    uid = identity.get("id")
+    if (identity.get("method") not in {"npm-header", "forwarded-user"}
+            or not isinstance(uid, str) or not 1 <= len(uid) <= 200
+            or uid != uid.strip() or any(ord(c) < 32 or ord(c) == 127 for c in uid)
+            or uid in {"anonymous", "api-client"}):
+        raise HTTPException(403, "Verified human SSO required")
+    return identity
+
+
 def describe_active_tiers() -> dict:
     """Return which auth tiers are actually configured/active.
 

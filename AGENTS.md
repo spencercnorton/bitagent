@@ -12,6 +12,15 @@
 
 ## Session notes
 
+- Invitations use existing verified SSO subjects and atomic SQLite ledgers.
+  Keep the feature disabled by default, tokens out of URLs/logs/storage except
+  one-time fragment links, and payment fulfillment separate from client claims.
+  Optional SSO bootstrap uses a distinct protected machine key and bounded
+  signed enrollments; direct human redemption retains its trusted proxy gate.
+  Hosted payment integration stays disabled by default; preserve immutable
+  payment orders, raw signature validation and terminal refund/dispute proofs.
+  Mocked provider tests do not establish sandbox or live billing acceptance.
+
 - Optional private tracker address ownership uses a separate bounded,
   authenticated seed snapshot. Keep transfer metrics labeled client-reported,
   preserve the disabled default, and cover authorization and expiry with real

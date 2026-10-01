@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 2.14.0 — 2026-09-30
+
+- Add optional single-use member invitations with a permanent UTC-year
+  allowance, exact-subject owner limits, revocation and atomic SSO redemption.
+  Preserve existing account IDs; invitations do not enroll network peers or
+  establish content readiness. Paid-credit receipts are separate and idempotent.
+- Add a separate optional, purpose-signed SSO enrollment bridge with bounded
+  replay state and exact principal binding. Preserve denial history and keep
+  provider approval, project-capability activation and network admission under
+  their own verified boundaries.
+- Add disabled-by-default hosted Stripe Checkout for one fixed invitation
+  credit, with durable orders, signed event reconciliation and terminal
+  refund/dispute withdrawal. Browser returns grant no credit; uncertain
+  outcomes retain their original payment key and require reconciliation.
+
+## 2.13.1 — 2026-09-30
+
 - Refresh private-seed availability in bounded publication-order batches with
   short SQLite transactions and original observation timestamps. Withdraw the
   complete proof epoch on failures, cancellation or deadline expiry; recovery
