@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Invitation issuer · {{ library_brand }}</title>
+  <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version }}">
+  <link rel="stylesheet" href="/static/css/library-next.css?v={{ asset_version }}">
+  <link rel="stylesheet" href="/static/css/invitations.css?v={{ asset_version }}">
+  <link rel="icon" href="/static/img/favicon.ico">
+</head>
+<body data-registration-account-id="{{ identity.id }}">
+  <main class="inv-page">
+    <nav class="inv-nav" aria-label="Operator navigation"><a href="/">← Operator console</a><span>Invitations</span></nav>
+    <header class="inv-heading"><p class="inv-eyebrow">Owner account</p><h1>Enable invitations</h1><p>Allow your signed-in account to create invitation codes.</p></header>
+    <section class="inv-card" aria-labelledby="issuerAccountTitle">
+      <h2 id="issuerAccountTitle">{{ identity.display }}</h2>
+      <p class="inv-muted">Account: <span id="issuerAccount">{{ identity.id }}</span></p>
+      <p id="issuerStatus" class="inv-status" role="status" aria-live="polite">Checking your invitation access…</p>
+      <form id="issuerForm"><button id="issuerAdmit" class="inv-primary" type="submit" disabled>Enable invitations for my account</button></form>
+      <button id="issuerRefresh" class="inv-secondary" type="button">Reload status</button>
+      <p id="issuerReady" hidden><a href="{{ invitations_url }}" referrerpolicy="no-referrer">Open my invitations →</a></p>
+    </section>
+    <footer class="inv-footer">{{ library_brand }} · {{ app_version }}</footer>
+  </main>
+  <script src="/static/js/registration-issuer.js?v={{ asset_version }}"></script>
+</body>
+</html>

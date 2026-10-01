@@ -32,6 +32,7 @@ from auth import require_auth, proxy_provenance_valid
 from config import settings
 from database import get_db, get_user_api_key, lookup_user_api_key, _hash_user_api_key
 from deps import require_operator, _configured_hosts
+from memberships import write_membership
 import privatebindings
 import privatecatalog
 import private_readiness as readiness
@@ -218,12 +219,7 @@ async def grant_member(user_id: str, body: MemberGrant, identity=Depends(require
     if not user_id or len(user_id) > 200 or user_id in {"anonymous", "api-client"}:
         raise HTTPException(422, "An existing SSO identity is required")
     async with private_write() as db:
-        await db.execute(
-            """INSERT INTO private_members VALUES (?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET active=excluded.active,
-                actor=excluded.actor, updated_at=excluded.updated_at""",
-            (user_id, int(body.active), str(identity["id"]), time.time()),
-        )
+        await write_membership(db, user_id, body.active, str(identity["id"]), time.time())
         if not body.active:
             from invitations import revoke_pending
             await revoke_pending(db, user_id, time.time())

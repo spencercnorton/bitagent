@@ -11,6 +11,7 @@ The feature defaults to disabled. These settings are startup-only:
 |---|---|---|
 | `PRIVATE_INVITATIONS_ENABLED` | `false` | Requires authenticated private indexing or separately enabled site registration, and a verified identity proxy. |
 | `SITE_REGISTRATION_ENABLED` | `false` | Invite-only profile enrollment before private indexing. Requires invitations and the protected enrollment bridge; does not open private routes. |
+| `SITE_REGISTRATION_ISSUER_ADMISSION_ENABLED` | `false` | Allows a verified human OWNER to deliberately admit their own invitation issuer on the canonical operator origin. Requires site registration with private indexing and checkout off. |
 | `INVITATION_ANNUAL_ALLOWANCE` | `3` | Free invitations generated per member per UTC calendar year. |
 | `INVITATION_OWNER_IDS` | empty | Comma-separated exact existing SSO subject IDs with unlimited annual generation; a role name or machine credential grants no exemption. |
 | `INVITATION_PRICE_USD_CENTS` | `5000` | Display/ledger price in USD; the Checkout adapter requires exactly `5000`. |
@@ -83,6 +84,31 @@ exemptions do not create membership. Suspension and the signed enrollment
 service's identity-history/profile checks remain mandatory. All private
 catalogue, tracker, transfer and private-key routes remain unavailable until
 their separate feature is enabled.
+
+### Admit the first invitation issuer
+
+An empty membership ledger cannot mint an invitation. To admit an existing
+owner without enabling private indexing, explicitly enable
+`SITE_REGISTRATION_ISSUER_ADMISSION_ENABLED` and set `OPERATOR_UI_URL` to its
+exact HTTPS operator origin, without a port, path, trailing slash, query or
+fragment. Preserve the existing proxy proof, transport allowlist and upstream
+grant policy. The feature requires a verified human OWNER; a dashboard key,
+owner allowance setting or role on the public host cannot admit a member.
+
+Sign in on that operator origin and open **Invitation issuer**. Review the
+actual signed-in account, then choose **Enable invitations for my account**.
+Only that explicit action inserts an absent membership row, with the verified
+account as its actor. A status read, page load or owner configuration never
+admits anyone. An active membership is unchanged; an inactive membership is
+refused and needs separate operator review. The request cannot choose another
+account or reactivate a suspension.
+
+Then open **My invitations** on the public origin to generate an invite code.
+Keep the same existing SSO subject namespace on both origins. This action
+creates no authentication account, upstream service grant, personal API key or
+private permission. All private administration, catalogue and tracker routes
+remain unavailable. Human owner sign-in and invitation acceptance are deployment
+checks, not consequences of enabling the setting.
 
 The reverse proxy must permit anonymous access only to the canonical `/invite`
 page, its fixed local static assets and the JSON POST preview endpoint. Keep

@@ -72,6 +72,7 @@ import private_indexer
 import invitations
 import invitation_bridge
 import invitation_payments
+import registration_issuer
 from infisical import hydrate_settings
 from telemetry import (
     MetricEnvelope,
@@ -101,6 +102,7 @@ async def lifespan(app: FastAPI):
     invitations.validate_settings()
     invitation_bridge.validate_settings()
     invitation_payments.validate_settings()
+    registration_issuer.validate_settings()
     _app_switcher_origin()  # a malformed APP_SWITCHER_SCRIPT_URL fails startup, not every request
     private_indexer.readiness.acquire_owner()
     try:
@@ -151,6 +153,7 @@ app.include_router(private_indexer.router)
 app.include_router(invitations.router)
 app.include_router(invitation_bridge.router)
 app.include_router(invitation_payments.router)
+app.include_router(registration_issuer.router)
 app.include_router(discovery.router)
 
 # CSRF is otherwise mitigated only by our routes being JSON-only (a simple
@@ -287,7 +290,7 @@ async def _security_headers(request: Request, call_next):
         resp.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
     else:
         resp.headers.setdefault("Cache-Control", "no-store")
-    if path == "/invite" or path == "/invitations" or path.startswith(("/api/invitations/", "/api/account/invitations")):
+    if path in {"/invite", "/invitations", registration_issuer.PAGE} or path.startswith(("/api/invitations/", "/api/account/invitations", registration_issuer.PATH)):
         resp.headers["Referrer-Policy"] = "no-referrer"
     return resp
 
@@ -639,6 +642,7 @@ def _dashboard_response(request: Request, identity: dict):
             "app_switcher_script_url": settings.app_switcher_script_url.strip(),
             "app_version": __version__,
             "private_indexer_enabled": settings.private_indexer_enabled,
+            "issuer_admission_available": settings.site_registration_issuer_admission_enabled and identity.get("priv") == "OWNER",
         },
     )
 
@@ -669,6 +673,17 @@ async def invitation_management(request: Request, identity=Depends(require_human
     invitations.enabled()
     invitations._public(request)
     return _invitation_response(request, "invitations.html", identity)
+
+
+@app.get(registration_issuer.PAGE)
+async def registration_admin(request: Request, identity=Depends(registration_issuer.require_owner)):
+    return templates.TemplateResponse(
+        request=request, name="registration-issuer.html",
+        context={"identity": identity, "asset_version": ASSET_VERSION,
+                 "library_brand": settings.library_brand, "app_version": __version__,
+                 "invitations_url": settings.private_indexer_url + "/invitations"},
+        headers={"Referrer-Policy": "no-referrer"},
+    )
 
 
 @app.get("/")

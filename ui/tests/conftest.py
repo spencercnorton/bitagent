@@ -95,6 +95,7 @@ def _restore_settings():
         "bitagent_metrics_url",
         "private_indexer_enabled", "private_indexer_secret", "private_indexer_url",
         "site_registration_enabled",
+        "site_registration_issuer_admission_enabled",
         "private_seeder_url", "private_seeder_username", "private_seeder_password",
         "private_seed_verification_ttl", "private_tracker_rate_limit_per_min",
         "private_peer_cidrs", "private_peer_bindings_required",

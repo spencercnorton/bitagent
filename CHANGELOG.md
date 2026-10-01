@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an explicit, disabled-by-default owner action to admit their own
+  invitation issuer before private indexing. Bind it to the verified account
+  on the canonical operator origin; retain suspended memberships and all
+  existing account, key and private permissions.
 - Add manual invite-code entry and an explicit, disabled-by-default site
   registration mode so profile enrollment can run before private indexing.
   Preserve signed enrollment, issuer membership and suspension checks, while
