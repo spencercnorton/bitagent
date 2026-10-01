@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 3.3.0 — 2026-10-01
+
 - Add explicit `openai`/`ollama` chat backend selection for the TMDB matcher
   and type fallback. Keep `openai` as the default; Ollama requests use
   `max_tokens` and `reasoning_effort: "none"` with the existing requested caps.
