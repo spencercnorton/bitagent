@@ -114,17 +114,15 @@ LLM_PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
 LLM_CACHED_INPUT_USD_PER_MTOK = {"gpt-5.4-nano": 0.02, "openai/gpt-5.4-nano-20260317": 0.022}
 LLM_PRICES_AS_OF = "2026-09-14"
 
-# (family, stage id, label carrying the direction, input value, output value).
-# The two emitting stages disagree on label names — the content filter says
-# kind=prompt|completion, junk purge says type=input|output — so each family
-# carries its own mapping instead of the caller guessing. junk purge also
-# labels cached_input/reasoning, which its help text warns are SUBSETS of
-# input/output; matching the exact input/output values excludes them, so
-# nothing is double-counted.
-_LLM_TOKEN_FAMILIES: tuple[tuple[str, str, str, str, str], ...] = (
-    ("bitagent_contentfilter_llm_tokens_total", "contentfilter", "kind", "prompt", "completion"),
-    ("bitagent_junkpurge_llm_tokens_total", "junkpurge", "type", "input", "output"),
-    ("bitagent_classifier_llm_match_tokens_total", "matcher", "kind", "input", "output"),
+# (family, stage id, label carrying the direction). Current emitters use
+# input/output; older content-filter versions used prompt/completion. Prefer
+# the canonical direction when both aliases appear for a model, never add
+# them twice. cached_input/reasoning are subsets of input/output.
+_LLM_TOKEN_FAMILIES: tuple[tuple[str, str, str], ...] = (
+    ("bitagent_contentfilter_llm_tokens_total", "contentfilter", "kind"),
+    ("bitagent_junkpurge_llm_tokens_total", "junkpurge", "type"),
+    ("bitagent_classifier_llm_match_tokens_total", "matcher", "kind"),
+    ("bitagent_classifier_llm_tokens_total", "typeclassifier", "kind"),
 )
 
 
@@ -152,37 +150,51 @@ def _llm_spend(metric_lines: dict[str, float]) -> dict[str, object]:
     the bill.
     """
     by_model: dict[tuple[str, str], dict] = {}
-    for family, stage, direction_label, input_value, output_value in _LLM_TOKEN_FAMILIES:
+    for family, stage, direction_label in _LLM_TOKEN_FAMILIES:
         if not _metric_family_present(metric_lines, family):
             continue
+        directions: dict[str, dict[str, float]] = {}
         for labels, value in _iter_labeled(metric_lines, family):
+            if _nonnegative_int(value) is None:
+                continue
             model = labels.get("model") or ""
             direction = labels.get(direction_label)
-            if direction not in (input_value, output_value, "cached_input"):
-                continue  # cached_input / reasoning are subsets — see above
+            if direction not in ("input", "output", "cached_input", "prompt", "completion"):
+                continue
+            bucket = directions.setdefault(model, {})
+            bucket[direction] = bucket.get(direction, 0.0) + value
+        for model, bucket in directions.items():
             row = by_model.setdefault(
                 (model, stage),
                 {"model": model, "stage": stage, "inputTokens": 0.0, "outputTokens": 0.0, "cachedInputTokens": 0.0},
             )
-            key = ("cachedInputTokens" if direction == "cached_input" else
-                   "inputTokens" if direction == input_value else "outputTokens")
-            row[key] += value
+            row["inputTokens"] += bucket.get("input", bucket.get("prompt", 0.0))
+            row["outputTokens"] += bucket.get("output", bucket.get("completion", 0.0))
+            row["cachedInputTokens"] += bucket.get("cached_input", 0.0)
+            row["inputReported"] = "input" in bucket or "prompt" in bucket
+            row["outputReported"] = "output" in bucket or "completion" in bucket
 
-    for labels, value in _iter_labeled(metric_lines, "bitagent_classifier_llm_match_usage_missing_total"):
-        if value <= 0:
-            continue
-        model = labels.get("model") or ""
-        row = by_model.setdefault((model, "matcher"), {
-            "model": model, "stage": "matcher", "inputTokens": 0.0,
-            "outputTokens": 0.0, "cachedInputTokens": 0.0,
-        })
-        row["missingUsageResponses"] = row.get("missingUsageResponses", 0) + int(value)
+    for stage, family in (
+        ("matcher", "bitagent_classifier_llm_match_usage_missing_total"),
+        ("contentfilter", "bitagent_contentfilter_llm_usage_missing_total"),
+        ("typeclassifier", "bitagent_classifier_llm_usage_missing_total"),
+    ):
+        for labels, value in _iter_labeled(metric_lines, family):
+            if _nonnegative_int(value) is None or value <= 0:
+                continue
+            model = labels.get("model") or ""
+            row = by_model.setdefault((model, stage), {
+                "model": model, "stage": stage, "inputTokens": 0.0,
+                "outputTokens": 0.0, "cachedInputTokens": 0.0,
+            })
+            row["missingUsageResponses"] = row.get("missingUsageResponses", 0) + int(value)
 
     rows: list[dict] = []
     total = 0.0
     unpriced: list[str] = []
     for row in by_model.values():
         price = LLM_PRICES_USD_PER_MTOK.get(row["model"]) if row["model"] else None
+        row["priceAvailable"] = price is not None
         if price is None:
             row["usd"] = None
             row["priced"] = False
@@ -194,7 +206,7 @@ def _llm_spend(metric_lines: dict[str, float]) -> dict[str, object]:
             label = row["model"] or "unlabelled"
             if label not in unpriced:
                 unpriced.append(label)
-        else:
+        elif row.get("inputReported") or row.get("outputReported"):
             usd = (row["inputTokens"] * price[0] + row["outputTokens"] * price[1]) / 1_000_000
             cached_price = LLM_CACHED_INPUT_USD_PER_MTOK.get(row["model"])
             if cached_price is not None:
@@ -203,16 +215,21 @@ def _llm_spend(metric_lines: dict[str, float]) -> dict[str, object]:
             row["usd"] = usd
             row["priced"] = True
             total += usd
-        row["inputTokens"] = int(row["inputTokens"])
-        row["outputTokens"] = int(row["outputTokens"])
+        else:
+            row["usd"] = None
+            row["priced"] = False
+        row["inputTokens"] = int(row["inputTokens"]) if row.get("inputReported") else None
+        row["outputTokens"] = int(row["outputTokens"]) if row.get("outputReported") else None
         row["cachedInputTokens"] = int(row["cachedInputTokens"])
-        row["usageIncomplete"] = bool(row.get("missingUsageResponses"))
+        row["usageIncomplete"] = bool(row.get("missingUsageResponses")) or not (
+            row.get("inputReported") and row.get("outputReported")
+        )
         rows.append(row)
 
     rows.sort(key=lambda r: (r["usd"] is None, -(r["usd"] or 0.0), r["model"]))
     return {
         "available": bool(rows),
-        "totalUsd": total if rows else None,
+        "totalUsd": total if any(r["priced"] for r in rows) else None,
         # Derived from the rows themselves, not from the name list — the two
         # can only agree by accident, and this one is what the UI's "≥" floor
         # actually depends on.
@@ -220,4 +237,6 @@ def _llm_spend(metric_lines: dict[str, float]) -> dict[str, object]:
         "byModel": rows,
         "unpricedModels": sorted(unpriced),
         "pricesAsOf": LLM_PRICES_AS_OF,
+        "basis": "provider-reported tokens × configured list prices",
+        "period": "since core boot",
     }

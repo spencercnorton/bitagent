@@ -64,20 +64,47 @@ The junk-purge hold: every row shows name, confidence, when it was quarantined a
 
 ## AI tab
 
-One scorecard per LLM stage the crawler runs (TMDB matcher, content filter, junk judge) on shared axes: model, throughput, latency, a quality *proxy* (there is no ground truth, so nothing is called accuracy) and spend. The header row shows **Projected / month** against `LLM_MONTHLY_BUDGET_USD`, **Tokens**, **Spent This Boot** and **Models Billing**. Money is never guessed: an unpriced model makes the total a floor (`≥ $x`), and an idle stage is *still measuring*, not free.
+The AI page reads core Prometheus observations for the TMDB matcher, content
+filter, junk-purge judge and type classifier. The source banner shows whether
+telemetry was received and its observation time. Each stage separates its
+reported configuration from actual calls, outcomes and token usage. A missing
+counter is unknown; a reported zero remains zero. A ratio with no denominator
+and latency with no timed calls remain unmeasured. Transport failure clears
+previous values rather than claiming idle operation.
+
+Request success, accepted matches and verdict mixes describe operational
+behavior. They do not measure correctness, confidence calibration or accuracy;
+those require independent evaluation against ground truth.
+
+**Estimated token cost** applies the stored model price table to reported
+usage since core restart. It is not a provider invoice. Unknown model prices
+produce unknown cost; mixed priced/unpriced usage is a partial lower bound.
+**30-day rate projection** extends a measured cost delta from two samples at
+least ten seconds apart. It assumes that sampled rate continues and does not
+predict future workload. Restart detection resets the sampling baseline. Usage
+from stages without token instrumentation is outside these totals. The model
+count deduplicates models across reporting stages.
 
 ## Settings tab
 
-Settings are split into **Configuration**, **Auth & Security**, **Integrations**,
-**Retention**, **Classifier**, **Liveness**, **Filters**, **Block Lists** and
-**Audit Log**. Runtime overrides are limited to `MUTABLE_FIELDS` (`ui/config.py`):
+Settings are organized into **General**, **Connections**, **Content rules**
+and **Access & history**. Secondary references open within their group, and
+legacy section links still select the corresponding content. The desktop
+section rail becomes a compact group chooser on mobile. Section motion respects
+the browser's reduced-motion preference.
+
+Runtime overrides are limited to `MUTABLE_FIELDS` (`ui/config.py`):
 logging verbosity, TMDB/Torznab keys, and the \*arr URLs and keys. Secrets expose
 configured/source state only; values and lengths are never returned, and audit
 rows store `[redacted]`. Host lists, proxy trust, proxy CIDRs, proof, operator
 roles and core endpoint URLs are startup-only.
 
-The runtime configuration editor filters by field name and description. Save
-applies one field at a time; other drafts survive saves, reloads and section
+Logging uses a level selector; connection addresses use validated HTTP/HTTPS
+URL inputs and replacement secrets use password controls. Deployment-managed
+settings are clearly labeled references rather than editable placeholders.
+The logging override changes console application logs; core and web-server
+logging remain deployment-managed.
+Save applies the relevant field or connection; other drafts survive saves, reloads and section
 changes within the same page. Drafts disappear on a full browser reload and are
 never written to browser storage. A failed refresh explicitly labels the retained
 snapshot, and a failed save keeps its draft for retry. Reset requires a second

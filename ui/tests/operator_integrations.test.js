@@ -24,20 +24,31 @@ function snapshot() {
 
 function controller() {
   const elements = new Map();
-  const document = { activeElement: null, getElementById: id => elements.get(id) || null };
+  const focusListeners = new Set();
+  const document = { activeElement: null, getElementById: id => elements.get(id) || null,
+    addEventListener(type, listener) { if (type === 'focusin') focusListeners.add(listener); },
+    removeEventListener(type, listener) { if (type === 'focusin') focusListeners.delete(listener); },
+  };
   function element(id) {
-    const el = { id, value: '', placeholder: '', textContent: '', dataset: {}, attributes: {}, disabled: false, readOnly: false,
+    const el = { id, value: '', placeholder: '', textContent: '', dataset: {}, attributes: {}, readOnly: false, visible:true, isConnected:true,
       selectionStart: 0, selectionEnd: 0,
       setAttribute(name, value) { this.attributes[name] = value; },
-      focus() { document.activeElement = this; },
+      focus() { document.activeElement = this; for (const listener of focusListeners) listener({ target:this }); },
+      getClientRects() { return this.visible ? [{}] : []; },
       setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; },
     };
+    let disabled = false;
+    Object.defineProperty(el, 'disabled', { get() { return disabled; }, set(value) {
+      disabled = value;
+      if (value && document.activeElement === el) document.activeElement = document.body;
+    } });
     elements.set(id, el);
     return el;
   }
+  document.body = element('body'); document.documentElement = element('html');
   for (const id of ['integrationsStatus', 'arrSettingsGrid', 'tmdbStatus', 'tmdbKeyInput', 'tmdb-save', 'tmdb-save-status', 'setting-tmdb_api_key']) element(id);
   for (const arr of ['sonarr', 'radarr', 'lidarr']) {
-    for (const field of ['url', 'key', 'status']) element(`arr-${arr}-${field}`);
+    for (const field of ['url', 'key', 'status', 'state']) element(`arr-${arr}-${field}`);
     element(`arr-save-${arr}`);
   }
   const calls = [], toasts = [];
@@ -60,7 +71,7 @@ function controller() {
     }
     return null;
   };
-  const context = vm.createContext({ document, api, Date, toast: (...args) => toasts.push(args) });
+  const context = vm.createContext({ document, api, Date, URL, currentTab:'settings', _settingsTab:'integrations', toast: (...args) => toasts.push(args) });
   const source = fs.readFileSync(path.join(__dirname, '../static/js/app.js'), 'utf8');
   const start = source.indexOf('/* ── Integration configuration ─');
   const end = source.indexOf('/* ── AI (LLM cost', start);
@@ -72,6 +83,8 @@ function controller() {
     get: id => elements.get(id),
     get data() { return data; },
     handle(value) { handler = value; },
+    route(section, tab = 'settings') { context._settingsTab = section; context.currentTab = tab; },
+    get focusListenerCount() { return focusListeners.size; },
     edit(arr, field, value) { this.get(`arr-${arr}-${field}`).value = value; this.editArrSetting(arr, field); },
     writes() { return calls.filter(call => call.opts.method === 'PUT'); },
   };
@@ -98,6 +111,52 @@ test('initial integration reads retain earlier and in-flight drafts and share on
   assert.match(c.get('arr-sonarr-key').placeholder, /configured/);
   assert.doesNotMatch(JSON.stringify([...['sonarr', 'radarr', 'lidarr'].map(arr => c.get(`arr-${arr}-key`).placeholder)]), /server-secret/);
   assert.equal(c.get('tmdbStatus').textContent, 'Configured');
+});
+
+test('integration saves restore dropped button focus to the edited field on success and failure', async () => {
+  for (const [field, accepted] of [['url',true], ['url',false], ['key',true], ['key',false]]) {
+    const c = controller(); await c.loadArrSettings();
+    c.edit('sonarr', field, field === 'url' ? 'https://updated.invalid:8989' : 'synthetic-replacement');
+    const write = deferred();
+    c.handle((url, opts) => opts.method === 'PUT' ? write.promise : Promise.resolve(c.data));
+    c.get('arr-save-sonarr').focus(); const pending = c.saveArrSettings('sonarr');
+    assert.equal(c.document.activeElement, c.document.body);
+    if (accepted && field === 'url') c.data.fields.sonarr_base_url.current = 'https://updated.invalid:8989';
+    write.resolve(accepted ? { key:`sonarr_${field === 'url' ? 'base_url' : 'api_key'}` } : null); await pending;
+    assert.equal(c.document.activeElement.id, `arr-sonarr-${field}`);
+    assert.equal(c.focusListenerCount, 0);
+  }
+});
+
+test('integration save completions leave user focus and hidden or different routes alone', async () => {
+  for (const scenario of ['other-control', 'moved-then-body', 'other-route', 'other-tab', 'hidden-input']) {
+    const c = controller(); await c.loadArrSettings(); c.edit('sonarr', 'url', 'https://updated.invalid:8989');
+    const write = deferred(); c.handle(() => write.promise);
+    c.get('arr-save-sonarr').focus(); const pending = c.saveArrSettings('sonarr');
+    if (['other-control', 'moved-then-body'].includes(scenario)) {
+      c.get('arr-radarr-url').focus();
+      if (scenario === 'moved-then-body') c.document.documentElement.focus();
+    } else if (scenario === 'other-route') c.route('config');
+    else if (scenario === 'other-tab') c.route('integrations', 'dashboard');
+    else c.get('arr-sonarr-url').visible = false;
+    const focusBefore = c.document.activeElement;
+    write.resolve(null); await pending;
+    assert.equal(c.document.activeElement, focusBefore, scenario);
+    assert.equal(c.focusListenerCount, 0);
+  }
+});
+
+test('TMDB saves restore dropped focus but never reclaim it after a user moves', async () => {
+  for (const moved of [false,true]) {
+    const c = controller(); c.get('tmdbKeyInput').value = 'synthetic-replacement';
+    const write = deferred(); c.handle(() => write.promise);
+    c.get('tmdb-save').focus(); const pending = c.saveTmdbKey();
+    assert.equal(c.document.activeElement, c.document.body);
+    if (moved) c.get('arr-radarr-url').focus();
+    write.resolve({ key:'tmdb_api_key' }); await pending;
+    assert.equal(c.document.activeElement.id, moved ? 'arr-radarr-url' : 'tmdbKeyInput');
+    assert.equal(c.focusListenerCount, 0);
+  }
 });
 
 test('an explicit URL clear during the initial read is retained and saves an empty URL only', async () => {
@@ -326,4 +385,29 @@ test('a delayed post-reset generic read cannot overwrite a newer accepted integr
   c.get('tmdbKeyInput').value = 'synthetic-newer-key'; await c.saveTmdbKey();
   read.resolve(c.data); await resetting;
   assert.equal(c.get('tmdbStatus').textContent, 'Configured');
+});
+
+test('connection cards distinguish stored configuration, setup gaps, and stale reads', async () => {
+  const c = controller();
+  await c.loadArrSettings();
+  assert.equal(c.get('arr-sonarr-state').textContent, 'Configured');
+  assert.equal(c.get('arr-lidarr-state').textContent, 'Needs setup');
+  c.handle(async () => null); await c.loadArrSettings();
+  assert.equal(c.get('arr-sonarr-state').textContent, 'Stale');
+  const initial = controller(); initial.handle(async () => null); await initial.loadArrSettings();
+  assert.equal(initial.get('arr-sonarr-state').textContent, 'Unavailable');
+});
+
+test('invalid or unsupported URL schemes fail visibly without writing either field or losing a key draft', async () => {
+  for (const invalid of ['ftp://demo.invalid', 'sonarr:8989', '/relative/path', 'https://']) {
+    const c = controller(); await c.loadArrSettings();
+    c.edit('sonarr', 'url', invalid); c.edit('sonarr', 'key', 'synthetic-replacement');
+    await c.saveArrSettings('sonarr');
+    assert.equal(c.writes().length, 0);
+    assert.equal(c.get('arr-sonarr-url').value, invalid);
+    assert.equal(c.get('arr-sonarr-key').value, 'synthetic-replacement');
+    assert.match(c.get('arr-sonarr-status').textContent, /http:\/\/ or https:\/\//);
+    assert.equal(c.get('arr-sonarr-url').readOnly, false);
+    assert.equal(c.document.activeElement.id, 'arr-sonarr-url');
+  }
 });

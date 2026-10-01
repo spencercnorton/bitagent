@@ -103,6 +103,8 @@ async def lifespan(app: FastAPI):
     private_indexer.readiness.acquire_owner()
     try:
         await get_db()
+        overrides = await get_all_overrides()
+        _apply_ui_log_level(overrides.get("log_level", settings.log_level), strict=False)
         await private_indexer.reset_readiness()
         private_indexer.start_readiness_worker()
         invitation_payments.start_worker()
@@ -123,6 +125,21 @@ async def lifespan(app: FastAPI):
 
 
 logger = logging.getLogger("bitagent-ui")
+
+
+def _apply_ui_log_level(value: str, *, strict: bool = True) -> str:
+    """Apply only the console's named logger; core/uvicorn logging is separate."""
+    level = value.strip().lower()
+    if level == "warn":
+        level = "warning"
+    if level not in {"debug", "info", "warning", "error", "critical"}:
+        if strict:
+            raise ValueError("Use debug, info, warning, error, or critical.")
+        # Old versions accepted arbitrary strings. A legacy invalid override
+        # must not prevent serving the console or its separate host surfaces.
+        level = "info"
+    logger.setLevel(getattr(logging, level.upper()))
+    return level
 
 app = FastAPI(title="BitAgent Console", version=__version__, lifespan=lifespan)
 
@@ -958,7 +975,8 @@ def _metric_from_probe(
 # summed into a total that reads comfortably under budget while actual spend is
 # twice it. Observed live: a 12s window reported $8.57/mo when the true
 # combined run rate was ~$20/mo, because junk purge contributed nothing.
-_SPEND_HISTORY: list[tuple[float, dict[str, float]]] = []
+_SPEND_HISTORY: list[tuple[float, dict[tuple[str, str], float]]] = []
+_SPEND_CORE_STARTED_AT: float | None = None
 # Must stay LONGER than _SPEND_IDLE_TRUST_SECONDS: the retained baseline is
 # what lets a genuinely idle model ever reach the trust point instead of
 # reading "measuring…" forever.
@@ -969,7 +987,7 @@ _SPEND_HISTORY_MAX = 256
 _SPEND_IDLE_TRUST_SECONDS = 5400.0
 
 
-def _record_spend_snapshot(now_mono: float, values: dict[str, float]) -> None:
+def _record_spend_snapshot(now_mono: float, values: dict[tuple[str, str], float]) -> None:
     _SPEND_HISTORY.append((now_mono, dict(values)))
     cutoff = now_mono - _SPEND_HISTORY_WINDOW_SECONDS
     _SPEND_HISTORY[:] = [e for e in _SPEND_HISTORY if e[0] >= cutoff]
@@ -977,7 +995,7 @@ def _record_spend_snapshot(now_mono: float, values: dict[str, float]) -> None:
         del _SPEND_HISTORY[: len(_SPEND_HISTORY) - _SPEND_HISTORY_MAX]
 
 
-def _spend_rate_per_min(key: str, now_mono: float) -> tuple[float | None, float]:
+def _spend_rate_per_min(key: tuple[str, str], now_mono: float) -> tuple[float | None, float]:
     """(USD per minute, window seconds). None until a usable baseline exists.
 
     Mirrors _counter_rate_per_min's reset handling, and additionally returns
@@ -990,7 +1008,14 @@ def _spend_rate_per_min(key: str, now_mono: float) -> tuple[float | None, float]
     latest_ts, latest = _SPEND_HISTORY[-1]
     if latest_ts != now_mono or key not in latest:
         return None, 0.0
-    samples = [(ts, snap[key]) for ts, snap in _SPEND_HISTORY if key in snap]
+    # A missing series or failed scrape breaks the observation window. Do not
+    # bridge a transport gap or a model disappearing and later returning.
+    samples = []
+    for ts, snap in reversed(_SPEND_HISTORY):
+        if key not in snap:
+            break
+        samples.append((ts, snap[key]))
+    samples.reverse()
     if len(samples) < 2:
         return None, 0.0
     baseline_index = 0
@@ -1631,8 +1656,8 @@ async def api_indexer_stats(
 # It runs in shadow or live mode and emits bitagent_classifier_llm_match_*
 # Prometheus counters. This endpoint reshapes those into a scorecard.
 #
-# The endpoint also scores the other two LLM stages the core runs (content
-# filter, junk purge), which live under entirely different metric prefixes —
+# The endpoint also scores content filtering, junk purge and type classification,
+# which live under different metric prefixes —
 # see _llm_stage_scorecards.
 #
 # Alt-title backfill coverage IS surfaced, via the core's
@@ -1711,8 +1736,8 @@ def _llm_stage_scorecards(
 ) -> list[dict]:
     """One uniform scorecard per LLM stage BitAgent actually runs.
 
-    Three distinct models do three distinct jobs and only one of them was ever
-    on this page. Every figure below is derived from a metric the core emits —
+    Each supported stage does a distinct job. Every figure below is derived
+    from a metric the core emits —
     where an older core emits nothing, the field is null with a note, never
     a zero. New matcher configuration and token counters take precedence over
     historical inference, while older core versions remain readable.
@@ -1732,6 +1757,14 @@ def _llm_stage_scorecards(
             return None
         return sum_all(name, **want)
 
+    def configured(name: str, key: str) -> float | None:
+        values = [value for labels, value in all_fam.get(name, []) if labels.get("setting") == key]
+        return values[0] if len(values) == 1 else None
+
+    def tokens(stage: str) -> tuple[int, int]:
+        rows = [row for row in spend.get("byModel", []) if row["stage"] == stage]
+        return sum(row["inputTokens"] or 0 for row in rows), sum(row["outputTokens"] or 0 for row in rows)
+
     stages: list[dict] = []
 
     # ── Stage 1: TMDB matcher ────────────────────────────────────────
@@ -1749,7 +1782,7 @@ def _llm_stage_scorecards(
     matcher_in = count("bitagent_classifier_llm_match_tokens_total", kind="input")
     matcher_out = count("bitagent_classifier_llm_match_tokens_total", kind="output")
     matcher_config = {
-        key: count("bitagent_classifier_llm_match_config", setting=key)
+        key: configured("bitagent_classifier_llm_match_config", key)
         for key in ("enabled", "live", "require_source_title", "daily_call_limit", "monthly_call_limit")
     }
     matcher_usage_missing = count("bitagent_classifier_llm_match_usage_missing_total")
@@ -1779,15 +1812,10 @@ def _llm_stage_scorecards(
         for g in ("candidate_title", "candidate_year", "candidate_ambiguous", "resolved_year", "source_title", "source_year")
     )
     matcher_latency_total = None
-    lat_counts = sum(
-        (matcher_latency.get(s) or {}).get("count", 0) for s in ("extract", "rerank")
-    )
-    if lat_counts > 0:
-        matcher_latency_total = sum(
-            (matcher_latency.get(s) or {}).get("avgSeconds", 0.0)
-            * (matcher_latency.get(s) or {}).get("count", 0)
-            for s in ("extract", "rerank")
-        ) / lat_counts
+    observed_latencies = [item for item in matcher_latency.values() if (item.get("count") or 0) > 0]
+    lat_counts = sum(item["count"] for item in observed_latencies)
+    if lat_counts > 0 and all(item.get("avgSeconds") is not None for item in observed_latencies):
+        matcher_latency_total = sum(item["avgSeconds"] * item["count"] for item in observed_latencies) / lat_counts
 
     matcher_observed = matcher_calls > 0 or attached_any_mode > 0
     matcher_instrumented = any(
@@ -1806,14 +1834,24 @@ def _llm_stage_scorecards(
     elif matcher_config["enabled"] == 0:
         matcher_status = _stage_status("inactive", "Disabled", "neutral", "The core reports matcher enabled=false.")
     elif matcher_config["enabled"] == 1:
-        live = matcher_config["live"] == 1
+        live = matcher_config["live"]
+        mode = "Live configured" if live == 1 else "Shadow configured" if live == 0 else "Enabled; mode unknown"
+        request_detail = (
+            f"{int(dispatched_calls):,} outbound requests since core boot. "
+            if dispatched_calls is not None else "Outbound request counter not instrumented. "
+        )
+        attachment_detail = (
+            f"{live_attached:,} live attachment decisions since core boot. "
+            if "bitagent_classifier_llm_match_matches_total" in all_fam else "Attachment counter not instrumented. "
+        )
+        caps = [f"{int(matcher_config[key]):,}/{unit}" for key, unit in
+                (("daily_call_limit", "day"), ("monthly_call_limit", "month")) if matcher_config[key] is not None]
         matcher_status = _stage_status(
-            "active" if live else "shadow", "Live configured" if live else "Shadow configured",
-            "success" if live and live_attached else "info" if live else "warning",
-            f"{matcher_calls:,} outbound requests and {live_attached:,} live attachment decisions since core boot. "
-            + ("Independent source-title checks required. " if matcher_config["require_source_title"] else "")
-            + f"Request caps: {int(matcher_config['daily_call_limit'] or 0):,}/day, "
-              f"{int(matcher_config['monthly_call_limit'] or 0):,}/month.",
+            "active" if live == 1 else "shadow" if live == 0 else "configured",
+            mode, "info" if live == 1 else "warning" if live == 0 else "neutral",
+            request_detail + attachment_detail
+            + ("Independent source-title checks required. " if matcher_config["require_source_title"] == 1 else "")
+            + ("Request caps: " + ", ".join(caps) + "." if caps else "Request caps not instrumented."),
         )
     elif live_attached > 0 and shadow_attached > 0:
         matcher_status = _stage_status(
@@ -1834,8 +1872,8 @@ def _llm_stage_scorecards(
         )
     elif matcher_calls > 0:
         matcher_status = _stage_status(
-            "active", "Calls observed", "info",
-            f"{matcher_calls:,} calls and no attachments were recorded since core boot.",
+            "active", "Calls observed" if dispatched_calls is not None else "Outcomes observed", "info",
+            f"{matcher_calls:,} {'outbound requests' if dispatched_calls is not None else 'extract/rerank outcomes'} were recorded since core boot; attachment state requires its own counter.",
         )
     else:
         matcher_status = _stage_status(
@@ -1867,30 +1905,27 @@ def _llm_stage_scorecards(
                 "Rejected picks", ratio(post_pick_rejects, rerank_picks), "percent",
                 f"{post_pick_rejects:,} of {rerank_picks:,} picks failed the identity gate",
                 tone=_tone_from(ratio(post_pick_rejects, rerank_picks), 0.15, 0.3),
-                help_text="The matcher's only measured quality signal: confident picks the post-rerank identity gate refused (title/year/ambiguity). Roughly half of these rejections are themselves wrong, so this is a recall cost, not pure precision.",
+                help_text="Confident picks refused by the post-rerank identity gate (title/year/ambiguity). This is an operational rejection ratio; no labelled ground truth is emitted to measure accuracy or calibration.",
             ),
             _stage_metric(
                 "Extract success", ratio(matcher_extract.get("ok", 0), extract_calls),
                 "percent",
                 f"{matcher_extract.get('ok', 0):,} ok / {matcher_extract.get('empty', 0):,} empty / {matcher_extract.get('error', 0):,} error",
                 tone=_tone_from(ratio(matcher_extract.get("ok", 0), extract_calls), 0.6, 0.35),
-                help_text="Stage-1: share of calls where the model pulled a usable title/year out of the raw torrent name.",
+                help_text="Share of recorded extraction outcomes containing a usable title/year. Outcome counters are not outbound HTTP dispatch counts.",
             ),
             _stage_metric(
                 "Calls",
-                float(matcher_calls)
-                if (dispatched_calls is not None or "bitagent_classifier_llm_match_extract_total" in all_fam
-                    or "bitagent_classifier_llm_match_rerank_total" in all_fam)
-                else None,
+                dispatched_calls,
                 "number",
-                "admitted outbound HTTP requests" if dispatched_calls is not None else f"{extract_calls:,} extract + {rerank_calls:,} rerank",
+                "admitted outbound HTTP requests" if dispatched_calls is not None else "outbound request counter not instrumented",
                 help_text="Total LLM calls across both matcher stages since core boot.",
             ),
             _stage_metric(
                 "Avg latency", matcher_latency_total, "seconds",
                 " / ".join(
-                    f"{s} {(matcher_latency.get(s) or {}).get('avgSeconds', 0.0):.1f}s"
-                    for s in ("extract", "rerank")
+                    f"{s} {matcher_latency[s]['avgSeconds']:.1f}s"
+                    for s in ("extract", "rerank") if matcher_latency[s].get("avgSeconds") is not None
                 ),
                 tone=_tone_from(matcher_latency_total, 2.0, 5.0),
                 help_text="Call-weighted mean across both stages, from the histogram sum/count pair.",
@@ -1906,7 +1941,7 @@ def _llm_stage_scorecards(
         "tokens": {"input": int(matcher_in or 0), "output": int(matcher_out or 0)} if matcher_tokens_present else None,
         "tokensNote": (f"Usage missing for {int(matcher_usage_missing):,} responses; spend is partial." if matcher_usage_missing
                        else None if matcher_tokens_present else "core emits no token counter for the matcher"),
-        "unit": {"label": "live attachment decision", "count": live_attached},
+        "unit": {"label": "live attachment decision", "count": live_attached if "bitagent_classifier_llm_match_matches_total" in all_fam else None},
     })
 
     # ── Stage 2: content filter ──────────────────────────────────────
@@ -1926,8 +1961,7 @@ def _llm_stage_scorecards(
     # first written; both were previously reported as instrumentation gaps.
     cf_models = labels_of("bitagent_contentfilter_llm_tokens_total", "model")
     cf_tokens_present = "bitagent_contentfilter_llm_tokens_total" in all_fam
-    cf_in = sum_all("bitagent_contentfilter_llm_tokens_total", kind="prompt")
-    cf_out = sum_all("bitagent_contentfilter_llm_tokens_total", kind="completion")
+    cf_in, cf_out = tokens("contentfilter")
     cf_latency = avg_latency(
         "bitagent_contentfilter_llm_call_duration_seconds_sum",
         "bitagent_contentfilter_llm_call_duration_seconds_count",
@@ -1960,20 +1994,24 @@ def _llm_stage_scorecards(
         )
     elif (cf_would_drops or 0) > 0:
         cf_status = _stage_status(
-            "shadow", "Shadow", "warning",
-            f"{int(cf_would_drops or 0):,} would-drop decisions and no enforced drops "
-            f"were recorded since core boot; LLM calls: {int(cf_calls):,}.",
+            "shadow", "Shadow history", "warning",
+            f"{int(cf_would_drops or 0):,} would-drop decisions were recorded since core boot. "
+            + ("No enforced drops were recorded. " if cf_live_drops is not None
+               else "Enforced-drop counter not instrumented. ")
+            + (f"LLM calls: {int(cf_calls):,}." if "bitagent_contentfilter_llm_calls_total" in all_fam else "LLM call counter not instrumented."),
         )
     elif cf_calls > 0 or bool(cf_deferred):
         cf_status = _stage_status(
             "active", "LLM activity observed", "info",
-            f"{int(cf_calls):,} calls and {int(cf_deferred or 0):,} deferrals were recorded; "
-            "no filter effects were emitted.",
+            (f"{int(cf_calls):,} calls" if "bitagent_contentfilter_llm_calls_total" in all_fam else "Call counter not instrumented")
+            + (f"; {int(cf_deferred):,} deferrals were recorded." if cf_deferred is not None else "; deferral counter not instrumented."),
         )
     elif (cf_examined or 0) > 0:
         cf_status = _stage_status(
-            "active", "Evaluating", "info",
-            f"{int(cf_examined or 0):,} torrents were examined with no drop decision recorded.",
+            "active", "Evaluations observed", "info",
+            f"{int(cf_examined or 0):,} torrents were examined since core boot. "
+            + ("No enforced drops were recorded." if cf_live_drops is not None
+               else "Enforced-drop counter not instrumented."),
         )
     else:
         cf_status = _stage_status(
@@ -1991,17 +2029,17 @@ def _llm_stage_scorecards(
         "available": cf_calls > 0 or bool(cf_deferred),
         "status": cf_status,
         "model": cf_models[0] if len(cf_models) == 1 else (", ".join(cf_models) or None),
-        "modelNote": None if cf_models else "no live calls recorded yet — the model label rides the token counter",
+        "modelNote": None if cf_models else "model label not instrumented; reported call counts do not identify a model",
         "metrics": [
             _stage_metric(
                 "Call success", ratio(cf_ok, cf_calls), "percent",
                 f"{int(cf_ok):,} ok / {int(cf_err):,} failed",
                 tone=_tone_from(ratio(cf_ok, cf_calls), 0.98, 0.9),
-                help_text="Share of live calls that returned at all. Failures here are timeouts, not wrong answers — this stage has no ground truth to score against.",
+                help_text="Share of calls with a successful provider/response outcome. Request failures do not measure answer correctness; no labelled ground truth is emitted.",
             ),
             _stage_metric(
                 "Avg latency", cf_latency, "seconds",
-                f"{int(cf_calls):,} timed calls",
+                f"{int(sum_all('bitagent_contentfilter_llm_call_duration_seconds_count')):,} timed calls",
                 tone=_tone_from(cf_latency, 2.0, 6.0),
                 help_text="This model was chosen specifically on latency. Sustained drift above ~4s is the failure mode to watch.",
             ),
@@ -2048,9 +2086,9 @@ def _llm_stage_scorecards(
             ),
         ],
         "tokens": {"input": int(cf_in), "output": int(cf_out)} if cf_tokens_present else None,
-        "tokensNote": None,
+        "tokensNote": "Provider usage missing; spend is partial." if (count("bitagent_contentfilter_llm_usage_missing_total") or 0) > 0 else None,
         # Spend / unit of work: this stage's only actionable output is a drop.
-        "unit": {"label": "per drop", "count": int(cf_llm_drops)},
+        "unit": {"label": "per drop", "count": int(cf_llm_drops) if cf_live_drops is not None else None},
     })
 
     # ── Stage 3: junk purge ──────────────────────────────────────────
@@ -2106,15 +2144,15 @@ def _llm_stage_scorecards(
         )
     elif (jp_would_delete or 0) > 0:
         jp_status = _stage_status(
-            "dry_run", "Dry run", "warning",
-            f"Judging is active: {int(jp_would_delete or 0):,} confident-junk rows were "
-            "counted as would-delete and none were quarantined.",
+            "dry_run", "Dry-run history", "warning",
+            f"{int(jp_would_delete or 0):,} confident-junk rows were counted as would-delete since core boot. "
+            + ("None were quarantined." if jp_quarantined is not None else "Quarantine counter not instrumented."),
         )
     elif jp_reqs > 0 or bool(jp_deferred):
         jp_status = _stage_status(
-            "active", "Judging active", "info",
-            f"{int(jp_reqs):,} requests were recorded; no quarantine or dry-run effect "
-            "has been observed yet.",
+            "active", "Requests observed", "info",
+            (f"{int(jp_reqs):,} requests were recorded." if "bitagent_junkpurge_llm_requests_total" in all_fam else "Request counter not instrumented.")
+            + " Quarantine and dry-run effects require their own counters.",
         )
     else:
         jp_status = _stage_status(
@@ -2125,7 +2163,7 @@ def _llm_stage_scorecards(
     jp_unit = (
         {"label": "per quarantine", "count": int(jp_quarantined or 0)}
         if (jp_quarantined or 0) > 0
-        else {"label": "per would-delete", "count": int(jp_would_delete or 0)}
+        else {"label": "per would-delete", "count": int(jp_would_delete) if jp_would_delete is not None else None}
     )
 
     stages.append({
@@ -2137,7 +2175,7 @@ def _llm_stage_scorecards(
         "available": jp_reqs > 0 or bool(jp_deferred),
         "status": jp_status,
         "model": jp_models[0] if len(jp_models) == 1 else (", ".join(jp_models) or None),
-        "modelNote": None if jp_models else "no requests recorded yet",
+        "modelNote": None if jp_models else "model label not instrumented",
         "metrics": [
             _stage_metric(
                 "Request success", ratio(jp_ok, jp_reqs), "percent",
@@ -2149,12 +2187,12 @@ def _llm_stage_scorecards(
                 "Judged junk", ratio(verdicts["junk"], jp_judged), "percent",
                 " / ".join(f"{k.replace('_', ' ')} {int(v):,}" for k, v in verdicts.items() if v),
                 tone="neutral",
-                help_text="Verdict mix, not accuracy. The measured false-junk floor is ~0.43% against a 0.1% budget, and junk confidence is bimodal (0.95/1.00) so no threshold separates the false positives — treat this as a volume signal only.",
+                help_text="Share of model verdicts labelled junk. Verdict mix measures volume, not correctness. No labelled ground truth or calibrated confidence assessment is emitted by these counters.",
             ),
             _stage_metric(
                 "Quarantined", jp_quarantined, "number",
                 f"{int(jp_expired):,} expired past the review window"
-                if jp_expired is not None else "not instrumented",
+                if jp_expired is not None else "quarantines since core boot; expiry counter not instrumented",
                 tone="neutral",
                 help_text="Confident-junk torrents moved out of the main DB. Expiry removes them from the active review queue; the current core retains the snapshot for restoration.",
             ),
@@ -2167,12 +2205,13 @@ def _llm_stage_scorecards(
             ),
             _stage_metric(
                 "Requests", count("bitagent_junkpurge_llm_requests_total"), "number",
-                f"{int(jp_judged):,} verdicts over {int(jp_cycles):,} cycles",
+                (f"{int(jp_judged):,} verdicts" if "bitagent_junkpurge_judged_total" in all_fam else "verdict counter not instrumented")
+                + (f" over {int(jp_cycles):,} cycles" if "bitagent_junkpurge_cycles_total" in all_fam else "; cycle counter not instrumented"),
                 help_text="Provider requests since core boot, batched per cycle.",
             ),
             _stage_metric(
                 "Avg cycle", jp_cycle_latency, "seconds",
-                f"{int(jp_cycles):,} completed cycles",
+                f"{int(sum_all('bitagent_junkpurge_cycle_duration_seconds_count')):,} timed cycles",
                 tone="neutral",
                 help_text="Wall-clock per judging cycle, not per call — this stage runs in batches.",
             ),
@@ -2191,6 +2230,125 @@ def _llm_stage_scorecards(
         "unit": jp_unit,
     })
 
+    # ── Stage 4: type classification fallback ────────────────────────
+    type_prefix = "bitagent_classifier_llm_"
+
+    def type_family(suffix: str) -> str:
+        return type_prefix + suffix
+    type_config = {key: configured(type_family("config"), key) for key in (
+        "enabled", "live", "min_confidence", "daily_call_limit", "monthly_call_limit",
+        "max_concurrent_calls", "max_request_bytes", "max_output_tokens",
+    )}
+    type_instrumented = any(name.startswith(type_prefix) and not name.startswith(_LLM_MATCH_PREFIX) for name in all_fam)
+    type_calls = count(type_family("calls_total"))
+    type_decisions = count(type_family("decisions_total"))
+    type_live = count(type_family("live_applied_total"))
+    type_shadow = count(type_family("shadow_skipped_total"))
+    type_hits = count(type_family("cache_hits_total"))
+    type_misses = count(type_family("cache_misses_total"))
+    type_latency = avg_latency(type_family("call_duration_seconds_sum"), type_family("call_duration_seconds_count"))
+    type_models = sorted(set(labels_of(type_family("calls_total"), "model") + labels_of(type_family("tokens_total"), "model")))
+    type_in, type_out = tokens("typeclassifier")
+    type_tokens_present = type_family("tokens_total") in all_fam
+    type_missing = count(type_family("usage_missing_total"))
+    type_gates = {}
+    for labels, value in all_fam.get(type_family("gate_rejects_total"), []):
+        reason = labels.get("reason") or "unknown"
+        type_gates[reason] = type_gates.get(reason, 0) + int(value)
+    if not telemetry_available or not type_instrumented:
+        type_status = _stage_status("unavailable", "Unavailable" if not telemetry_available else "Not instrumented", "neutral",
+                                    "Core metrics could not be read, so type-classifier state is unknown." if not telemetry_available
+                                    else "The core emitted no type-classifier metric family, so enabled state and activity are unknown.")
+    elif type_config["enabled"] == 0:
+        type_status = _stage_status("inactive", "Disabled", "neutral", "The core reports type classifier enabled=false.")
+    elif type_config["enabled"] == 1:
+        live = type_config["live"]
+        type_status = _stage_status("active" if live == 1 else "shadow" if live == 0 else "configured",
+                                    "Live configured" if live == 1 else "Shadow configured" if live == 0 else "Enabled; mode unknown", "info",
+                                    (f"{int(type_calls):,} outbound requests since core boot." if type_calls is not None
+                                     else "Outbound request counter not instrumented."))
+    else:
+        type_status = _stage_status("active" if (type_calls or 0) > 0 else "inactive", "Activity observed" if (type_calls or 0) > 0 else "No activity observed", "neutral",
+                                    "Cumulative observations do not expose the current configured mode.")
+    type_cache_ratio = ratio(type_hits, type_hits + type_misses) if type_hits is not None and type_misses is not None else None
+    stages.append({
+        "id": "typeclassifier", "name": "Type Classifier",
+        "role": "Classifies unknown, unattached results after deterministic fallback gates",
+        "available": (type_calls or 0) > 0 or (type_decisions or 0) > 0,
+        "status": type_status, "config": type_config,
+        "model": ", ".join(type_models) or None,
+        "modelNote": None if type_models else "model label not instrumented",
+        "metrics": [
+            _stage_metric("Calls", type_calls, "number", "admitted outbound HTTP requests", help_text="Actual HTTP dispatches; invocations, cache misses and gate rejections are not calls."),
+            _stage_metric("Avg latency", type_latency, "seconds", "observed HTTP round trips"),
+            _stage_metric("Cache hit ratio", type_cache_ratio, "percent", f"{int(type_hits or 0):,} hits / {int(type_misses or 0):,} misses"),
+            _stage_metric("Decisions", type_decisions, "number", "live and shadow model decisions", help_text="Decision volume, not correctness or agreement with labelled ground truth."),
+            _stage_metric("Live applied", type_live, "number", "decisions applied to the classifier result"),
+            _stage_metric("Shadow decisions", type_shadow, "number", "decisions observed without application"),
+            _stage_metric("Gate rejections", count(type_family("gate_rejects_total")), "number", "invocations withheld before any HTTP dispatch"),
+            _stage_metric("Call errors", count(type_family("call_errors_total")), "number", "transport or response failures"),
+            _stage_metric("Tokens", type_in + type_out if type_tokens_present else None, "number", f"{type_in:,} in / {type_out:,} out"),
+        ],
+        "gateRejects": type_gates,
+        "tokens": {"input": type_in, "output": type_out} if type_tokens_present else None,
+        "tokensNote": "Provider usage missing; spend is partial." if type_missing else None,
+        "unit": {"label": "per live applied decision", "count": type_live},
+    })
+
+    # Require the actual source families for every displayed observation.
+    # Internal zero identities must not leak as measured details on older cores.
+    requirements = {
+        "matcher": {
+            "Attach yield": ("matches_total", "rerank_total"), "Rejected picks": ("gate_rejects_total", "rerank_total"),
+            "Extract success": ("extract_total",), "Calls": ("calls_total",),
+            "Avg latency": ("call_duration_seconds_sum", "call_duration_seconds_count"),
+            "Call errors": ("call_errors_total", "calls_total"), "Budget skips": ("budget_skips_total",),
+        },
+        "contentfilter": {
+            "Call success": ("llm_calls_total",), "Avg latency": ("llm_call_duration_seconds_sum", "llm_call_duration_seconds_count"),
+            "Deferred": ("llm_deferred_total",), "Cache hit ratio": ("llm_cache_hits_total", "llm_cache_misses_total"),
+            "Would drop": ("would_drop_total",), "Share of all drops": ("drop_total",),
+            "Budget exhausted": ("llm_budget_exhausted_total",), "Tokens": ("llm_tokens_total",),
+        },
+        "junkpurge": {
+            "Request success": ("llm_requests_total",), "Judged junk": ("judged_total",),
+            "Quarantined": ("quarantined_total",), "Would delete": ("would_delete_total",),
+            "Requests": ("llm_requests_total",), "Avg cycle": ("cycle_duration_seconds_sum", "cycle_duration_seconds_count"),
+            "Tokens": ("llm_tokens_total",),
+        },
+        "typeclassifier": {
+            "Calls": ("calls_total",), "Avg latency": ("call_duration_seconds_sum", "call_duration_seconds_count"),
+            "Cache hit ratio": ("cache_hits_total", "cache_misses_total"), "Decisions": ("decisions_total",),
+            "Live applied": ("live_applied_total",), "Shadow decisions": ("shadow_skipped_total",),
+            "Gate rejections": ("gate_rejects_total",), "Call errors": ("call_errors_total",), "Tokens": ("tokens_total",),
+        },
+    }
+    prefixes = {"matcher": _LLM_MATCH_PREFIX, "contentfilter": "bitagent_contentfilter_",
+                "junkpurge": "bitagent_junkpurge_", "typeclassifier": type_prefix}
+    for stage in stages:
+        stage["quality"] = {"accuracy": None, "calibrated": None, "groundTruthAvailable": False, "basis": "operational counters; no labelled ground truth emitted"}
+        token_rows = [row for row in spend.get("byModel", []) if row["stage"] == stage["id"]]
+        if stage.get("tokens") is not None:
+            for kind, field in (("input", "inputTokens"), ("output", "outputTokens")):
+                if not any(row.get(field) is not None for row in token_rows):
+                    stage["tokens"][kind] = None
+            if any(row.get("usageIncomplete") for row in token_rows):
+                stage["tokensNote"] = "Token coverage is incomplete; spend is a partial estimate."
+        stage["status"]["basis"] = "resolved configuration" if (stage.get("config") or {}).get("enabled") is not None else "cumulative observations"
+        for metric in stage["metrics"]:
+            present = all(prefixes[stage["id"]] + suffix in all_fam for suffix in requirements[stage["id"]][metric["label"]])
+            if not present:
+                metric.update(value=None, detail="not instrumented", tone="neutral")
+            elif metric["value"] is None:
+                metric["detail"] = "No usable observations since core boot."
+            if metric["label"] == "Tokens" and stage.get("tokens") is not None:
+                values = list(stage["tokens"].values())
+                if all(value is None for value in values):
+                    metric.update(value=None, detail="input/output token kinds not instrumented", tone="neutral")
+                elif any(value is None for value in values):
+                    metric["detail"] = "partial token count; an input/output kind is not instrumented"
+                    metric["partial"] = True
+
     # A stage that never ran has no verdict to render. Its unlabelled optional
     # counters (deferred, budget_exhausted, quarantined, expired) are
     # registered at core boot and so scrape as a true 0 whether the stage is
@@ -2208,22 +2366,27 @@ def _llm_stage_scorecards(
 
     # Attach spend by stage. A stage whose model has no price entry gets its
     # tokens and a null cost, never a zero — see prom_metrics._llm_spend.
-    by_stage = {row["stage"]: row for row in (spend.get("byModel") or [])}
     for stage in stages:
-        row = by_stage.get(stage["id"])
+        rows = [row for row in (spend.get("byModel") or []) if row["stage"] == stage["id"]]
         unit = stage.get("unit")
-        usd = row.get("usd") if row else None
+        priced_rows = [row for row in rows if row.get("priced")]
+        usd = sum(row["usd"] for row in priced_rows) if priced_rows else None
+        monthly_rows = [row for row in rows if row.get("monthlyUsd") is not None]
+        partial = any(not row.get("priced") or row.get("usageIncomplete") for row in rows)
         stage["spend"] = {
             "usd": usd,
-            "monthlyUsd": row.get("monthlyUsd") if row else None,
-            "priced": bool(row and row.get("priced")),
-            # Cost per unit of work is the comparison that ranks stages against
-            # each other; without it a big bill and a big workload look alike.
-            "usdPerUnit": (usd / unit["count"])
-            if (usd is not None and unit and unit["count"] > 0) else None,
+            "monthlyUsd": sum(row["monthlyUsd"] for row in monthly_rows) if monthly_rows else None,
+            "priced": bool(priced_rows),
+            "priceAvailable": any(row.get("priceAvailable") for row in rows),
+            "allPricesAvailable": all(row.get("priceAvailable") for row in rows),
+            "usageIncomplete": any(row.get("usageIncomplete") for row in rows),
+            "unpricedModels": sorted({row["model"] or "unlabelled" for row in rows if not row.get("priceAvailable")}),
+            "totalIsPartial": partial,
+            "monthlyIsPartial": partial or len(monthly_rows) < len(rows),
+            "usdPerUnit": usd / unit["count"] if usd is not None and unit and unit.get("count") is not None and unit["count"] > 0 else None,
             "unitLabel": unit["label"] if unit else None,
             "unitCount": unit["count"] if unit else None,
-        } if row else None
+        } if rows else None
 
     return stages
 
@@ -2231,8 +2394,8 @@ def _llm_stage_scorecards(
 def _spend_snapshot(raw: str) -> dict:
     """Spend-to-date per model, plus a measured projection against the budget.
 
-    Token counters are cumulative since core boot and the core publishes no
-    process-start gauge, so a single scrape cannot say what a month costs. The
+    Token counters are cumulative since core boot. A single scrape cannot say
+    what a future month costs; the process-start gauge fences restarts. The
     projection is therefore measured by sampling spend-to-date across this
     app's own polls, and it is deliberately conservative about saying zero: a
     model whose counter has not moved yet is reported as still measuring, not
@@ -2242,14 +2405,34 @@ def _spend_snapshot(raw: str) -> dict:
     """
     lines = _parse_prometheus_snapshot(raw).get("lines") or {}
     result = _llm_spend(lines)
+    # A dispatched stage without token accounting makes the global estimate
+    # incomplete even if another stage has a fully priced token cohort.
+    unmetered = []
+    for stage, calls, token_family in (
+        ("matcher", "bitagent_classifier_llm_match_calls_total", "bitagent_classifier_llm_match_tokens_total"),
+        ("typeclassifier", "bitagent_classifier_llm_calls_total", "bitagent_classifier_llm_tokens_total"),
+        ("contentfilter", "bitagent_contentfilter_llm_calls_total", "bitagent_contentfilter_llm_tokens_total"),
+        ("junkpurge", "bitagent_junkpurge_llm_requests_total", "bitagent_junkpurge_llm_tokens_total"),
+    ):
+        dispatched = sum(value for _, value in _iter_labeled(lines, calls) if _nonnegative_int(value) is not None)
+        if dispatched > 0 and not _metric_family_present(lines, token_family):
+            unmetered.append(stage)
+    result["unmeteredStages"] = unmetered
+    result["totalIsPartial"] = result["totalIsPartial"] or bool(unmetered)
+
+    global _SPEND_CORE_STARTED_AT
+    started_at = _nonnegative_rate(lines.get("bitmagnet_process_start_time_seconds"))
+    if started_at is not None:
+        if _SPEND_CORE_STARTED_AT is not None and started_at != _SPEND_CORE_STARTED_AT:
+            _SPEND_HISTORY.clear()
+        _SPEND_CORE_STARTED_AT = started_at
 
     now_mono = _metric_history_now()
     sample = {
-        row["model"]: float(row["usd"])
+        (row["stage"], row["model"]): float(row["usd"])
         for row in result["byModel"] if row["priced"]
     }
-    if sample:
-        _record_spend_snapshot(now_mono, sample)
+    _record_spend_snapshot(now_mono, sample)
 
     monthly_total = 0.0
     measured_any = False
@@ -2260,7 +2443,7 @@ def _spend_snapshot(raw: str) -> dict:
             row["monthlyUsd"] = None
             still_measuring.append(row["model"])
             continue
-        per_min, elapsed = _spend_rate_per_min(row["model"], now_mono)
+        per_min, elapsed = _spend_rate_per_min((row["stage"], row["model"]), now_mono)
         window = max(window, elapsed)
         # A flat counter is only credible as "$0/mo" once the window is longer
         # than this workload's burst gap; before that it is unmeasured.
@@ -2279,10 +2462,10 @@ def _spend_snapshot(raw: str) -> dict:
     partial = bool(still_measuring) or result["totalIsPartial"]
     result["monthlyUsd"] = monthly
     result["monthlyIsPartial"] = partial
-    result["monthlyMeasuring"] = still_measuring
+    result["monthlyMeasuring"] = sorted(set(still_measuring))
     result["monthlyWindowSeconds"] = window
     result["monthlyStatus"] = (
-        "unavailable" if not result["available"]
+        "unavailable" if not result["available"] or not any(row["priced"] for row in result["byModel"])
         else "measuring" if monthly is None
         else "partial" if partial
         else "ok"
@@ -2290,6 +2473,11 @@ def _spend_snapshot(raw: str) -> dict:
     result["budgetUsd"] = budget or None
     result["budgetRatio"] = (monthly / budget) if (monthly is not None and budget > 0) else None
     result["pricesAsOf"] = LLM_PRICES_AS_OF
+    result["projectionBasis"] = "observed token-cost rate extrapolated over 30 days; not a forecast or invoice"
+    result["coreStartedAt"] = (
+        datetime.fromtimestamp(started_at, timezone.utc).isoformat()
+        if started_at is not None and started_at <= 253402300799 else None
+    )
     return result
 
 
@@ -2303,31 +2491,51 @@ async def api_ai_summary(identity: dict = Depends(require_operator)):
     compatibility; `telemetryAvailable` and each stage's `status` distinguish
     a quiet stage from an unreachable or uninstrumented metrics source.
     """
-    raw = await gql.fetch_metrics()
+    attempted_at = snapshot_timestamp()
+    request_started = time.monotonic()
+    source_error = None
+    try:
+        raw = await gql.fetch_metrics()
+    except Exception:
+        # Never send exception strings (which may contain URLs or secrets).
+        raw = ""
+        source_error = "Core metrics request failed."
+    parsed = _parse_prometheus_snapshot(raw)
+    metric_lines = parsed["lines"]
     spend = _spend_snapshot(raw)
-    # Full scrape parsed once: metric name -> list of (labels dict, value).
-    # The matcher view keeps its prefix-stripped `fam` alias so the existing
-    # detail panels are untouched; the per-stage scorecard needs the whole
-    # scrape because the content filter and junk purge live under different
-    # metric prefixes entirely.
+    # Reuse the finite parser; optional Prometheus timestamps are accepted.
     all_fam: dict[str, list[tuple[dict, float]]] = {}
     fam: dict[str, list[tuple[dict, float]]] = {}
-    for line in raw.splitlines():
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(" ", 1)
-        if len(parts) != 2:
-            continue
-        key, val = parts
+    for key, value in metric_lines.items():
         bare, _, label_blob = key.partition("{")
-        try:
-            v = float(val)
-        except ValueError:
+        # AI counts cannot be negative or fractional. A malformed counter is
+        # absent evidence, never a fabricated zero or a JSON NaN/Infinity.
+        if bare.startswith("bitagent_") and (
+            _nonnegative_rate(value) is None
+            or ((bare.endswith("_total") or bare.endswith("_count"))
+                and _nonnegative_int(value) is None)
+        ):
             continue
         labels = _parse_prom_labels(label_blob)
-        all_fam.setdefault(bare, []).append((labels, v))
+        all_fam.setdefault(bare, []).append((labels, value))
         if bare.startswith(_LLM_MATCH_PREFIX):
-            fam.setdefault(bare[len(_LLM_MATCH_PREFIX):], []).append((labels, v))
+            fam.setdefault(bare[len(_LLM_MATCH_PREFIX):], []).append((labels, value))
+    data_lines = [line for line in raw.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    source_status = (
+        "ok" if all_fam else "error" if source_error or data_lines else "unavailable"
+    )
+    telemetry = {
+        "status": source_status,
+        "source": "bitagent.prometheus",
+        "observedAt": snapshot_timestamp() if source_status == "ok" else None,
+        "attemptedAt": attempted_at,
+        "loadTimeMs": round(max(time.monotonic() - request_started, 0.0) * 1000, 3),
+        "stale": False,
+        "error": source_error or (
+            "Core metrics contained no usable samples." if source_status == "error"
+            else "Core metrics were empty or unavailable." if source_status == "unavailable" else None
+        ),
+    }
 
     def _sum(name: str, **want: str) -> float:
         return sum(
@@ -2349,9 +2557,15 @@ async def api_ai_summary(identity: dict = Depends(require_operator)):
         }
         return sorted(seen)
 
+    def _exact(name: str, **want: str) -> float | None:
+        values = [v for labels, v in all_fam.get(name, [])
+                  if all(labels.get(k) == value for k, value in want.items())]
+        return sum(values) if values else None
+
     def _avg_latency(sum_metric: str, count_metric: str, **want: str) -> float | None:
-        count = _all(count_metric, **want)
-        return (_all(sum_metric, **want) / count) if count > 0 else None
+        total = _exact(sum_metric, **want)
+        count = _exact(count_metric, **want)
+        return total / count if total is not None and count is not None and count > 0 else None
 
     def _ratio(numerator: float, denominator: float) -> float | None:
         return (numerator / denominator) if denominator > 0 else None
@@ -2373,7 +2587,7 @@ async def api_ai_summary(identity: dict = Depends(require_operator)):
     rerank = {r: int(_sum("rerank_total", result=r)) for r in ("match", "none", "error")}
     rerank["total"] = sum(rerank.values())
     decided = rerank["match"] + rerank["none"]
-    rerank["matchRate"] = (rerank["match"] / decided) if decided > 0 else 0.0
+    rerank["matchRate"] = (rerank["match"] / decided) if decided > 0 else None
 
     gate_rejects = {
         labels.get("gate") or "unknown": int(v)
@@ -2400,88 +2614,86 @@ async def api_ai_summary(identity: dict = Depends(require_operator)):
         stage = labels.get("stage") or "unknown"
         call_errors_by_stage[stage] = call_errors_by_stage.get(stage, 0) + int(v)
 
-    # Avg call latency per stage from the histogram's _sum/_count pair.
+    # A histogram requires both sum and count for the selected stage.
     latency = {}
     for stage in ("extract", "rerank"):
-        dur_sum = _sum("call_duration_seconds_sum", stage=stage)
-        dur_count = _sum("call_duration_seconds_count", stage=stage)
+        dur_count = _exact(_LLM_MATCH_PREFIX + "call_duration_seconds_count", stage=stage)
         latency[stage] = {
-            "avgSeconds": (dur_sum / dur_count) if dur_count > 0 else 0.0,
-            "count": int(dur_count),
+            "avgSeconds": _avg_latency(
+                _LLM_MATCH_PREFIX + "call_duration_seconds_sum",
+                _LLM_MATCH_PREFIX + "call_duration_seconds_count", stage=stage,
+            ),
+            "count": int(dur_count) if dur_count is not None else None,
         }
 
-    # Alt-title backfill coverage (core v0.22.0 dashstats gauges). "checked"
-    # counts rows the refresh-alt-titles sweep has visited — including rows
-    # with zero upstream alt titles — so checked/total is honest backfill
-    # progress; withAlt/total is alt-title density.
-    alt_gauges: dict[str, float] = {}
-    for line in raw.splitlines():
-        if not line.startswith("bitagent_dashstats_alt_title_content_"):
-            continue
-        parts = line.split(" ", 1)
-        if len(parts) != 2:
-            continue
-        try:
-            alt_gauges[parts[0]] = float(parts[1])
-        except ValueError:
-            continue
-    alt_total = int(alt_gauges.get("bitagent_dashstats_alt_title_content_total", 0))
-    alt_checked = int(alt_gauges.get("bitagent_dashstats_alt_title_content_checked", 0))
-    alt_with = int(alt_gauges.get("bitagent_dashstats_alt_title_content_with_alt", 0))
-    alt_titles = {
-        "available": bool(alt_gauges),
-        "total": alt_total,
-        "checked": alt_checked,
-        "withAlt": alt_with,
-        "checkedRatio": (alt_checked / alt_total) if alt_total > 0 else 0.0,
+    alt_values = {
+        key: _exact("bitagent_dashstats_alt_title_content_" + suffix)
+        for key, suffix in (("total", "total"), ("checked", "checked"), ("withAlt", "with_alt"))
     }
+    alt_values = {key: _nonnegative_int(value) for key, value in alt_values.items()}
+    alt_available = all(value is not None for value in alt_values.values())
+    alt_total, alt_checked = alt_values["total"], alt_values["checked"]
+    alt_titles = {
+        "available": alt_available,
+        **alt_values,
+        "checkedRatio": (
+            alt_checked / alt_total
+            if alt_available and alt_total > 0 and alt_checked <= alt_total else None
+        ),
+    }
+    family_presence = {
+        "matches": "matches_total" in fam,
+        "extract": "extract_total" in fam,
+        "rerank": "rerank_total" in fam,
+        "gateRejects": "gate_rejects_total" in fam,
+        "anime": "anime_total" in fam,
+        "cacheHits": "cache_hits_total" in fam,
+        "cacheMisses": "cache_misses_total" in fam,
+        "callErrors": "call_errors_total" in fam,
+        "latencyExtract": all(_exact(_LLM_MATCH_PREFIX + "call_duration_seconds_" + suffix, stage="extract") is not None for suffix in ("sum", "count")),
+        "latencyRerank": all(_exact(_LLM_MATCH_PREFIX + "call_duration_seconds_" + suffix, stage="rerank") is not None for suffix in ("sum", "count")),
+        "altTitles": alt_available,
+    }
+    # Scorecards can use zero as an internal identity for summation; the wire
+    # representation retains missing families as null.
+    stages = _llm_stage_scorecards(
+        spend=spend, telemetry_available=bool(all_fam), all_fam=all_fam,
+        sum_all=_all, labels_of=_labels_of, avg_latency=_avg_latency, ratio=_ratio,
+        matcher_matches=matches, matcher_extract=extract, matcher_rerank=rerank,
+        matcher_gate_rejects=gate_rejects, matcher_latency=latency,
+    )
+    if not family_presence["matches"]:
+        for values in matches.values():
+            values["total"] = None
+    if not family_presence["extract"]:
+        extract = {key: None for key in extract}
+    if not family_presence["rerank"]:
+        rerank = {key: None for key in rerank}
 
     return {
-        # NOT `bool(fam)`. `cache_hits`/`cache_misses` are registered at core
-        # boot with prometheus.NewCounter, so they scrape as a bare 0 with the
-        # matcher switched off — the family is never empty and the "matcher
-        # metrics not present" banner was therefore unreachable in exactly the
-        # situation it exists for. Gate on a family that only appears once the
-        # matcher has actually done work.
-        "available": any(
-            fam.get(name) for name in ("extract_total", "rerank_total", "matches_total")
-        ),
-        # Distinguish "the matcher did no work" from "the metrics request
-        # failed". The old response flattened both into available=false, which
-        # sent operators debugging configuration during a transport failure.
+        "available": any(fam.get(name) for name in ("extract_total", "rerank_total", "matches_total")),
         "telemetryAvailable": bool(all_fam),
+        "telemetry": telemetry,
+        "familyPresence": family_presence,
         "spend": spend,
-        "stages": _llm_stage_scorecards(
-            spend=spend,
-            telemetry_available=bool(all_fam),
-            all_fam=all_fam,
-            sum_all=_all,
-            labels_of=_labels_of,
-            avg_latency=_avg_latency,
-            ratio=_ratio,
-            matcher_matches=matches,
-            matcher_extract=extract,
-            matcher_rerank=rerank,
-            matcher_gate_rejects=gate_rejects,
-            matcher_latency=latency,
-        ),
+        "stages": stages,
         "matches": matches,
         "extract": extract,
         "rerank": rerank,
         "gateRejects": gate_rejects,
         "anime": {
-            "kept": anime_kept,
-            "rejected": anime_rejected,
+            "kept": anime_kept if family_presence["anime"] else None,
+            "rejected": anime_rejected if family_presence["anime"] else None,
             "byEnglish": anime_by_english,
         },
         "cache": {
-            "hits": int(hits),
-            "misses": int(misses),
-            "hitRatio": (hits / lookups) if lookups > 0 else 0.0,
+            "hits": int(hits) if family_presence["cacheHits"] else None,
+            "misses": int(misses) if family_presence["cacheMisses"] else None,
+            "hitRatio": hits / lookups if family_presence["cacheHits"] and family_presence["cacheMisses"] and lookups > 0 else None,
         },
         "callErrors": {
             "byStage": call_errors_by_stage,
-            "total": sum(call_errors_by_stage.values()),
+            "total": sum(call_errors_by_stage.values()) if family_presence["callErrors"] else None,
         },
         "latency": latency,
         "altTitles": alt_titles,
@@ -3666,8 +3878,18 @@ async def api_set_override(key: str, body: SettingUpdate, identity: dict = Depen
     # sites re-check to blunt set-time -> fetch-time DNS rebinding.
     if key in ARR_BASE_URL_FIELDS and body.value.strip():
         await _assert_safe_arr_base_url(body.value)
+    if key == "log_level":
+        # Validate before persistence; apply after the audited write succeeds.
+        normalized = body.value.strip().lower()
+        if normalized == "warn":
+            normalized = "warning"
+        if normalized not in {"debug", "info", "warning", "error", "critical"}:
+            raise HTTPException(400, "Use debug, info, warning, error, or critical.")
+        body.value = normalized
     actor = str(identity.get("id") or "unknown")
     result = await set_override(key, body.value, actor=actor)
+    if key == "log_level":
+        _apply_ui_log_level(body.value)
     if key in SENSITIVE_FIELDS:
         return {
             "key": key,
@@ -3689,6 +3911,8 @@ async def api_delete_override(key: str, identity: dict = Depends(require_operato
     ok = await delete_override(key, actor=actor)
     if not ok:
         raise HTTPException(404, "Override not found")
+    if key == "log_level":
+        _apply_ui_log_level(settings.log_level, strict=False)
     return {"status": "deleted"}
 
 

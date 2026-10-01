@@ -112,3 +112,127 @@ test('invalid runtime routes restore a canonical dashboard URL',()=>{
   const f=fixture(); f.window.location.hash='#settings/unsupported'; f.restoreOperatorRoute();
   assert.deepEqual(f.history,[['replace','#dashboard']]); assert.deepEqual(f.loaded,['Dashboard']);
 });
+
+function settingsFixture() {
+  const f = fixture();
+  const source = fs.readFileSync(path.join(__dirname, '../static/js/app.js'), 'utf8');
+  const groups = ['config', 'integrations', 'content', 'access'];
+  const sections = { retention:'config', setup:'integrations', filters:'content', blocklists:'content',
+    classifier:'content', liveness:'content', auth:'access', audit:'access' };
+  const panels = groups.map(group => {
+    const node = f.element(`settings-group-${group}`); node.dataset.settingsPanel = group; return node;
+  });
+  const buttons = groups.map(group => {
+    const node = f.element(`settings-button-${group}`); node.dataset.settingsGroup = group; return node;
+  });
+  const details = Object.entries(sections).map(([section, group]) => {
+    const node = f.element(`settings-disclosure-${section}`);
+    node.dataset.settingsSection = section; node.parentElement = f.element(`settings-group-${group}`); node.open = false;
+    const summary = f.element(`summary-${section}`); summary.parentElement = node;
+    node.querySelector = selector => selector === 'summary' ? summary : null;
+    node.scrollIntoView = () => {};
+    return node;
+  });
+  const contains = function (node) {
+    for (; node; node = node.parentElement) if (node === this) return true;
+    return false;
+  };
+  [...panels, ...details].forEach(node => { node.contains = contains; });
+  groups.forEach(group => f.element(`settings-heading-${group}`));
+  [...panels, ...details, ...groups.map(group => f.element(`settings-heading-${group}`)),
+    ...Object.keys(sections).map(section => f.element(`summary-${section}`))].forEach(node => {
+    node.focus = () => { f.focused.push(node.id); f.document.activeElement = node; };
+  });
+  const oldQuery = f.document.querySelectorAll;
+  f.document.querySelectorAll = selector => {
+    if (selector === '#tab-settings [data-settings-panel]') return panels;
+    if (selector === '#tab-settings [data-settings-group]') return buttons;
+    const match = selector.match(/^#settings-group-(\w+) \.settings-disclosure$/);
+    if (match) return details.filter(node => sections[node.dataset.settingsSection] === match[1]);
+    return oldQuery(selector);
+  };
+  f.document.getElementById = id => {
+    if (id.startsWith('settings-disclosure-') && !sections[id.replace('settings-disclosure-', '')]) return null;
+    return f.element(id);
+  };
+  const loaded = [];
+  const context = vm.createContext({ document:f.document, window:f.window,
+    ...Object.fromEntries(['Dashboard','Library','Wants','Evidence','Quarantine','AiTab','System',
+      'Settings','AuthStatus','ArrSettings','ClassifierRules','LivenessOps','FiltersStatus','BlockLists','AuditLog']
+      .map(name => [`load${name}`, () => loaded.push(name)])), switchSystemTab:()=>{} });
+  const nav = source.slice(source.indexOf('/* ── Sidebar drawer'), source.indexOf('/* ── Utility'));
+  const settings = source.slice(source.indexOf('function loadSettingsView()'), source.indexOf('async function loadFiltersStatus()'));
+  vm.runInContext('let currentTab="settings";\n' + nav + settings + '\nthis.settings={switchSettingsTab,settingsSectionIntent,restoreOperatorRoute};', context);
+  return { ...f, ...context.settings, panels, buttons, details, loaded };
+}
+
+test('legacy Settings links select their group and open the requested disclosure', () => {
+  const f = settingsFixture();
+  const expected = {
+    retention:['config','Settings'], setup:['integrations'],
+    filters:['content','FiltersStatus'], blocklists:['content','BlockLists'],
+    classifier:['content','ClassifierRules'], liveness:['content','LivenessOps'],
+    auth:['access','Settings','AuthStatus'], audit:['access','AuditLog']
+  };
+  for (const [section, [group, ...loads]] of Object.entries(expected)) {
+    f.loaded.length = 0; f.window.location.hash = `#settings/${section}`;
+    f.restoreOperatorRoute();
+    assert.deepEqual(f.panels.filter(n => n.classes.has('active')).map(n => n.dataset.settingsPanel), [group]);
+    assert.equal(f.element(`settings-disclosure-${section}`).open, true);
+    assert.deepEqual(f.buttons.filter(n => n.attrs.get('aria-pressed') === 'true').map(n => n.dataset.settingsGroup), [group]);
+    assert.deepEqual(f.loaded, loads, `${section} should load only its selected data source`);
+  }
+  assert.deepEqual(f.history, [], 'restoring legacy routes must not add history');
+});
+
+test('primary Settings groups expose their useful default section', () => {
+  const f = settingsFixture();
+  f.switchSettingsTab('content');
+  assert.equal(f.element('settings-disclosure-filters').open, true);
+  assert.deepEqual(f.loaded, ['FiltersStatus']);
+  assert.deepEqual(f.history.at(-1), ['push','#settings/content']);
+  f.loaded.length = 0; f.switchSettingsTab('access');
+  assert.equal(f.element('settings-disclosure-auth').open, true);
+  assert.deepEqual(f.loaded, ['Settings','AuthStatus']);
+  f.loaded.length = 0; f.switchSettingsTab('integrations');
+  assert.equal(f.element('settings-disclosure-setup').open, false);
+  assert.deepEqual(f.loaded, ['ArrSettings']);
+});
+
+test('switching Settings preserves a visible keyboard focus target', () => {
+  const f = settingsFixture();
+  f.switchSettingsTab('filters', { history:false, load:false });
+  const input = f.element('filter-control'); input.parentElement = f.element('settings-disclosure-filters');
+  f.document.activeElement = input;
+  f.switchSettingsTab('classifier', { history:false, load:false });
+  assert.equal(f.element('settings-disclosure-filters').open, false);
+  assert.equal(f.document.activeElement.id, 'summary-classifier');
+  f.switchSettingsTab('integrations', { history:false, load:false });
+  assert.equal(f.document.activeElement.id, 'settings-heading-integrations');
+});
+
+test('native disclosure intent opens one section and loads it once', () => {
+  const f = settingsFixture(); f.switchSettingsTab('content', { history:false, load:false });
+  const classifier = f.element('settings-disclosure-classifier');
+  f.settingsSectionIntent('classifier', classifier);
+  assert.equal(f.element('settings-disclosure-filters').open, false);
+  assert.deepEqual(f.loaded, ['ClassifierRules']);
+  assert.deepEqual(f.history, [['push','#settings/classifier']]);
+  // Native <summary> completes the open operation after the click handler.
+  classifier.open = true; f.settingsSectionIntent('classifier', classifier);
+  assert.deepEqual(f.loaded, ['ClassifierRules'], 'closing an open disclosure needs no redundant read');
+});
+
+test('Settings markup has four primary groups and one native editor per connection secret', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../templates/index.html'), 'utf8');
+  assert.deepEqual([...html.matchAll(/data-settings-group="([^"]+)"/g)].map(match => match[1]),
+    ['config','integrations','content','access']);
+  assert.equal((html.match(/<details class="settings-disclosure"/g) || []).length, 8);
+  for (const arr of ['sonarr','radarr','lidarr']) {
+    assert.match(html, new RegExp(`<input[^>]+type="url"[^>]+id="arr-${arr}-url"`));
+    assert.match(html, new RegExp(`<input[^>]+type="password"[^>]+id="arr-${arr}-key"`));
+    assert.equal((html.match(new RegExp(`id="arr-${arr}-key"`, 'g')) || []).length, 1);
+  }
+  assert.equal((html.match(/id="tmdbKeyInput"/g) || []).length, 1);
+  assert.doesNotMatch(html, /id="(?:dashKeyDisplay|tzKeyDisplay)"/);
+});

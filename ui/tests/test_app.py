@@ -119,7 +119,8 @@ def test_operator_requests_are_bounded_and_ai_modes_are_rendered():
     assert "if (loadSeq !== _aiLoadSeq) return;" in javascript
     assert "stage.status" in javascript
     assert "data.wouldDrops" in javascript
-    assert "LLM not observed" in javascript
+    assert "Core telemetry unavailable" in javascript
+    assert 'id="aiObservationState"' in html
     assert "idle or disabled" not in javascript
     assert 'id="aiUnavailableNote" class="callout' in html
     assert 'id="filterNsfwCountLabel"' in html

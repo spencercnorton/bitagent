@@ -2,8 +2,15 @@
 
 ## Unreleased
 
+- Organize Settings into four workflow groups with typed logging, URL and
+  secret controls, grouped deployment references and reduced-motion-aware
+  section transitions.
+- Align AI observations with the core's token labels and type-classifier
+  metrics. Preserve missing counters as unknown, expose source observations,
+  and label cost totals and sampled projections as estimates rather than
+  invoices or model accuracy.
 - Refine the operator console with bookmarkable navigation, keyboard-safe mobile
-  navigation, responsive settings search and per-field draft preservation.
+  navigation and per-field draft preservation.
   Runtime overrides expose save/reset progress and failures, with an explicit
   reset step and no browser persistence of replacement secrets.
 - Show loading, stale, measuring, unavailable and failed operational observations

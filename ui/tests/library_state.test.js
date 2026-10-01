@@ -10,6 +10,7 @@ require('./operator_navigation.test.js');
 require('./operator_metrics.test.js');
 require('./operator_settings.test.js');
 require('./operator_integrations.test.js');
+require('./operator_ai.test.js');
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

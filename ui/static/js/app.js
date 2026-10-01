@@ -98,11 +98,15 @@ const TAB_META = {
   wants:      { title: 'Wants',      subtitle: 'Requests from *arr applications and catalogue matches' },
   evidence:   { title: 'Evidence',   subtitle: 'Webhook events from *arr applications' },
   quarantine: { title: 'Quarantine', subtitle: 'Junk-classifier removals — review, restore, or purge' },
-  ai:         { title: 'AI',         subtitle: 'Matcher, content filter and junk-purge judge — throughput, latency and quality' },
+  ai:         { title: 'AI',         subtitle: 'Observed activity, request outcomes and estimated token cost' },
   settings:   { title: 'Settings',   subtitle: 'Runtime overrides, integrations and configuration history' },
   system:     { title: 'System',     subtitle: 'Health checks, diagnostics, and tools' },
 };
-const SETTINGS_TABS = ['config', 'auth', 'integrations', 'retention', 'classifier', 'liveness', 'filters', 'blocklists', 'audit'];
+const SETTINGS_TABS = ['config', 'integrations', 'content', 'access', 'auth', 'retention', 'classifier', 'liveness', 'filters', 'blocklists', 'audit', 'setup'];
+const SETTINGS_GROUP_FOR = { config: 'config', retention: 'config', integrations: 'integrations', setup: 'integrations',
+  content: 'content', classifier: 'content', liveness: 'content', filters: 'content', blocklists: 'content',
+  access: 'access', auth: 'access', audit: 'access' };
+const SETTINGS_DEFAULT_SECTION = { config: 'config', integrations: 'integrations', content: 'filters', access: 'auth' };
 const SYSTEM_TABS = ['health', 'torznab', 'graphql', 'metrics'];
 let _settingsTab = 'config', _systemTab = 'health';
 function operatorRoute(hash) {
@@ -1897,12 +1901,42 @@ const _settingsPending = new Set();
 const _settingsResetConfirm = new Set();
 let _settingsLoadPromise = null;
 let _settingsLoadedAt = null;
+const _settingLogLevels = { debug: 'Debug — detailed diagnosis', info: 'Info — normal events',
+  warning: 'Warning — potential issues', error: 'Error — failures only', critical: 'Critical — severe failures' };
+
+function _settingValue(key, value) {
+  const text = String(value ?? '');
+  return key === 'log_level' && text === 'warn' ? 'warning' : text;
+}
+
+function _settingsCompletionFocus(inputId, actionId) {
+  const origin = document.activeElement;
+  let eligible = origin?.id === inputId || origin?.id === actionId;
+  if (!eligible) return () => {};
+  const route = typeof _settingsTab === 'undefined' ? null : _settingsTab;
+  const tab = typeof currentTab === 'undefined' ? null : currentTab;
+  const isRoot = node => !!node && (node === document.body || node === document.documentElement);
+  const moved = event => {
+    if (!isRoot(event.target) && event.target !== origin && event.target?.id !== inputId) eligible = false;
+  };
+  document.addEventListener?.('focusin', moved);
+  return () => {
+    document.removeEventListener?.('focusin', moved);
+    const input = document.getElementById(inputId);
+    if (!eligible || !isRoot(document.activeElement) || !input || input.disabled || input.hidden || input.isConnected === false) return;
+    if (typeof currentTab !== 'undefined' && (currentTab !== tab || currentTab !== 'settings')) return;
+    if (typeof _settingsTab !== 'undefined' && _settingsTab !== route) return;
+    // The input may still exist inside a hidden group or collapsed disclosure.
+    if (typeof input.getClientRects === 'function' && !input.getClientRects().length) return;
+    input.focus({ preventScroll: true });
+  };
+}
 
 function _settingDescription(key) {
   const descriptions = {
     tmdb_api_key: 'TMDB API key for poster art in the public library.',
-    log_level: 'Logging verbosity: debug, info, warn, or error.',
-    torznab_api_key: 'Shared API key for the Torznab endpoint.',
+    log_level: 'Controls this console’s application logs. Core and web-server logging keep their deployment settings.',
+    torznab_api_key: 'Shared indexer credential. Blank keeps the configured key; a saved replacement is used by clients with this shared key.',
   };
   if (descriptions[key]) return descriptions[key];
   const app = key.split('_')[0];
@@ -1919,19 +1953,26 @@ function _rememberSettingDrafts() {
   for (const [key, field] of Object.entries(_settingsFields || {})) {
     const input = document.getElementById(`setting-${key}`);
     if (!input) continue;
-    if (field.sensitive ? input.value !== '' : input.value !== String(field.current ?? '')) {
-      _settingsDrafts[key] = input.value;
+    const value = _settingValue(key, input.value);
+    if (field.sensitive ? value !== '' : value !== _settingValue(key, field.current)) {
+      _settingsDrafts[key] = value;
     } else delete _settingsDrafts[key];
   }
 }
 
 function _settingsStatus(message, state) {
-  const status = document.getElementById('settingsStatus');
-  if (status) { status.textContent = message; status.dataset.state = state; }
-  const grid = document.getElementById('settingsGrid');
-  if (grid) grid.setAttribute('aria-busy', String(state === 'loading'));
-  const reload = document.getElementById('settingsReload');
-  if (reload) reload.disabled = state === 'loading' || _settingsPending.size > 0;
+  for (const id of ['settingsStatus', 'settingsAccessStatus']) {
+    const status = document.getElementById(id);
+    if (status) { status.textContent = message; status.dataset.state = state; }
+  }
+  for (const id of ['settingsGrid', 'settingsAccessGrid']) {
+    const grid = document.getElementById(id);
+    if (grid) grid.setAttribute('aria-busy', String(state === 'loading'));
+  }
+  for (const id of ['settingsReload', 'settingsAccessReload']) {
+    const reload = document.getElementById(id);
+    if (reload) reload.disabled = state === 'loading' || _settingsPending.size > 0;
+  }
 }
 
 function _updateSettingActions(key) {
@@ -1973,7 +2014,7 @@ function filterSettings() {
   const search = document.getElementById('settingsSearch');
   const query = search ? search.value.trim().toLowerCase() : '';
   let visible = 0;
-  const entries = Object.entries(_settingsFields || {});
+  const entries = Object.entries(_settingsFields || {}).filter(([key]) => !!document.getElementById(`setting-item-${key}`));
   for (const [key, field] of entries) {
     const item = document.getElementById(`setting-item-${key}`);
     const matches = `${key.replaceAll('_', ' ')} ${key} ${_settingDescription(key)} ${field.overridden ? 'override' : 'startup'}`.toLowerCase().includes(query);
@@ -1989,31 +2030,47 @@ function filterSettings() {
   if (empty) empty.hidden = !_settingsFields || visible > 0;
 }
 
+function _settingControl(key, field, value, placeholder) {
+  const attributes = `class="input" id="setting-${escHtml(key)}" data-sensitive="${!!field.sensitive}" aria-describedby="setting-description-${escHtml(key)} setting-status-${escHtml(key)}"`;
+  if (key === 'log_level') {
+    value = _settingValue(key, value);
+    const current = Object.prototype.hasOwnProperty.call(_settingLogLevels, value) ? '' : `<option value="${escHtml(value)}" selected disabled>Current value: ${escHtml(value || 'unset')}</option>`;
+    return `<select ${attributes} onchange="editSetting('log_level')">${current}${Object.entries(_settingLogLevels).map(([level, title]) => `<option value="${level}"${value === level ? ' selected' : ''}>${title}</option>`).join('')}</select>`;
+  }
+  return `<input ${attributes} type="${field.sensitive ? 'password' : key.endsWith('_base_url') ? 'url' : 'text'}" value="${field.sensitive ? '' : escHtml(value)}" placeholder="${escHtml(placeholder)}" autocomplete="off" spellcheck="false" oninput="editSetting('${escHtml(key)}')">`;
+}
+
 function _renderSettings() {
-  const grid = document.getElementById('settingsGrid');
-  if (!grid || !_settingsFields) return;
+  if (!_settingsFields) return;
+  const groups = [['settingsGrid', ['log_level']], ['settingsAccessGrid', ['torznab_api_key']]];
+  const grids = groups.map(([id]) => document.getElementById(id)).filter(Boolean);
+  if (!grids.length) return;
   // Reloads keep drafts in memory only, and restore keyboard focus after
   // replacing rows. Never write configuration values into browser storage.
   const active = document.activeElement;
-  const focusId = active && grid.contains(active) ? active.id : null;
+  const focusId = active && grids.some(grid => grid.contains(active)) ? active.id : null;
   const selection = focusId && typeof active.selectionStart === 'number'
     ? [active.selectionStart, active.selectionEnd] : null;
-  grid.innerHTML = Object.entries(_settingsFields).map(([key, f]) => {
+  for (const [id, keys] of groups) {
+    const grid = document.getElementById(id);
+    if (!grid) continue;
+    grid.innerHTML = keys.filter(key => Object.prototype.hasOwnProperty.call(_settingsFields, key)).map(key => {
+    const f = _settingsFields[key];
     const isSecret = !!f.sensitive;
-    const secretState = f.configured == null ? 'Checking configured state' : (f.configured ? `configured (${f.source})` : 'not configured');
+    const secretState = f.configured == null ? 'Checking configured state' : (f.configured ? (f.source === 'override' ? 'Configured · saved replacement' : 'Configured · startup key') : 'Not configured');
     const inputValue = _settingHasDraft(key) ? _settingsDrafts[key] : (isSecret ? '' : (f.current ?? ''));
     const inputPlaceholder = isSecret
       ? (f.configured ? 'Enter a replacement value' : 'Enter a value')
       : (f.default ?? '');
     return `<div class="setting-item" id="setting-item-${escHtml(key)}">
       <div class="setting-item-header">
-        <label class="setting-key" for="setting-${escHtml(key)}">${escHtml(key)}</label>
-        ${f.overridden ? '<span class="pill pill-info setting-override-pill">overridden</span>' : ''}
+        <label class="setting-key" for="setting-${escHtml(key)}">${key === 'log_level' ? 'Logging level' : key === 'torznab_api_key' ? 'Shared Torznab API key' : escHtml(key.replaceAll('_', ' '))}</label>
+        <span class="pill ${f.overridden ? 'pill-info' : 'pill-neutral'} setting-override-pill">${f.overridden ? 'Saved override' : 'Startup value'}</span>
       </div>
-      <div class="setting-default">${isSecret ? 'State' : 'Startup value'}: <code>${isSecret ? escHtml(secretState) : escHtml(f.default ?? '')}</code></div>
+      <div class="setting-default">${isSecret ? 'State' : 'Startup value'}: <code>${isSecret ? escHtml(secretState) : escHtml(_settingValue(key, f.default))}</code></div>
       <p class="text-xs text-muted mb-4" id="setting-description-${escHtml(key)}">${escHtml(_settingDescription(key))}</p>
       <div class="flex gap-2">
-        <input class="input font-mono" id="setting-${escHtml(key)}" data-sensitive="${isSecret}" type="${isSecret ? 'password' : 'text'}" value="${isSecret ? '' : escHtml(inputValue)}" placeholder="${escHtml(inputPlaceholder)}" autocomplete="off" spellcheck="false" aria-describedby="setting-description-${escHtml(key)} setting-status-${escHtml(key)}" oninput="editSetting('${escHtml(key)}')">
+        ${_settingControl(key, f, inputValue, inputPlaceholder)}
       </div>
       <div class="setting-actions">
         <button type="button" class="btn btn-primary btn-sm" id="setting-save-${escHtml(key)}" onclick="saveSetting('${escHtml(key)}')">Save</button>
@@ -2022,6 +2079,7 @@ function _renderSettings() {
       <p class="setting-message text-xs" id="setting-status-${escHtml(key)}" role="status" aria-live="polite"></p>
     </div>`;
   }).join('');
+  }
   for (const [key, field] of Object.entries(_settingsFields)) {
     const input = document.getElementById(`setting-${key}`);
     if (input && field.sensitive && _settingHasDraft(key)) input.value = _settingsDrafts[key];
@@ -2082,8 +2140,10 @@ async function loadSettings() {
   finally {
     _settingsLoadPromise = null;
     Object.keys(_settingsFields || {}).forEach(_updateSettingActions);
-    const reload = document.getElementById('settingsReload');
-    if (reload) reload.disabled = _settingsPending.size > 0;
+    for (const id of ['settingsReload', 'settingsAccessReload']) {
+      const reload = document.getElementById(id);
+      if (reload) reload.disabled = _settingsPending.size > 0;
+    }
   }
 }
 
@@ -2093,13 +2153,19 @@ async function saveSetting(key) {
   const input = document.getElementById(`setting-${key}`);
   if (!input) return;
   _rememberSettingDrafts();
-  const value = input.value;
+  const value = _settingValue(key, input.value);
+  if (key === 'log_level' && !Object.prototype.hasOwnProperty.call(_settingLogLevels, value)) {
+    _settingsMessages[key] = { text: 'Choose a supported logging level.', state: 'error' };
+    _updateSettingActions(key);
+    return;
+  }
   if (_settingsFields[key].sensitive && !value) {
     _settingsMessages[key] = { text: 'Enter a replacement value. Blank preserves the existing secret.', state: 'error' };
     _updateSettingActions(key);
     return;
   }
   if (!_settingHasDraft(key)) return;
+  const finishFocus = _settingsCompletionFocus(`setting-${key}`, `setting-save-${key}`);
   if (key === 'tmdb_api_key') _tmdbSettingsRevision++;
   _settingsPending.add(key);
   _settingsResetConfirm.delete(key);
@@ -2129,6 +2195,7 @@ async function saveSetting(key) {
     toast(`Failed to save "${key}"`, 'error');
   }
   filterSettings();
+  finishFocus();
 }
 
 function cancelSettingReset(key) {
@@ -2150,6 +2217,7 @@ async function resetSetting(key) {
     _updateSettingActions(key);
     return;
   }
+  const finishFocus = _settingsCompletionFocus(`setting-${key}`, `setting-reset-${key}`);
   if (key === 'tmdb_api_key') _tmdbSettingsRevision++;
   _settingsPending.add(key);
   _settingsMessages[key] = { text: 'Resetting…', state: 'loading' };
@@ -2167,8 +2235,6 @@ async function resetSetting(key) {
     if (key === 'tmdb_api_key') _renderTmdbConfigured(null);
     _settingsMessages[key] = { text: 'Override removed.', state: 'success' };
     _renderSettings();
-    const input = document.getElementById(`setting-${key}`);
-    if (input) input.focus();
     toast(`Setting "${key}" reset to startup value`, 'success');
     await loadSettings();
     if (key === 'tmdb_api_key' && tmdbRevision === _tmdbSettingsRevision) _renderTmdbConfigured(_settingsFields[key].configured);
@@ -2180,6 +2246,7 @@ async function resetSetting(key) {
     toast(`Failed to reset "${key}"`, 'error');
   }
   filterSettings();
+  finishFocus();
 }
 
 async function loadAuditLog() {
@@ -2220,6 +2287,11 @@ async function loadAuthStatus() {
   };
   // Reflect startup-only trust config from the backend resolver.
   const tiers = await api('/api/auth/tiers');
+  const dashState = document.getElementById('dashKeyState');
+  if (dashState) {
+    dashState.textContent = !tiers ? 'Unavailable' : tiers.apiKey ? 'Configured' : 'Not configured';
+    dashState.className = `pill ${tiers?.apiKey ? 'pill-success' : 'pill-neutral'}`;
+  }
   const dashEl = document.getElementById('dashKeyDisplay');
   if (dashEl) { dashEl.value = ''; dashEl.placeholder = !tiers ? 'status unavailable' : tiers.apiKey ? 'configured via env (value hidden)' : 'not configured'; }
   if (!tiers) {
@@ -2240,22 +2312,53 @@ function loadSettingsView() {
   const sectionLoaders = { config: loadSettings, integrations: loadArrSettings,
     classifier: loadClassifierRules, liveness: loadLivenessOps, filters: loadFiltersStatus,
     blocklists: loadBlockLists, audit: loadAuditLog };
+  const section = SETTINGS_DEFAULT_SECTION[_settingsTab] || _settingsTab;
   // Auth displays the configured Torznab-key state as well as startup tiers.
-  if (_settingsTab === 'auth') return Promise.all([loadSettings(), loadAuthStatus()]);
-  return sectionLoaders[_settingsTab]?.();
+  if (section === 'auth') return Promise.all([loadSettings(), loadAuthStatus()]);
+  if (section === 'retention') return loadSettings();
+  return sectionLoaders[section]?.();
 }
 function switchSettingsTab(tab, { history = 'push', load = true } = {}) {
   if (!SETTINGS_TABS.includes(tab)) return;
+  const group = SETTINGS_GROUP_FOR[tab];
+  const section = SETTINGS_DEFAULT_SECTION[tab] || tab;
+  const active = document.activeElement;
+  let restoreFocus = false;
+  document.querySelectorAll('#tab-settings [data-settings-panel]').forEach(panel => {
+    const selected = panel.dataset.settingsPanel === group;
+    if (!selected && typeof panel.contains === 'function' && panel.contains(active)) restoreFocus = true;
+    panel.classList.toggle('active', selected);
+  });
   _settingsTab = tab;
   if (history && currentTab === 'settings') _writeOperatorRoute(history);
-  document.querySelectorAll('#tab-settings .tab-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.stab === tab);
-    b.setAttribute('aria-pressed', String(b.dataset.stab === tab));
+  document.querySelectorAll('#tab-settings [data-settings-group]').forEach(button => {
+    const selected = button.dataset.settingsGroup === group;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
   });
-  document.querySelectorAll('#tab-settings .tab-panel').forEach(p => {
-    if (p.id && p.id.startsWith('stab-')) p.classList.toggle('active', p.id === `stab-${tab}`);
+  document.querySelectorAll(`#settings-group-${group} .settings-disclosure`).forEach(details => {
+    if (details.dataset.settingsSection !== section && typeof details.contains === 'function' && details.contains(active)) restoreFocus = true;
+    details.open = details.dataset.settingsSection === section;
   });
+  const disclosure = document.getElementById(`settings-disclosure-${section}`);
+  if (disclosure) disclosure.open = true;
+  if (restoreFocus) {
+    const target = disclosure && typeof disclosure.querySelector === 'function' ? disclosure.querySelector('summary') : null;
+    (target || document.getElementById(`settings-heading-${group}`))?.focus({ preventScroll: true });
+  }
+  if (tab !== group && disclosure && typeof disclosure.scrollIntoView === 'function') disclosure.scrollIntoView({ block: 'nearest', behavior: 'auto' });
   if (load) loadSettingsView();
+}
+
+function settingsSectionIntent(section, disclosure) {
+  if (!SETTINGS_TABS.includes(section) || disclosure.open) return;
+  const group = SETTINGS_GROUP_FOR[section];
+  document.querySelectorAll(`#settings-group-${group} .settings-disclosure`).forEach(other => {
+    if (other !== disclosure) other.open = false;
+  });
+  _settingsTab = section;
+  if (currentTab === 'settings') _writeOperatorRoute();
+  loadSettingsView();
 }
 
 async function loadFiltersStatus() {
@@ -2420,6 +2523,7 @@ const _arrPending = new Set();
 let _arrLoadPromise = null;
 let _arrLoadedAt = null;
 let _arrRefreshNeeded = false;
+let _arrSnapshotState = 'loading';
 
 function _renderTmdbConfigured(configured) {
   const pill = document.getElementById('tmdbStatus');
@@ -2450,14 +2554,24 @@ function _rememberArrDrafts() {
 }
 
 function _integrationsStatus(text, state) {
+  _arrSnapshotState = state;
   const status = document.getElementById('integrationsStatus');
   if (status) { status.textContent = text; status.dataset.state = state; }
   const grid = document.getElementById('arrSettingsGrid');
   if (grid) grid.setAttribute('aria-busy', String(state === 'loading'));
+  _arrNames.forEach(_updateArrActions);
 }
 
 function _updateArrActions(arr) {
   const pending = _arrPending.has(arr);
+  const state = document.getElementById(`arr-${arr}-state`);
+  if (state) {
+    const snapshot = _arrSnapshots[arr];
+    state.textContent = pending ? 'Saving' : _arrSnapshotState === 'loading' ? 'Checking'
+      : _arrSnapshotState === 'stale' ? 'Stale' : !snapshot ? 'Unavailable'
+      : snapshot.url && snapshot.configured ? 'Configured' : 'Needs setup';
+    state.className = `pill ${pending || _arrSnapshotState === 'loading' ? 'pill-info' : _arrSnapshotState === 'stale' ? 'pill-warning' : snapshot?.url && snapshot?.configured ? 'pill-success' : 'pill-neutral'}`;
+  }
   for (const field of ['url', 'key']) {
     const input = document.getElementById(`arr-${arr}-${field}`);
     if (input) input.readOnly = pending;
@@ -2535,6 +2649,18 @@ async function loadArrSettings() {
 async function saveArrSettings(arr) {
   if (!_arrNames.includes(arr) || _arrPending.has(arr) || _arrLoadPromise) return;
   _rememberArrDrafts();
+  const urlInput = document.getElementById(`arr-${arr}-url`);
+  const urlValue = urlInput?.value.trim() || '';
+  if (_arrHasDraft(arr, 'url') && urlValue) {
+    let valid = false;
+    try { const parsed = new URL(urlValue); valid = ['http:', 'https:'].includes(parsed.protocol) && !!parsed.hostname; } catch (_) {}
+    if (!valid) {
+      _arrMessages[arr] = { text: 'Enter a complete http:// or https:// URL, or clear the URL to disable this connection.', state: 'error' };
+      _updateArrActions(arr);
+      if (urlInput && typeof urlInput.focus === 'function') urlInput.focus();
+      return;
+    }
+  }
   const operations = [];
   if (_arrHasDraft(arr, 'url')) operations.push({ field: 'url', key: `${arr}_base_url`, value: _arrDrafts[arr].url.trim(), label: 'Base URL' });
   if (_arrHasDraft(arr, 'key') && _arrDrafts[arr].key.trim()) operations.push({ field: 'key', key: `${arr}_api_key`, value: _arrDrafts[arr].key.trim(), label: 'API key' });
@@ -2543,6 +2669,8 @@ async function saveArrSettings(arr) {
     _updateArrActions(arr);
     return;
   }
+  const focusField = operations.some(operation => operation.field === 'url') ? 'url' : 'key';
+  const finishFocus = _settingsCompletionFocus(`arr-${arr}-${focusField}`, `arr-save-${arr}`);
   _arrPending.add(arr);
   _arrMessages[arr] = { text: 'Saving configuration…', state: 'loading' };
   _integrationsStatus('Saving integration configuration…', 'loading');
@@ -2573,6 +2701,7 @@ async function saveArrSettings(arr) {
   _arrPending.size > 0 ? 'loading' : (failed.length ? 'error' : 'ready'));
   toast(failed.length ? `${_arrName(arr)} ${saved.length ? 'partially saved' : 'save failed'}` : `${_arrName(arr)} settings saved`, failed.length ? 'error' : 'success');
   if (_arrPending.size === 0 && _arrRefreshNeeded) await loadArrSettings();
+  finishFocus();
 }
 
 async function saveTmdbKey() {
@@ -2586,6 +2715,7 @@ async function saveTmdbKey() {
     if (status) { status.textContent = text; status.dataset.state = state; }
   };
   if (!value) { message('Enter a replacement TMDB API key. Blank preserves the configured key.', 'error'); toast('Enter a TMDB API key', 'error'); return; }
+  const finishFocus = _settingsCompletionFocus('tmdbKeyInput', 'tmdb-save');
   _tmdbSavePending = true;
   _tmdbSettingsRevision++;
   input.readOnly = true;
@@ -2605,14 +2735,38 @@ async function saveTmdbKey() {
   _tmdbSavePending = false;
   input.readOnly = false;
   if (button) { button.disabled = false; button.textContent = 'Save'; }
+  finishFocus();
 }
 
 /* ── AI (LLM cost + stage scorecards) ─────────────────────────────────── */
 async function loadAiTab() {
   const loadSeq = ++_aiLoadSeq;
+  _startAiRefresh();
   const summary = await api('/api/ai/summary');
   if (loadSeq !== _aiLoadSeq) return;
   renderAiSummary(summary);
+}
+
+function _clearAiMatcher(reason) {
+  _blankStats({ aiLiveMatches: '—', aiLiveMatchesSub: reason, aiCacheRatio: '—', aiCacheSub: reason });
+  _renderMeter('aiCacheMeter', 0, 'neutral');
+  for (const id of ['aiGatePanel', 'aiAnimePanel']) {
+    const panel = document.getElementById(id);
+    if (panel) panel.innerHTML = `<div class="empty-state"><p class="text-sm text-muted">${escHtml(reason)}</p></div>`;
+  }
+}
+
+function _startAiRefresh() {
+  const tab = document.getElementById('tab-ai');
+  if (tab) tab.setAttribute('aria-busy', 'true');
+  _setViewStatus('aiObservationState', 'loading', 'Loading core telemetry…');
+  _setViewStatus('aiObservationTime', 'loading', 'Waiting for an observation');
+  const note = document.getElementById('aiUnavailableNote');
+  if (note) note.style.display = 'none';
+  renderAiSpend(null, 'loading');
+  _clearAiMatcher('Loading matcher telemetry…');
+  const grid = document.getElementById('aiStageGrid');
+  if (grid) grid.innerHTML = '<div class="empty-state"><p class="text-sm text-muted">Loading stage observations…</p></div>';
 }
 
 // Format one scorecard metric. A null value is a metric the core does not
@@ -2653,7 +2807,7 @@ function renderLlmStages(stages) {
     const statusPill = `<span class="pill ${statusTones[status.tone] || 'pill-neutral'}">${escHtml(status.label)}</span>`;
     const model = stage.model
       ? `<span class="llm-model" title="From the metric's own model label">${escHtml(stage.model)}</span>`
-      : `<span class="llm-model llm-model--unknown" title="${escHtml(stage.modelNote || '')}">${stage.available ? 'model not labelled' : 'LLM not observed'}</span>`;
+      : `<span class="llm-model llm-model--unknown" title="${escHtml(stage.modelNote || '')}">Model not reported</span>`;
     const rows = (stage.metrics || []).map(m => `
       <div class="llm-metric" data-tone="${escHtml(m.tone || 'neutral')}"${m.help ? ` data-help="${escHtml(m.help)}"` : ''}>
         <div class="llm-metric-label">${escHtml(m.label)}</div>
@@ -2661,20 +2815,25 @@ function renderLlmStages(stages) {
         <div class="llm-metric-detail">${escHtml(m.detail || '')}</div>
       </div>`).join('');
     const sp = stage.spend;
+    const partialReason = sp ? [
+      sp.usageIncomplete ? 'usage accounting incomplete' : '',
+      sp.unpricedModels?.length ? `unpriced: ${sp.unpricedModels.join(', ')}` : '',
+    ].filter(Boolean).join('; ') : '';
     // A stage with no token metric has no spend footer at all — an empty one
     // would read as "this model is free".
     const spend = sp ? `<div class="llm-stage-spend"${
       sp.usdPerUnit != null
-        ? ` data-help="Spend-to-date for this stage divided by the work it actually did. This is the number that compares stages: a stage can be small in total and still be the worst value per decision."`
+        ? ` data-help="Estimated token cost divided by observed work. Partial accounting makes this a lower bound; it does not measure decision quality."`
         : ''
       }>
-        <span>Spend <b>${escHtml(_fmtUsd(sp.usd))}</b></span>
+        <span>Estimated cost <b>${escHtml(_fmtEstimatedUsd(sp.usd, sp.totalIsPartial))}</b></span>
         <span>${sp.priced
-          ? (sp.monthlyUsd != null ? `<b>${escHtml(_fmtUsd(sp.monthlyUsd))}</b>/mo` : 'measuring…')
-          : 'model has no price on file'}</span>
+          ? (sp.monthlyUsd != null ? `<b>${escHtml(_fmtEstimatedUsd(sp.monthlyUsd, sp.monthlyIsPartial))}</b>/mo rate projection` : 'measuring rate…')
+          : (sp.priceAvailable ? 'usage accounting incomplete' : 'model has no price on file')}</span>
         ${sp.usdPerUnit != null
-          ? `<span><b>${escHtml(_fmtUsdPrecise(sp.usdPerUnit))}</b> ${escHtml(sp.unitLabel)} · ${fmtNum(sp.unitCount)} total</span>`
+          ? `<span><b>${sp.totalIsPartial ? '≥ ' : ''}${escHtml(_fmtUsdPrecise(sp.usdPerUnit))}</b> ${escHtml(sp.unitLabel)} · ${fmtNum(sp.unitCount)} total</span>`
           : ''}
+        ${sp.totalIsPartial || (sp.monthlyIsPartial && sp.monthlyUsd != null) ? `<span>Partial estimate${partialReason ? ` · ${escHtml(partialReason)}` : ''}</span>` : ''}
       </div>` : '';
     const subdued = status.key === 'inactive' || status.key === 'unavailable';
     return `<div class="llm-stage" data-stage="${escHtml(stage.id)}" data-state="${escHtml(status.key)}"${subdued ? ' data-idle="1"' : ''}>
@@ -2712,10 +2871,15 @@ function _fmtUsdPrecise(v) {
   if (v >= 1) return `$${v.toFixed(2)}`;
   if (v >= 0.001) return `$${v.toFixed(4)}`;
   if (v >= 0.0000001) return `$${v.toFixed(7).replace(/0+$/, '')}`;
-  return '<$0.0000001';
+  return `$${v.toExponential(2)}`;
 }
 
-function renderAiSpend(spend) {
+function _fmtEstimatedUsd(value, partial) {
+  if (value == null || isNaN(value)) return '—';
+  return partial ? `≥ ${value > 0 && value < 0.01 ? _fmtUsdPrecise(value) : _fmtUsd(value)}` : _fmtUsd(value);
+}
+
+function renderAiSpend(spend, sourceState = 'ok') {
   const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
   const panel = document.getElementById('aiSpendPanel');
   const prices = document.getElementById('aiSpendPrices');
@@ -2725,13 +2889,17 @@ function renderAiSpend(spend) {
     // stale "9,029,681 in / 323,992 out" under an em-dash describes a poll
     // that already failed.
     _blankStats({
-      aiSpendMonthly: '—', aiSpendSub: 'no stage reports tokens',
-      aiTokensTotal: '—', aiTokensSub: 'in / out',
-      aiSpendTotal: '—', aiSpendTotalSub: 'since core restart',
-      aiModelCount: '—', aiModelSub: 'reporting tokens',
+      aiSpendMonthly: '—', aiSpendSub: sourceState === 'loading' ? 'loading telemetry' : sourceState === 'ok' ? 'token counters not reported' : 'core telemetry unavailable',
+      aiTokensTotal: '—', aiTokensSub: 'usage not established',
+      aiSpendTotal: '—', aiSpendTotalSub: 'estimate unavailable',
+      aiModelCount: '—', aiModelSub: 'models not established',
     });
     _renderMeter('aiSpendMeter', 0, 'neutral');
-    if (panel) panel.innerHTML = '<div class="empty-state" style="padding:var(--space-6)"><p class="text-sm text-muted">No LLM stage is reporting token counts, so spend cannot be derived.</p></div>';
+    if (prices) prices.textContent = 'list-price estimate';
+    const reason = sourceState === 'loading' ? 'Loading token usage…' : sourceState === 'ok'
+      ? 'This observation does not report token usage. Cost cannot be estimated from it.'
+      : 'Core telemetry could not be read. Token usage and estimated cost are unknown.';
+    if (panel) panel.innerHTML = `<div class="empty-state"><p class="text-sm text-muted">${escHtml(reason)}</p></div>`;
     return;
   }
 
@@ -2739,30 +2907,38 @@ function renderAiSpend(spend) {
   const partial = !!spend.totalIsPartial;
   const inTok = rows.reduce((a, r) => a + (r.inputTokens || 0), 0);
   const outTok = rows.reduce((a, r) => a + (r.outputTokens || 0), 0);
+  const inputKnown = rows.some(r => r.inputTokens != null);
+  const outputKnown = rows.some(r => r.outputTokens != null);
+  const inputPartial = rows.some(r => r.inputTokens == null);
+  const outputPartial = rows.some(r => r.outputTokens == null);
+  const tokenPartial = inputPartial || outputPartial;
 
-  // Monthly is MEASURED across polls, not extrapolated from one scrape — the
-  // core publishes no process-start gauge, so a single read cannot know the
-  // window the counters cover. A stage that judges in hourly cycles therefore
-  // contributes nothing to a short window, so any model still unmeasured makes
-  // the total a FLOOR ("≥"), never a confident number that reads under budget.
+  // A measured token delta becomes a 30-day projection at the sampled rate.
+  // It is neither an invoice nor a forecast of future workload. Unmeasured
+  // stages make that projection a partial lower bound.
   const monthly = spend.monthlyUsd;
   const budget = spend.budgetUsd;
   const ratio = spend.budgetRatio;
   const measuring = spend.monthlyMeasuring || [];
-  const mins = Math.round((spend.monthlyWindowSeconds || 0) / 60);
+  const seconds = Math.round(spend.monthlyWindowSeconds || 0);
+  const windowLabel = seconds >= 60 ? `${Math.round(seconds / 60)} min` : `${seconds}s`;
   const floor = !!spend.monthlyIsPartial;
-  if (monthly === null || monthly === undefined) {
+  if (!rows.some(r => r.priced)) {
+    set('aiSpendMonthly', '—');
+    set('aiSpendSub', rows.some(r => r.priceAvailable) ? 'usage accounting incomplete' : 'no model price available');
+    _renderMeter('aiSpendMeter', 0, 'neutral');
+  } else if (monthly === null || monthly === undefined) {
     set('aiSpendMonthly', 'measuring…');
-    set('aiSpendSub', mins >= 1 ? `sampling for ${mins} min` : 'needs two samples 10s apart');
+    set('aiSpendSub', seconds > 0 ? `sampling for ${windowLabel}` : 'needs two samples 10s apart');
     _renderMeter('aiSpendMeter', 0, 'neutral');
   } else {
-    set('aiSpendMonthly', (floor ? '≥ ' : '') + _fmtUsd(monthly));
+    set('aiSpendMonthly', _fmtEstimatedUsd(monthly, floor));
     const budgetTxt = budget
       ? `${_fmtUsd(budget)} budget${ratio != null ? ` · ${(ratio * 100).toFixed(0)}%` : ''}`
       : 'no budget configured';
     set('aiSpendSub', floor
-      ? `${budgetTxt} · still measuring ${measuring.join(', ')}`
-      : `${budgetTxt} · measured over ${mins} min`);
+      ? `${budgetTxt} · partial projection; sampling ${measuring.join(', ')}`
+      : `${budgetTxt} · sampled ${windowLabel}; rate × 30 days`);
     // Over budget is the whole point of the card, so clamp the BAR but never
     // the number — and a floor stays neutral, because "at least 86% of budget"
     // is not evidence of being under it.
@@ -2770,14 +2946,22 @@ function renderAiSpend(spend) {
       ratio == null || floor ? 'neutral' : ratio > 1 ? 'bad' : ratio > 0.8 ? 'warn' : 'good');
   }
 
-  set('aiTokensTotal', fmtNum(inTok + outTok));
-  set('aiTokensSub', `${fmtNum(inTok)} in / ${fmtNum(outTok)} out`);
-  set('aiSpendTotal', (partial ? '≥ ' : '') + _fmtUsd(spend.totalUsd));
+  set('aiTokensTotal', inputKnown || outputKnown ? (tokenPartial ? '≥ ' : '') + fmtNum(inTok + outTok) : '—');
+  const tokenDirection = (known, incomplete, value) => known ? (incomplete ? '≥ ' : '') + fmtNum(value) : '—';
+  set('aiTokensSub', `${tokenDirection(inputKnown, inputPartial, inTok)} in / ${tokenDirection(outputKnown, outputPartial, outTok)} out${tokenPartial ? ' · incomplete coverage' : ''}`);
+  set('aiSpendTotal', _fmtEstimatedUsd(spend.totalUsd, partial));
+  const estimateGaps = [
+    spend.unpricedModels?.length ? `unpriced: ${spend.unpricedModels.join(', ')}` : '',
+    rows.some(r => r.usageIncomplete) ? 'usage accounting incomplete' : '',
+    spend.unmeteredStages?.length ? `unmetered: ${spend.unmeteredStages.join(', ')}` : '',
+  ].filter(Boolean);
   set('aiSpendTotalSub', partial
-    ? `unpriced: ${(spend.unpricedModels || []).join(', ')}`
-    : 'since core restart');
-  set('aiModelCount', String(rows.length));
-  set('aiModelSub', rows.length ? rows.map(r => r.stage).join(' · ') : 'reporting tokens');
+    ? `partial estimate${estimateGaps.length ? `; ${estimateGaps.join('; ')}` : '; incomplete coverage'}`
+    : 'list-price estimate since core restart');
+  const models = new Set(rows.map(r => r.model).filter(Boolean));
+  const stages = new Set(rows.map(r => r.stage).filter(Boolean));
+  set('aiModelCount', String(models.size));
+  set('aiModelSub', rows.length ? `${stages.size} reporting stage${stages.size === 1 ? '' : 's'}${rows.some(r => !r.model || !r.stage) ? ' · unlabelled usage present' : ''}` : 'reporting tokens');
   if (prices) prices.textContent = `list prices as of ${spend.pricesAsOf || '—'}`;
 
   if (!panel) return;
@@ -2790,19 +2974,26 @@ function renderAiSpend(spend) {
     const width = r.priced ? ((r.usd / maxUsd) * 100).toFixed(1) : 0;
     const colour = r.priced ? 'var(--color-accent)' : 'var(--color-border)';
     const monthlyTxt = r.priced
-      ? (r.monthlyUsd != null ? `${_fmtUsd(r.monthlyUsd)}/mo` : 'measuring…')
-      : 'no price on file';
+      ? (r.monthlyUsd != null ? `${_fmtEstimatedUsd(r.monthlyUsd, r.usageIncomplete)}/30d at sampled rate` : 'measuring…')
+      : (r.priceAvailable ? 'usage accounting incomplete' : 'no price on file');
     return `<div class="cat-row cat-row--flat">
-      <div class="cat-label font-mono text-xs" title="${escHtml(r.model || 'unlabelled')} — ${escHtml(r.stage)}">${escHtml(r.model || 'unlabelled')}</div>
+      <div class="cat-label font-mono text-xs" title="${escHtml(r.model || 'unlabelled')} — ${escHtml(r.stage)}">${escHtml(r.model || 'unlabelled')}<div class="text-subtle">${escHtml(r.stage || 'stage not reported')}</div></div>
       <div class="cat-bar"><div class="cat-bar-fill" style="width:${width}%;background:${colour}"></div></div>
-      <div class="cat-count">${_fmtUsd(r.usd)}</div>
-      <div class="cat-pct text-xs text-subtle" style="min-width:96px;text-align:right">${escHtml(monthlyTxt)}</div>
+      <div class="cat-count">${escHtml(_fmtEstimatedUsd(r.usd, r.usageIncomplete))}</div>
+      <div class="cat-pct text-xs text-subtle" style="min-width:96px;text-align:right">${escHtml(monthlyTxt)}${r.usageIncomplete && r.priced ? ' · partial usage' : ''}</div>
     </div>`;
   }).join('');
 }
 
 function renderAiSummary(s) {
-  renderAiSpend(s && s.spend);
+  const telemetry = s?.telemetry;
+  const sourceState = !s ? 'error' : telemetry?.status || (s.telemetryAvailable === false ? 'unavailable' : 'ok');
+  const tab = document.getElementById('tab-ai');
+  if (tab) tab.setAttribute('aria-busy', 'false');
+  const observed = _observationTime(telemetry?.observedAt);
+  _setViewStatus('aiObservationState', sourceState === 'ok' ? 'fresh' : 'failure', sourceState === 'ok' ? 'Core telemetry received' : 'Core telemetry unavailable', telemetry?.error || 'Source: core Prometheus metrics');
+  _setViewStatus('aiObservationTime', sourceState === 'ok' ? 'fresh' : 'failure', sourceState === 'ok' ? (observed ? `Observed ${observed}` : 'Observation time not reported') : 'No valid observation');
+  renderAiSpend(s && s.spend, sourceState);
   renderLlmStages(s && s.stages);
 
   const note = document.getElementById('aiUnavailableNote');
@@ -2812,61 +3003,51 @@ function renderAiSummary(s) {
     note.className = `callout callout-${tone} mb-6`;
     note.style.display = '';
   };
-  const blankMatcher = () => {
-    _blankStats({
-      aiLiveMatches: '—', aiLiveMatchesSub: 'movie / TV',
-      aiCacheRatio: '—', aiCacheSub: 'hits / misses',
-    });
-    _renderMeter('aiCacheMeter', 0, 'neutral');
-    const empty = '<div class="empty-state" style="padding:var(--space-6)"><p class="text-sm text-muted">No matcher metrics yet.</p></div>';
-    document.getElementById('aiGatePanel').innerHTML = empty;
-    document.getElementById('aiAnimePanel').innerHTML = empty;
-  };
 
   if (!s) {
     showNote('AI metrics request failed or timed out. Values were cleared; refresh to retry.', 'danger');
-    blankMatcher();
+    _clearAiMatcher('Matcher telemetry unavailable. Refresh or check System diagnostics.');
     const grid = document.getElementById('aiStageGrid');
     if (grid) grid.innerHTML = '<div class="empty-state" style="padding:var(--space-8)"><p class="text-sm" style="color:var(--color-danger)">Couldn’t load AI stage metrics.</p></div>';
     return;
   }
-  if (s.telemetryAvailable === false) {
+  if (sourceState !== 'ok' || s.telemetryAvailable === false) {
     showNote('The core metrics endpoint is unavailable, so all AI stage states are unknown.', 'danger');
-    blankMatcher();
+    _clearAiMatcher('Matcher telemetry unavailable. Check System diagnostics.');
     return;
   }
   if (!s.available) {
     const matcher = (s.stages || []).find(stage => stage.id === 'matcher');
     const status = matcher?.status;
     showNote(`TMDB matcher: ${status?.label || 'no activity observed'}. ${status?.detail || 'No matcher calls were recorded since core boot.'}`);
-    blankMatcher();
+    _clearAiMatcher('Matcher counters are not reported in this observation.');
     return;
   }
   if (note) note.style.display = 'none';
 
   // Live / shadow attaches by media type
-  const live = (s.matches && s.matches.live) || { byType: {}, total: 0 };
-  const shadow = (s.matches && s.matches.shadow) || { byType: {}, total: 0 };
+  const live = (s.matches && s.matches.live) || { byType: {}, total: null };
   document.getElementById('aiLiveMatches').textContent = fmtNum(live.total);
   document.getElementById('aiLiveMatchesSub').textContent =
-    `${fmtNum(live.byType.movie || 0)} movie / ${fmtNum(live.byType.tv || 0)} TV`;
+    live.total == null ? 'attach counter not reported' : `${fmtNum(live.byType.movie ?? 0)} movie / ${fmtNum(live.byType.tv ?? 0)} TV`;
   // Matcher decision cache. Rerank rate, extract outcomes and per-stage
   // latency moved into the matcher scorecard above, next to the other two
   // models, so all three read on the same axes.
   const cache = s.cache || {};
-  const lookups = (cache.hits || 0) + (cache.misses || 0);
-  document.getElementById('aiCacheRatio').textContent = lookups > 0 ? `${(cache.hitRatio * 100).toFixed(1)}%` : '—';
-  document.getElementById('aiCacheSub').textContent = lookups > 0
-    ? `${fmtNum(cache.hits)} hits / ${fmtNum(cache.misses)} misses` : 'hits / misses';
-  _renderMeter('aiCacheMeter', lookups > 0 ? cache.hitRatio : 0,
-    _toneForRatio(lookups > 0 ? cache.hitRatio : null, 0.3, 0.05));
+  const lookups = cache.hits != null && cache.misses != null ? cache.hits + cache.misses : null;
+  const ratio = lookups > 0 && cache.hitRatio != null ? cache.hitRatio : null;
+  document.getElementById('aiCacheRatio').textContent = ratio != null ? `${(ratio * 100).toFixed(1)}%` : '—';
+  document.getElementById('aiCacheSub').textContent = lookups != null
+    ? `${fmtNum(cache.hits)} hits / ${fmtNum(cache.misses)} misses${lookups === 0 ? ' · no measured ratio' : ''}`
+    : `${fmtNum(cache.hits)} hits / ${fmtNum(cache.misses)} misses · incomplete counters`;
+  _renderMeter('aiCacheMeter', ratio ?? 0, _toneForRatio(ratio, 0.3, 0.05));
 
   // Gate rejects breakdown (bar per gate, scaled to the largest)
   const gates = s.gateRejects || {};
   const gateKeys = Object.keys(gates).sort((a, b) => gates[b] - gates[a]);
   const gatePanel = document.getElementById('aiGatePanel');
   if (!gateKeys.length) {
-    gatePanel.innerHTML = '<div class="empty-state" style="padding:var(--space-6)"><p class="text-sm text-muted">No gate rejects recorded yet.</p></div>';
+    gatePanel.innerHTML = `<div class="empty-state"><p class="text-sm text-muted">${s.familyPresence?.gateRejects === false ? 'Gate counters are not reported by the core.' : 'No gate rejects in the reported counters.'}</p></div>`;
   } else {
     const max = Math.max(...gateKeys.map(k => gates[k]), 1);
     // cat-row--flat: 3-cell variant — the default .cat-row grid expects
@@ -2882,11 +3063,11 @@ function renderAiSummary(s) {
   }
 
   // Anime English gate table
-  const anime = s.anime || { kept: 0, rejected: 0, byEnglish: {} };
+  const anime = s.anime || { kept: null, rejected: null, byEnglish: {} };
   const animePanel = document.getElementById('aiAnimePanel');
   const engKeys = Object.keys(anime.byEnglish || {});
   if (!engKeys.length) {
-    animePanel.innerHTML = '<div class="empty-state" style="padding:var(--space-6)"><p class="text-sm text-muted">No anime observed by the matcher yet.</p></div>';
+    animePanel.innerHTML = `<div class="empty-state"><p class="text-sm text-muted">${s.familyPresence?.anime === false ? 'Anime gate counters are not reported by the core.' : 'No anime entries in the reported counters.'}</p></div>`;
   } else {
     const order = ['dub', 'sub', 'none', 'unknown'];
     engKeys.sort((a, b) => order.indexOf(a) - order.indexOf(b));
