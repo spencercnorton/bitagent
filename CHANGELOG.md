@@ -4,6 +4,7 @@
 
 ## 2.13.0 — 2026-09-30
 
+- Include all UI runtime modules, templates and static assets in installed wheels.
 - Add separate, searchable streaming-service and TV/cable network browsers with
   logo tiles, accessible selection controls, and paged network discovery.
 - Recover streaming logos across movie and series catalogues, try safe alternate
