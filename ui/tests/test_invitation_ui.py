@@ -22,6 +22,7 @@ def test_invitation_link_is_opt_in_and_in_account_surface():
     enabled = render("library.html", private_invitations_enabled=True)
     assert 'href="/invitations"' not in disabled
     assert 'href="/invitations"' in enabled
+    assert "Generate invite code" in enabled
     assert enabled.index('id="libAccount"') < enabled.index('href="/invitations"')
 
 
@@ -30,6 +31,9 @@ def test_management_render_starts_with_payment_actions_hidden_and_disabled():
     assert 'data-account-id="synthetic-user"' in html
     assert 'role="status" aria-live="polite"' in html
     assert 'id="invShareUrl" readonly' in html
+    assert 'id="invShareCode" readonly' in html
+    assert 'id="invCopyCode" class="inv-primary">Copy code</button>' in html
+    assert "The recipient can paste this code on the invitation page." in html
     assert 'id="invCreate" type="submit" disabled' in html
     assert 'id="invCheckout" class="inv-primary" type="button" disabled hidden' in html
     assert 'id="invCheckoutRefresh" class="inv-secondary" type="button" disabled hidden' in html

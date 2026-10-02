@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Show a freshly generated invitation code alongside its link, with a
+  separate copy action and a clear account-menu entry for code generation.
+  Clear both secrets together when hidden, refreshed or leaving the page.
+
 - Add an explicit, disabled-by-default owner action to admit their own
   invitation issuer before private indexing. Bind it to the verified account
   on the canonical operator origin; retain suspended memberships and all

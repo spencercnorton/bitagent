@@ -51,7 +51,7 @@
     let url;
     try { url = new URL(data.shareUrl); } catch (_) { throw fail('shape'); }
     if (url.protocol !== 'https:' || url.origin !== origin || url.username || url.password || url.pathname !== '/invite' || url.search || url.hash !== '#' + data.token) throw fail('shape');
-    return {id:data.id, url:url.href, expiresAt:data.expiresAt};
+    return {id:data.id, token:data.token, url:url.href, expiresAt:data.expiresAt};
   }
   function checkoutTarget(value) {
     try {
@@ -192,7 +192,7 @@
         // Refresh ownership/allowance before showing a token from a mutation.
         const value = snapshot(await api('/api/account/invitations'), state.owner);
         if (state.closed || generation !== state.generation) return;
-        state.snapshot = value; state.fresh = link; view.manage(value); view.secret(link); status('Invitation created. Copy your link now.');
+        state.snapshot = value; state.fresh = link; view.manage(value); view.secret(link); status('Invitation created. Copy your code or link now.');
       } catch (error) { if (!state.closed && generation === state.generation) failure(error, true); }
       finally { if (!state.closed && generation === state.generation) { state.busy = false; view.busy(false, state.snapshot); paymentView(); } }
     }
@@ -241,13 +241,14 @@
       } catch (error) { if (!state.closed && generation === state.generation) failure(error, true); }
       finally { if (!state.closed && generation === state.generation) { state.busy = false; view.busy(false, state.snapshot); paymentView(); } }
     }
-    async function copy() {
+    async function copy(kind = 'link') {
       if (!state.fresh || state.closed) return;
       const value = state.fresh;
+      const code = kind === 'code';
       try {
-        await options.copy(value.url);
-        if (!state.closed && state.fresh === value) status('Invitation link copied.');
-      } catch (_) { if (!state.closed && state.fresh === value) status('Select the invitation link and copy it manually.', true); }
+        await options.copy(code ? value.token : value.url);
+        if (!state.closed && state.fresh === value) status(code ? 'Invite code copied.' : 'Invitation link copied.');
+      } catch (_) { if (!state.closed && state.fresh === value) status(code ? 'Select the invite code and copy it manually.' : 'Select the invitation link and copy it manually.', true); }
     }
     async function enterToken(value) {
       if (state.closed || state.busy || state.autoHandoffAttempted) return;
@@ -331,7 +332,7 @@
       } catch (error) { if (!state.closed && generation === state.generation) { state.token = null; failure(error, true); } }
       finally { if (!state.closed && generation === state.generation) { state.busy = false; view.busy(false, null, false); } }
     }
-    return {load, create, checkout, revoke, copy, preview, enterToken, signIn, redeem, close, dismiss:clearSecret,
+    return {load, create, checkout, revoke, copy, copyCode:() => copy('code'), preview, enterToken, signIn, redeem, close, dismiss:clearSecret,
       selectionChanged:() => view.busy(state.busy, state.snapshot)};
   }
 
@@ -359,6 +360,7 @@
       },
       secret(link) {
         element('invNewLink').hidden = !link;
+        element('invShareCode').value = link ? link.token : '';
         element('invShareUrl').value = link ? link.url : '';
         put('invNewExpiry', link ? 'Expires ' + date(link.expiresAt) : '');
       },
@@ -425,6 +427,7 @@
       element('invRefresh').addEventListener('click', controller.load);
       element('invDismiss').addEventListener('click', controller.dismiss);
       element('invCopy').addEventListener('click', controller.copy);
+      element('invCopyCode').addEventListener('click', controller.copyCode);
       controller.load();
     } else {
       if (codeForm) codeForm.addEventListener('submit', event => {
