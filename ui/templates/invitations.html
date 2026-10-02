@@ -34,8 +34,10 @@
         </section>
       </div>
       <section class="inv-card inv-new-link" id="invNewLink" hidden aria-labelledby="invNewTitle">
-        <div class="inv-section-head"><h2 id="invNewTitle">Your new invitation</h2><button type="button" id="invDismiss" class="inv-secondary">Hide link</button></div>
-        <p>This link is shown only now. Copy it before leaving this page.</p>
+        <div class="inv-section-head"><h2 id="invNewTitle">Your new invitation</h2><button type="button" id="invDismiss" class="inv-secondary">Hide code and link</button></div>
+        <p>Your code and link are shown only now. Copy one before leaving this page.</p>
+        <label for="invShareCode">Invite code</label><div class="inv-copy"><input id="invShareCode" readonly spellcheck="false" autocomplete="off"><button type="button" id="invCopyCode" class="inv-primary">Copy code</button></div>
+        <p class="inv-muted">The recipient can paste this code on the invitation page.</p>
         <label for="invShareUrl">Invitation link</label><div class="inv-copy"><input id="invShareUrl" readonly spellcheck="false" autocomplete="off"><button type="button" id="invCopy" class="inv-primary">Copy link</button></div>
         <p id="invNewExpiry" class="inv-muted"></p>
       </section>

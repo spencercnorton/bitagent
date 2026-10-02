@@ -34,6 +34,7 @@ test('invitation fragment is removed before any asynchronous request', () => {
 
 test('created link must be exact canonical HTTPS origin and token fragment', () => {
   assert.equal(invitations.issued(fresh(), origin).url, origin+'/invite#'+token);
+  assert.equal(invitations.issued(fresh(), origin).token, token);
   for (const shareUrl of ['javascript:alert(1)', 'https://other.example.test/invite#'+token, origin+'/other#'+token, origin+'/invite?token=x#'+token, 'http://library.example.test/invite#'+token, 'https://user:pass@library.example.test/invite#'+token]) {
     assert.throws(() => invitations.issued(fresh({shareUrl}), origin));
   }
@@ -128,6 +129,32 @@ test('clipboard rejection offers manual copying and never claims success', async
   h.controller.dismiss(); assert.equal(h.events.findLast(event => event[0] === 'secret')[1], null);
 });
 
+test('copy code shares the exact raw token and copy link retains the canonical URL', async () => {
+  const copied = [];
+  const h = harness(async (_path,method) => method === 'POST' ? fresh() : account(), {copy:async value => copied.push(value)});
+  await h.controller.load(); await h.controller.create('annual');
+  await h.controller.copyCode(); await h.controller.copy();
+  assert.deepEqual(copied, [token, origin + '/invite#' + token]);
+  assert.ok(h.events.some(event => event[0] === 'status' && event[1] === 'Invite code copied.'));
+  h.controller.dismiss(); await h.controller.copyCode();
+  assert.equal(copied.length, 2);
+});
+
+test('copy code failure offers manual copying and does not claim clipboard success', async () => {
+  const h = harness(async (_path,method) => method === 'POST' ? fresh() : account(), {copy:async () => { throw new Error('denied'); }});
+  await h.controller.load(); await h.controller.create('annual'); await h.controller.copyCode();
+  assert.equal(h.events.findLast(event => event[0] === 'status')[1], 'Select the invite code and copy it manually.');
+  assert.equal(h.events.some(event => event[0] === 'status' && event[1] === 'Invite code copied.'), false);
+});
+
+test('delayed code copy cannot report success after its invitation is dismissed', async () => {
+  const pending = deferred();
+  const h = harness(async (_path,method) => method === 'POST' ? fresh() : account(), {copy:() => pending.promise});
+  await h.controller.load(); await h.controller.create('annual');
+  const copying = h.controller.copyCode(); h.controller.dismiss(); pending.resolve(); await copying;
+  assert.equal(h.events.some(event => event[0] === 'status' && event[1] === 'Invite code copied.'), false);
+});
+
 test('unavailable preview does not fetch account identity or redeem', async () => {
   const calls = [];
   const h = harness(async path => { calls.push(path); return {available:false}; }, {owner:'',token});
@@ -213,8 +240,26 @@ test('real management mount keeps purchased choice without a refreshing change h
   await controller.create(select.value);
   assert.equal(JSON.parse(calls.find(call => call[1].method === 'POST')[1].body).creditSource, 'paid');
   assert.equal(elements.get('invShareUrl').value, origin + '/invite#' + token);
+  assert.equal(elements.get('invShareCode').value, token);
   listener.pagehide(); assert.equal(elements.get('invShareUrl').value, '');
+  assert.equal(elements.get('invShareCode').value, '');
   assert.equal(elements.get('invNewLink').hidden, true);
+});
+
+test('mounted copy-code action clears code and link together on refresh and dismiss', async () => {
+  const {document,elements} = dom('manage'); const copied = [];
+  const win = {location:{origin},navigator:{clipboard:{writeText:async value => copied.push(value)}},addEventListener:() => {},fetch:async (path,options) => {
+    const body = path.endsWith('/orders') ? {schemaVersion:1,accountId:'synthetic-user',orders:[]} : options.method === 'POST' ? fresh() : account();
+    return {ok:true,text:async () => JSON.stringify(body)};
+  }};
+  const controller = invitations.mount(win, document); await new Promise(resolve => setImmediate(resolve));
+  await controller.create('annual'); await elements.get('invCopyCode').listeners.click();
+  assert.deepEqual(copied, [token]);
+  await controller.load();
+  for (const id of ['invShareCode','invShareUrl']) assert.equal(elements.get(id).value, '');
+  await controller.create('annual'); elements.get('invDismiss').listeners.click();
+  for (const id of ['invShareCode','invShareUrl']) assert.equal(elements.get(id).value, '');
+  await elements.get('invCopyCode').listeners.click(); assert.equal(copied.length, 1);
 });
 
 test('landing mount clears fragment first and renders recipient text without HTML', async () => {
