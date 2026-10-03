@@ -1,71 +1,57 @@
-# Releasing
+# Releasing the backend
 
-GitHub is the development home. Branch from `main`, submit a pull request,
-and merge after the required build, test and privacy checks pass. Keep changes
-under `## Unreleased` in the changelog until preparing a release.
+GitHub is the development home of the public Go backend. Branch from `main`
+and merge after the required tests, PostgreSQL integration, container and
+privacy checks pass. Keep pending changes in `CHANGELOG.md` under
+`## Unreleased`.
 
 ## Release checklist
 
-1. Confirm the release commit is on `main`, with all required checks green.
-2. Run the documented build and tests from a fresh clone. Test desktop changes
-   in a disposable user session or virtual machine; test database changes against
-   a disposable database. Never attach production state to CI.
-3. Review changed screenshots and every frame of animations. Use a demo account,
-   invented notes and a synthetic media library. Strip metadata, window titles,
-   credentials, personal paths and identifying network details.
-4. Update the product version and changelog together. Package metadata must agree
-   with the application version. Submit those changes as a pull request.
-5. Create an immutable semantic-version tag on the checked release commit:
+1. Update root `VERSION` and changelog together in a reviewed pull request.
+   `VERSION` contains a stable semantic version without its `v` prefix.
+2. Confirm the release commit is on `main` and required checks are green.
+   Test database changes against disposable state and review public artifacts
+   for secrets and identifying deployment data.
+3. Create an immutable `vX.Y.Z` tag on that exact checked commit and push it.
+4. The tag workflow re-runs public CI/privacy, proves main ancestry and version
+   equality, then publishes a versioned `linux/amd64` backend image to
+   `ghcr.io/spencercnorton/bitagent`.
+5. Download and qualify the release assets before deployment. Never mutate
+   a published tag or include private configuration/data in an artifact.
 
-   ```bash
-   git fetch origin main --tags
-   git switch main
-   git merge --ff-only origin/main
-   git tag vX.Y.Z
-   git push origin refs/tags/vX.Y.Z
-   ```
+## Published artifacts
 
-6. The tag workflow re-runs the public CI and privacy gates, proves the tag
-   belongs to main, and publishes a GitHub Release with checksummed source
-   and product artifacts. Desktop package candidates are built from the tag;
-   container products publish versioned GHCR images and record their digests.
-   Never upload local configuration, data volumes, debug logs or a private archive.
-7. Verify download checksums and installation on a clean supported system.
-   Update the website's guides and media when visible behavior changes.
+`source.tar.gz` is `git archive` of the checked tag. `IMAGE_DIGEST.txt` identifies
+the immutable backend image. `SHA256SUMS.txt` covers both assets. The public
+container contains the static Go binary, CA certificates and runtime tools.
+Browser pages, Python services and site/account state are separate products.
 
-## Verify container artifacts
+Verify the asset checksums, pull the exact digest, and inspect these OCI labels:
+`org.opencontainers.image.version`, `revision`, `created`, and `source`.
+They must match the tag, checked commit, commit timestamp and public repository.
+Then run the image qualification:
 
-The current release publishes one `linux/amd64` image to
-`ghcr.io/spencercnorton/bitagent:vX.Y.Z`. It includes the Go core and Python UI;
-there is no separate static website bundle. CI and the release job check the
-image architecture, source labels, UI version, and bundled module imports in
-an isolated container before publication.
+```sh
+sh scripts/check_backend_image.sh '<exact-image-reference>' vX.Y.Z
+```
 
-Download `source.tar.gz`, `IMAGE_DIGEST.txt`, and `SHA256SUMS.txt` from the release.
-Verify `sha256sum --check SHA256SUMS.txt`, then pull the exact registry reference
-in `IMAGE_DIGEST.txt`. Before installation, inspect its
-`org.opencontainers.image.version`, `revision`, `created`, and `source` labels:
-they must match the release tag, checked commit, commit timestamp, and public
-repository. Keep that digest with the deployment record; a mutable tag alone
-does not identify the installed artifact.
+This runs the CLI and worker registry with network disabled and rootfs read-only,
+checks version identity, required backend workers, absent site runtimes and
+CA certificates. It does not replace a database/API deployment health check.
 
-For a local candidate build, use a clean checkout or extract `git archive` for
-the checked commit into a fresh directory. Pass `--platform linux/amd64` and
-the Docker build arguments `VERSION`, `COMMIT`, `BUILD_DATE`, and `SOURCE` with
-the same values as the release job. Docker context exclusions keep local
-credentials, virtual environments, caches, and state out of the build. Without
-release arguments, development labels use `dev`, `unknown`, and an epoch date.
-An independently rebuilt image can differ as operating-system package mirrors
-change; verify and deploy the published release digest.
+## Local candidate builds
+
+Build from a clean checkout or an exact `git archive`, using `--platform
+linux/amd64`. Pass Docker arguments `VERSION` (with `v` prefix), `COMMIT`,
+`BUILD_DATE` (the source commit timestamp) and `SOURCE` (the public repository
+URL), as the release workflow does. Context exclusions keep local state out
+of the image. An independently rebuilt image can differ as package mirrors
+change; deploy the qualified published digest.
 
 ## Deployment and recovery
 
-Application source and public build checks live here. Signing keys, registry
-credentials, production configuration and deployment approvals live in the
-operator's secret manager and private deployment system. CI artifacts are
-candidates until their release and installation checks pass.
-
-Record the running version and image digest before an upgrade. Back up state,
-rehearse its restore, and preserve the previous artifact. Database migrations
-can make a binary-only downgrade unsafe; recover the matching backup when a
-migration is not reversible. Never mutate an existing release tag.
+Each consumer manages its own secrets, configuration and deployment. Record
+version/digest before upgrading, back up state, rehearse restoration and retain
+the previous artifact. Review [4.0 migration](migration-v4.md) when upgrading
+from a combined 3.x image. Database migrations can require restoration of a
+matching backup rather than a binary-only downgrade.

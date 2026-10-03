@@ -188,46 +188,28 @@ separate timeouts, rate limits, server errors, and invalid responses. Breaker
 cohorts remain queryable through `junkpurge_judgments.reason`; they are never
 included in `would_delete_total` or applied.
 
-## Dashboard (`ui` worker)
+## Configurable evidence sources
 
-The operator console and public library run inside the `bitagent` container as a child process the core starts, supervises and restarts. Off by default; the quickstart compose turns it on. The UI's own settings (`OPERATOR_HOSTS`, `REQUIRE_AUTH`, `DASHBOARD_API_KEY`, ...) are read by the child straight from the environment and documented in [`ui/README.md`](../ui/README.md).
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `UI_ENABLED` | `false` | Start the dashboard alongside the other workers (`worker run --all`). `worker run --keys ui` runs it alone, but still only when this is `true`. |
-| `UI_LISTEN_ADDRESS` | `0.0.0.0:8080` | `host:port` the dashboard listens on inside the container. |
-| `UI_DIR` | `/app/ui` | Directory holding the dashboard's `app.py`; only change it when running from a checkout. |
-| `UI_PYTHON` | `python3` | Interpreter used to launch uvicorn. |
-| `UI_RESTART_BACKOFF` | `5s` | Wait before restarting a crashed dashboard; doubles per consecutive crash, capped at 60s. |
-
-When co-located the child gets `BITAGENT_GRAPHQL_URL` / `BITAGENT_METRICS_URL` pointing at the core's own `HTTP_SERVER_LOCAL_ADDRESS` (`http://127.0.0.1:3333/...`) unless you set them yourself.
-
-## Evidence-source ingestors (operator-internal)
-
-These variables configure pollers for downstream `*arr` apps and qBittorrent. They are present in the maintainer's operator-internal compose (a Portainer stack), **not** in `examples/docker-compose.public.yml`. Empty values disable the corresponding source without error — the worker logs `no X instances configured` and idles.
+The backend can poll generic *arr and qBittorrent endpoints you configure.
+No source is attached by default. Empty base URLs leave the corresponding
+source idle. The example stack omits these optional settings; add them to
+your own environment or YAML configuration when needed.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `BITAGENT_IMAGE_TAG` | `latest` | Container image tag. |
-| `SONARR_URL` / `SONARR_API_KEY` | *(none)* | Sonarr base URL + API key. |
-| `RADARR_URL` / `RADARR_API_KEY` | *(none)* | Radarr base URL + API key. |
-| `READARR_URL` / `READARR_API_KEY` | *(none)* | Readarr base URL + API key. |
-| `LIDARR_URL` / `LIDARR_API_KEY` | *(none)* | Lidarr base URL + API key. |
-| `QB_APOLLO_URL` | *(none)* | qBittorrent WebUI URL. |
-| `QB_APOLLO_USERNAME` | *(none)* | qBittorrent WebUI username. |
-| `QB_APOLLO_PASSWORD` | *(none)* | qBittorrent WebUI password. |
+| `EVIDENCE_SONARR_BASE_URL` / `EVIDENCE_SONARR_API_KEY` | empty | Sonarr history source |
+| `EVIDENCE_RADARR_BASE_URL` / `EVIDENCE_RADARR_API_KEY` | empty | Radarr history source |
+| `EVIDENCE_READARR_BASE_URL` / `EVIDENCE_READARR_API_KEY` | empty | Readarr history source |
+| `EVIDENCE_LIDARR_BASE_URL` / `EVIDENCE_LIDARR_API_KEY` | empty | Lidarr history source |
+| `EVIDENCE_QB_ALPHA_BASE_URL` / `EVIDENCE_QB_ALPHA_USERNAME` / `EVIDENCE_QB_ALPHA_PASSWORD` | empty | First qBittorrent source |
+| `EVIDENCE_QB_BETA_BASE_URL` / `EVIDENCE_QB_BETA_USERNAME` / `EVIDENCE_QB_BETA_PASSWORD` | empty | Second qBittorrent source |
+| `EVIDENCE_ARR_POLL_INTERVAL` | `15m` | History polling cadence |
+| `EVIDENCE_QB_POLL_INTERVAL` | `15m` | qBittorrent polling cadence |
 
-## VPN integration (operator-internal)
-
-The operator-internal stack runs BitAgent behind Gluetun for VPN-egressed DHT traffic. Same scope note as evidence-source ingestors — these are not present in the public quickstart compose. See `deploy/README.md` for full provider notes.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `VPN_SERVICE_PROVIDER` | *(required for Gluetun)* | e.g. `mullvad`, `nordvpn`, `protonvpn`, `airvpn`. |
-| `VPN_TYPE` | `wireguard` | `wireguard` or `openvpn`. |
-| `WIREGUARD_PRIVATE_KEY` | *(required for wg)* | Gluetun WireGuard private key. |
-| `WIREGUARD_ADDRESSES` | *(required for wg)* | Gluetun WireGuard address (comma-separated). |
-| `VPN_SERVER_COUNTRIES` | `United States` | Egress country selection. |
+See [evidence](evidence.md) for webhook authentication, evidence precedence,
+liveness and outcome-prior settings. Source credentials belong in an ignored
+environment file or secret manager. Network tunnels and human account services
+are deployment choices rather than backend configuration.
 
 ## Live config inspection
 

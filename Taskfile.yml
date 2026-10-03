@@ -61,7 +61,7 @@ tasks:
 
   build:
     cmds:
-      - go build -ldflags "-X github.com/spencercnorton/bitagent/internal/version.GitTag=$(git describe --tags --always --dirty)"
+      - go build -ldflags "-X github.com/spencercnorton/bitagent/internal/version.GitTag=v$(cat VERSION)"
 
   export-data:
     cmds:

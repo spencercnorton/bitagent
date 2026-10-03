@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Make the public backend independently buildable and deployable without a UI.
+  Remove the Python site and its Go worker, browser GraphQL playground and
+  site-only documentation. Keep DHT processing, matching, classification,
+  evidence, Torznab, GraphQL POST, metrics, CLI and all PostgreSQL migrations.
+- Separate backend releases with a root `VERSION` file and Go-only container.
+  Public examples and CI now validate the headless deployment boundary.
+- Breaking packaging change for 4.0.0: the former `ui` worker, port 8080 and
+  SQLite/site configuration are no longer shipped. Existing API deployments
+  keep their schemas; operate browser applications as separate services.
+
+## 3.5.0 — 2026-10-03
+
 - Add private `music` and `generic` leaf releases to the offline publisher,
   protected catalogue, member library and private Torznab feed. Explicit
   `--include-music` Plex discovery includes track versions; Music and Other

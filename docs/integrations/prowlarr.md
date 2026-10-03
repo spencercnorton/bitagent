@@ -1,7 +1,5 @@
 # Prowlarr integration
 
-For the optional member-only media catalog, see [Private library indexer](private-indexer.md).
-
 BitAgent isn't in Prowlarr's built-in indexer list. Don't pick the **BitMagnet (Local DHT)** entry there: it has no API key field, so it can't connect to a BitAgent that requires a key. Add BitAgent as a **Generic Torznab** indexer instead. It takes any address, including another machine, a VPN address or an https reverse proxy, and Prowlarr syncs it to every connected \*arr application.
 
 ## Add the indexer

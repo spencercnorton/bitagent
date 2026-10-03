@@ -75,7 +75,7 @@
   <line class="bar" x1="960" y1="180" x2="960" y2="250" stroke="var(--out)"/>
   <text class="h" x="982" y="202">GraphQL</text>
   <text class="s" x="982" y="224">/graphql — your programs,</text>
-  <text class="s" x="982" y="244">the optional dashboard</text>
+  <text class="s" x="982" y="244">independent API clients</text>
 
   <rect class="box" x="960" y="280" width="210" height="90"/>
   <line class="bar" x1="960" y1="290" x2="960" y2="360" stroke="var(--out)"/>
@@ -97,5 +97,5 @@
 
   <!-- footer -->
   <text class="s" x="30" y="512">Content filter (script, lossy-audio, NSFW, blocked types) and junk purge sit beside the ladder, both off by default and both two-step to enable.</text>
-  <text class="s" x="30" y="536">One image: the core is headless; the operator dashboard is an optional worker in the same image.</text>
+  <text class="s" x="30" y="536">Standalone Go backend: machine APIs connect independent clients to the processing core.</text>
 </svg>

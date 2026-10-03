@@ -14,7 +14,7 @@ The single load-bearing assumption is that the host running BitAgent is trusted.
 
 ## Network attack surface
 
-The default `examples/docker-compose.public.yml` exposes port `3333` directly. All of these paths answer on it:
+The default `examples/docker-compose.public.yml` binds HTTP port `3333` to loopback. If you expand that binding, review every API below. All of these paths answer on it:
 
 | Path | Auth (default) | Sensitive? |
 |---|---|---|
@@ -63,7 +63,7 @@ BitAgent participates in the public BitTorrent DHT. There is no setting that dis
 
 BitAgent does *not* download torrent payloads — only metadata. The exposure window is bounded to the metadata phase. Still, for any deployment where IP exposure is a concern, the standard mitigation is:
 
-- Run BitAgent behind a VPN tunnel (Gluetun is what the operator-internal stack uses).
+- Run BitAgent behind a suitable network tunnel if your deployment requires it.
 - Use a VPN provider that supports port forwarding so DHT inbound traffic gets symmetric reach.
 
 CSAM — the one category where post-fetch detection is too late — has its own pre-fetch double-hash defense. See [csam-defense.md](../csam-defense.md).
@@ -127,7 +127,7 @@ Mismatched or missing token → request rejected, no row written, increments `bi
 ### `TORZNAB_API_KEY`
 
 1. Generate the new key: `openssl rand -hex 32`.
-2. Update `TORZNAB_API_KEY` in the BitAgent env (`.env` file or Infisical), restart the BitAgent container.
+2. Update `TORZNAB_API_KEY` in the BitAgent env (`.env` file or secret manager), restart the BitAgent container.
 3. Update each `*arr` indexer's API Key field to the new value.
 4. Test each indexer connection.
 5. The old key is now dead — no need to retire it explicitly.
@@ -153,7 +153,9 @@ All logs go to stdout. No telemetry, no upstream phone-home — except `CSAM_BLO
 
 The bundled Dockerfile already does most of what you'd want:
 
-- Runs as a non-root user. Do not override `USER` in your compose.
+- Retains root for compatibility with the optional `/root/.config/bitmagnet` and
+  `/root/.local/share/bitmagnet` state mounts. An operator can use a non-root
+  UID after arranging writable state paths; this is a separate migration.
 - The image is small (Alpine base, multi-stage build).
 - No build tooling in the runtime layer.
 
@@ -173,4 +175,3 @@ Report security issues via the repo's [SECURITY.md](../../SECURITY.md) — don't
 - [Configuration](../configuration.md)
 - [Deployment](../../examples/README.md)
 - [CSAM defense](../csam-defense.md)
-- [Integrations: Private tracker mode](../integrations/private-tracker-mode.md)

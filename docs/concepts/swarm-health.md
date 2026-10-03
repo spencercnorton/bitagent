@@ -70,7 +70,7 @@ coverage: how much of your catalog public trackers know about at all.
    not re-scraped every single cycle.
 5. **Sync.** Recompute the denormalized `torrent_contents.seeders/leechers` for
    the batch. Without this step the columns that Torznab ordering, the
-   zero-seeder filter and the dashboard actually read stay frozen at classify
+   zero-seeder filter and API consumers actually read stay frozen at classify
    time.
 6. **Feed liveness.** Positive scrapes revive suspect rows in the evidence
    liveness ladder; authoritative zeros record a suspect observation. Promotion

@@ -156,7 +156,7 @@ feed this.
 
 ## Reading it
 
-- **Evidence tab** in the dashboard: recent events per source, the canonical
+- **Evidence records** in PostgreSQL: recent events per source, the canonical
   label a torrent resolved to, and per-indexer grab and import counts.
 - **GraphQL:** `evidence { list(input:{limit:…}) { totalCount items { … } } }`
   and `evidence { indexerStats }`.

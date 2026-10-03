@@ -20,7 +20,7 @@
 
 ## Copyright Takedown Procedures
 
-**BitAgent does not operate as a service provider and does not receive copyright notices on behalf of users.** Because BitAgent is self-hosted software, operators control their own indexes, network exposure, and data retention. If an operator receives a copyright infringement notice or wishes to remove specific data from their local index, they must handle the request internally. BitAgent provides operator-facing tools to forget and exclude specific infohashes from the local catalog via the dashboard and REST API. Operators should implement their own takedown procedures consistent with their jurisdiction's copyright regime. We do not mediate disputes, process third-party claims, or act as an intermediary for DMCA or equivalent notices.
+**BitAgent does not operate as a service provider and does not receive copyright notices on behalf of users.** Because BitAgent is self-hosted software, operators control their own indexes, network exposure, and data retention. If an operator receives a copyright infringement notice or wishes to remove specific data from their local index, they must handle the request internally. BitAgent provides operator-facing tools to forget and exclude specific infohashes from the local catalog through the GraphQL API. Operators should implement their own takedown procedures consistent with their jurisdiction's copyright regime. We do not mediate disputes, process third-party claims, or act as an intermediary for DMCA or equivalent notices.
 
 ## Data Protection and Privacy
 
@@ -49,7 +49,7 @@ No. The project endorses lawful indexing of publicly broadcast metadata and the 
 This is out of scope for this documentation. Consult your ISP's Terms of Service, applicable privacy laws, and network security policies before routing traffic through third-party providers.
 
 **I received a DMCA notice — what do I do?**
-Handle notices internally. Use BitAgent's dashboard or API endpoint `/api/torrents/{infohash}/forget` to remove the specific infohash from your local index. Consult local counsel if your notice involves third-party claims or commercial liability.
+Handle notices internally. Use the backend's documented GraphQL deletion operation to remove a specific infohash from your local index. Consult local counsel if your notice involves third-party claims or commercial liability.
 
 ## TL;DR
 

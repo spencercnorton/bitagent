@@ -1,191 +1,61 @@
-# Local development setup
+# Local backend development
 
-A local BitAgent dev environment needs Go, Python, Postgres, and the [Task](https://taskfile.dev) build tool. The repo ships a Nix flake for reproducibility; manual install also works.
+Use the Go version in `go.mod`, PostgreSQL 14+ (16 recommended), and optionally
+[Task](https://taskfile.dev) and Docker Compose. Python 3 runs the public policy
+checks; the backend executable and container do not depend on Python.
 
-This page is for contributors. For runtime configuration see [configuration.md](../configuration.md).
+## Build and test
 
-## Prerequisites
-
-| Tool | Version |
-|---|---|
-| Go | 1.22+ |
-| Python | 3.11+ |
-| Postgres | 16 |
-| Task | latest |
-| Docker (optional) | latest, for compose-based dev |
-
-## Clone
-
-```bash
-gh repo clone spencercnorton/bitagent
+```sh
+git clone https://github.com/spencercnorton/bitagent.git
 cd bitagent
-```
-
-## Option A: Nix flake (recommended)
-
-The `flake.nix` provides a reproducible shell with everything pinned.
-
-```bash
-nix develop
-```
-
-Drops you into a shell with Go, Python, Postgres, Task, and the Go module dependencies preinstalled.
-
-## Option B: Manual install
-
-If you don't use Nix:
-
-- **Go** — [go.dev/dl/](https://go.dev/dl/) (1.22+)
-- **Python** — [python.org](https://www.python.org/) or `pyenv install 3.11`
-- **Task** — `brew install go-task/tap/go-task` or [taskfile.dev/installation/](https://taskfile.dev/installation/)
-- **Postgres** — `brew install postgresql@16` (macOS) or `apt install postgresql-16` (Debian/Ubuntu)
-
-## Local Postgres setup
-
-Create the user and database BitAgent expects.
-
-```bash
-createuser bitmagnet
-createdb -O bitmagnet bitmagnet
-psql -c "ALTER USER bitmagnet WITH PASSWORD 'devpass';"
-```
-
-## Environment file
-
-```bash
-cp examples/.env.example .env
-```
-
-Edit `.env` and set:
-
-```env
-POSTGRES_HOST=localhost
-POSTGRES_PASSWORD=devpass
-LOG_LEVEL=debug
-```
-
-## Build and run
-
-The repo's `Taskfile.yml` is the build entry point.
-
-```bash
-# Build the binary
 task build
+./bitagent --help
+./bitagent worker list
+go vet ./...
+go test -race -count=1 -timeout=10m ./...
+python3 scripts/test_headless_boundary.py
+python3 scripts/check_headless_boundary.py
+```
 
-# Run all workers in the foreground
+`task build` reads root `VERSION`. Use affected Go packages for a quick edit
+loop. CI's PostgreSQL integration job defines the supported disposable test
+database and `BITAGENT_TEST_POSTGRES_DSN`; production state is never test data.
+
+## Run a disposable local stack
+
+```sh
+cp examples/.env.example examples/.env.public
+# Set a unique POSTGRES_PASSWORD and TORZNAB_API_KEY.
+docker compose -f examples/docker-compose.public.yml --env-file examples/.env.public up -d --build
+```
+
+For a native process, export `POSTGRES_HOST`, `POSTGRES_NAME`, `POSTGRES_USER`
+and `POSTGRES_PASSWORD` for your local database, then run:
+
+```sh
 ./bitagent worker run --all
 ```
 
-You should see DHT bootstrap logs within ~30 seconds, and `bitagent_dht_ktable_hashes_added_total` start ticking up after ~3 minutes (visible at `http://localhost:3333/metrics`).
+`config show` prints resolved values and their source; it can contain secrets,
+so inspect it locally. Backend settings live in [configuration](../configuration.md).
 
-## Run tests
+## GraphQL and migrations
 
-```bash
-# All tests
-task test
+Schema inputs are in `graphql/schema/`, generated bindings in
+`internal/gql/gql.gen.go`, and generation settings in `internal/gql/gqlgen.yml`.
+After a schema change run `task gen-gql` and test the affected resolvers.
+Use `POST /graphql` for inspection with a separate client or curl.
 
-# A subset
-go test ./internal/classifier/...
-```
+Goose migrations live in `migrations/`. Startup applies pending migrations;
+`task migrate` runs the developer migration helper. Use disposable databases
+for migration tests and keep a matching backup for upgrade recovery.
 
-The classifier tests are the slowest because they cover the CEL rule chain end-to-end. Most other packages run in seconds.
+## Classifier changes
 
-## Vet and lint
+CEL rules are bundled in the executable, so rebuild after changes. Use
+`bitagent classifier show` to inspect the workflow, and the evaluation CLI
+commands to replay frozen synthetic or privately retained evidence.
 
-```bash
-task vet           # go vet
-task lint          # golangci-lint (if installed)
-golangci-lint run  # explicitly
-```
-
-## Dashboard development
-
-The dashboard is the Python FastAPI app in the `ui/` subdirectory, which the built binary runs as the worker `ui`. For a fast edit loop run it on its own with uvicorn's reloader. Open a second terminal:
-
-```bash
-cd ui
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --require-hashes -r requirements.lock -r requirements-test.lock
-
-REQUIRE_AUTH=false \
-BITAGENT_GRAPHQL_URL=http://localhost:3333/graphql \
-BITAGENT_METRICS_URL=http://localhost:3333/metrics \
-  python -m uvicorn app:app --no-proxy-headers --reload --port 8080
-```
-
-Dashboard is at `http://localhost:8080` (the public library at `http://library.localhost:8080`). The `--reload` flag picks up Python changes; restart for env-var changes. To exercise the supervised path instead, `UI_ENABLED=true UI_DIR=./ui go run . worker run --keys ui` (with the venv active, so `python3` is the one holding the lock) spawns the same command from the core; see [`configuration.md`](../configuration.md) for the other `UI_*` keys.
-
-## Working with the GraphQL schema
-
-Schema files live at `graphql/schema/*.graphqls`. Generated bindings are in `internal/gql/gql.gen.go`.
-
-After editing a schema file, regenerate:
-
-```bash
-task graphql:generate
-# or directly
-go run github.com/99designs/gqlgen generate
-```
-
-Then run `task vet` to catch any resolver gaps.
-
-## Database migrations
-
-Migrations live in `migrations/` as `NNNNN_name.sql` (goose format). The worker auto-applies them on startup, so during dev you don't usually invoke goose manually.
-
-If you need to run migrations explicitly (e.g., to test a new migration in isolation):
-
-```bash
-./bitagent migrate up
-```
-
-Down migrations are best-effort — for a clean reset during dev, drop and recreate the database.
-
-```bash
-dropdb bitmagnet
-createdb -O bitmagnet bitmagnet
-psql -c "ALTER USER bitmagnet WITH PASSWORD 'devpass';"
-```
-
-## Common dev tasks
-
-**Reload classifier rules.** The CEL rules are bundled in the binary; rebuild and restart:
-
-```bash
-task build && ./bitagent worker run --all
-```
-
-**Inspect resolved config.** The `From` column tells you which env var or default produced a given value:
-
-```bash
-./bitagent config show
-```
-
-**View the loaded classifier workflow:**
-
-```bash
-./bitagent classifier show --format yaml | head -50
-```
-
-**Probe live metrics during dev:**
-
-```bash
-curl -s http://localhost:3333/metrics | grep -E '^bitagent_' | head -30
-```
-
-## Submitting a pull request
-
-1. Fork the repo (`spencercnorton/bitagent`).
-2. Branch from `main` — name like `feat/your-feature` or `fix/issue-NNN`.
-3. Run `task vet test lint` before pushing.
-4. Push and open a PR. Reference any related issue in the description.
-5. The CI pipeline runs vet + tests + lint on every push.
-6. See [`CONTRIBUTING.md`](../../CONTRIBUTING.md) at the repo root for style and process notes.
-
-## See also
-
-- [Reference / CLI](../reference/cli.md)
-- [Concepts / Architecture](../concepts/architecture.md)
-- [Concepts / Classification](../concepts/classification.md) — when editing CEL rules
-- `CONTRIBUTING.md` at the repo root
+See [CONTRIBUTING.md](../../CONTRIBUTING.md) for code conventions, PR requirements
+and validation. Site development and account features use their own repository.

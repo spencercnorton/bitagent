@@ -20,7 +20,6 @@ venv
 **/*.egg-info
 **/node_modules
 /data
-/ui/data
 /llmeval
 /export.sql
 /dump.rdb

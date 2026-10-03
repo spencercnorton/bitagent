@@ -1,4 +1,4 @@
-# Public Go race tests, PostgreSQL integration, operator UI checks and image build.
+# Public Go race tests, PostgreSQL integration, headless boundary and image build.
 # Read-only tokens, disposable databases and commit-pinned GitHub actions.
 name: CI
 on:
@@ -13,12 +13,16 @@ concurrency:
   cancel-in-progress: true
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Verify backend distribution boundary
+        run: |
+          python3 scripts/test_headless_boundary.py
+          python3 scripts/check_headless_boundary.py
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -26,31 +30,6 @@ jobs:
       - run: go test -race -count=1 -timeout=10m ./...
       - name: Scan called Go dependencies
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
-  ui-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: ui
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-      - run: python -m pip install -q --require-hashes -r requirements.lock -r requirements-test.lock
-      - run: python -m pip install -q --no-deps --no-build-isolation -e .
-      - run: python -m pip check
-      - run: python -m pip install -q ruff==0.8.6
-      - run: ruff check .
-      - run: python -m pytest -q -W error -p no:cacheprovider
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: "22"
-      - run: for f in static/js/*.js; do node --check "$f"; done
-      - run: node --test tests/library_state.test.js
-
   integration:
     name: PostgreSQL integration
     runs-on: ubuntu-24.04
@@ -85,7 +64,8 @@ jobs:
         env:
           BUILD_SOURCE: https://github.com/${{ github.repository }}
         run: |
-          VERSION="v$(sed -n 's/^__version__ = "\([^"]*\)"/\1/p' ui/version.py)"
+          VERSION="v$(cat VERSION)"
+          printf '%s\n' "$VERSION" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           COMMIT=$(git rev-parse HEAD)
           BUILD_DATE=$(git show -s --format=%cI HEAD)
           docker build --platform linux/amd64 --build-arg VERSION="$VERSION" \
@@ -96,7 +76,4 @@ jobs:
           test "$(docker image inspect bitagent:ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$COMMIT"
           test "$(docker image inspect bitagent:ci --format '{{index .Config.Labels "org.opencontainers.image.created"}}')" = "$BUILD_DATE"
           test "$(docker image inspect bitagent:ci --format '{{index .Config.Labels "org.opencontainers.image.source"}}')" = "$BUILD_SOURCE"
-          docker run --rm --network none --read-only --tmpfs /data:uid=10001,gid=10001 \
-            --user 10001:10001 --entrypoint python3 --workdir /app/ui \
-            --env EXPECTED_VERSION="${VERSION#v}" bitagent:ci \
-            -c 'import os; import app, account_usage, discovery; from version import __version__; assert __version__ == os.environ["EXPECTED_VERSION"]'
+          sh scripts/check_backend_image.sh bitagent:ci "$VERSION"

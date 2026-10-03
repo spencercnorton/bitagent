@@ -8,7 +8,6 @@ import (
 	"github.com/99designs/gqlgen/graphql/handler/extension"
 	"github.com/99designs/gqlgen/graphql/handler/lru"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
-	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/gin-gonic/gin"
 	"github.com/spencercnorton/bitagent/internal/httpserver"
 	"github.com/spencercnorton/bitagent/internal/lazy"
@@ -56,12 +55,6 @@ func (b builder) Apply(e *gin.Engine) error {
 		gql.ServeHTTP(c.Writer, c.Request)
 	})
 
-	pg := playground.Handler("GraphQL playground", "/graphql")
-
-	e.GET("/graphql", func(c *gin.Context) {
-		pg.ServeHTTP(c.Writer, c.Request)
-	})
-
 	return nil
 }
 
@@ -72,7 +65,6 @@ func newServer(es graphql.ExecutableSchema) *handler.Server {
 		KeepAlivePingInterval: 10 * time.Second,
 	})
 	srv.AddTransport(transport.Options{})
-	srv.AddTransport(transport.GET{})
 	srv.AddTransport(transport.POST{})
 	srv.AddTransport(transport.MultipartForm{})
 
