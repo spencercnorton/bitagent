@@ -12,9 +12,14 @@
   SQLite/site configuration are no longer shipped. Existing API deployments
   keep their schemas; operate browser applications as separate services.
 
-## 3.4.0 — 2026-10-03
+## 3.5.0 — 2026-10-03
 
-The following entries describe the historical combined backend and site.
+- Add private `music` and `generic` leaf releases to the offline publisher,
+  protected catalogue, member library and private Torznab feed. Explicit
+  `--include-music` Plex discovery includes track versions; Music and Other
+  use Audio 3000 and Other 8000.
+  Music supports text search only. Keep version-1 video manifests, torrent
+  layouts, private key permissions and fresh seed verification unchanged.
 
 - Align administration with discovery's shared teal and navy palette, lime
   product mark, typography, navigation and card treatments in both themes.
