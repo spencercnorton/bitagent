@@ -66,7 +66,7 @@ from deps import (
     require_operator,
     require_public_library,
 )
-from navigation import validate_navigation_settings, operator_url, library_url
+from navigation import validate_navigation_settings, operator_url, library_url, operator_path
 from torznab import router as torznab_router
 import private_indexer
 import invitations
@@ -398,7 +398,7 @@ _LIBRARY_MANIFEST = {
     "description": "Browse and search the BitAgent media library",
     "id": "/", "start_url": "/", "scope": "/",
     "display": "standalone",
-    "background_color": "#0f1117", "theme_color": "#4f6ef7",
+    "background_color": "#09121d", "theme_color": "#087b87",
     "icons": [
         {"src": "/static/img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
         {"src": "/static/img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
@@ -420,6 +420,13 @@ async def webmanifest(request: Request):
     """
     scope = _host_scope(request)
     if scope == "operator":
+        prefix = operator_path()
+        if prefix:
+            manifest = json.loads((BASE / "static" / "manifest.webmanifest").read_text())
+            return JSONResponse(
+                {**manifest, "id": prefix + "/", "start_url": prefix + "/", "scope": prefix + "/"},
+                media_type="application/manifest+json",
+            )
         return FileResponse(
             BASE / "static" / "manifest.webmanifest",
             media_type="application/manifest+json",
@@ -637,6 +644,7 @@ def _dashboard_response(request: Request, identity: dict):
         context={
             "identity": identity,
             "library_url": library_url(request),
+            "operator_path": operator_path(),
             "active_tab": "dashboard",
             "asset_version": ASSET_VERSION,
             "app_switcher_script_url": settings.app_switcher_script_url.strip(),
@@ -681,6 +689,7 @@ async def registration_admin(request: Request, identity=Depends(registration_iss
         request=request, name="registration-issuer.html",
         context={"identity": identity, "asset_version": ASSET_VERSION,
                  "library_brand": settings.library_brand, "app_version": __version__,
+                 "operator_path": operator_path(),
                  "invitations_url": settings.private_indexer_url + "/invitations"},
         headers={"Referrer-Policy": "no-referrer"},
     )

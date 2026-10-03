@@ -629,7 +629,10 @@ async def private_library_page(request: Request, identity=Depends(require_member
 @router.get("/private-admin")
 async def private_admin_page(request: Request, identity=Depends(require_operator)):
     enabled()
-    return _TEMPLATES.TemplateResponse(request=request, name="private-library.html", context={"admin": True})
+    from navigation import library_url, operator_path
+    return _TEMPLATES.TemplateResponse(request=request, name="private-library.html", context={
+        "admin": True, "operator_path": operator_path(), "library_url": library_url(request),
+    })
 
 
 async def _tracker_key(key_row: dict) -> str:

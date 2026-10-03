@@ -1,48 +1,20 @@
-/* Public library visual system. No assets, fonts, or framework are fetched.
-   Keep this separate from the independently evolving operator console. */
+/* Discovery layout uses the shared product palette in tokens.css.
+   No assets, fonts, or framework are fetched. */
 :root {
-  --color-bg: #f6f8fb;
-  --color-bg-subtle: #eef3f7;
-  --color-bg-raised: #ffffff;
-  --color-bg-inset: #e6edf3;
-  --color-fg: #122334;
-  --color-fg-muted: #4b6175;
-  --color-fg-subtle: #607386;
-  --color-border: #cbd8e3;
-  --color-border-subtle: #dce5ec;
-  --color-accent: #087b87;
-  --color-accent-hover: #066671;
-  --color-accent-subtle: #e4f3f2;
-  --color-accent-fg: #ffffff;
-  --lib-lime: #c4f56b;
+  --lib-lime: var(--color-brand);
   --lib-lime-ink: #407517;
   --lib-violet: #7955c7;
   --lib-coral: #c65a4b;
-  --lib-cyan: #087b87;
+  --lib-cyan: var(--color-accent);
   --lib-ease: cubic-bezier(.18,.8,.24,1);
   --lib-header-height: 76px;
   --lib-page-width: 1480px;
 }
 [data-theme="dark"] {
-  --color-bg: #09121d;
-  --color-bg-subtle: #0f1b28;
-  --color-bg-raised: #122130;
-  --color-bg-inset: #08121e;
-  --color-fg: #edf5fc;
-  --color-fg-muted: #b4c4d5;
-  --color-fg-subtle: #8ba2b8;
-  --color-border: #2d4256;
-  --color-border-subtle: #203244;
-  --color-accent: #63ddd0;
-  --color-accent-hover: #8bf2e4;
-  --color-accent-subtle: #15342f;
-  --color-accent-fg: #082321;
-  --color-success: #bbed80;
-  --color-success-subtle: #203624;
   --lib-lime-ink: #c4f56b;
   --lib-violet: #be9bff;
   --lib-coral: #ff9a89;
-  --lib-cyan: #63ddd0;
+  --lib-cyan: var(--color-accent);
 }
 html { scroll-padding-top: calc(var(--lib-header-height) + 20px); }
 body { font-size: 14px; line-height: 1.55; }

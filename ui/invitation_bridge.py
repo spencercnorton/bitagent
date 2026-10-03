@@ -36,7 +36,7 @@ _HASH = re.compile(r"[0-9a-f]{64}")
 _NONCE = re.compile(r"[A-Za-z0-9_-]{32}")
 _PROVIDERS = frozenset({"google", "microsoft", "discord", "plex", "bitagent-local"})
 _KEY: bytes | None = None
-_CONFIG: tuple[str, str, str, str] | None = None
+_CONFIG: tuple[str, str, str, str, str] | None = None
 _SUBJECT_FORMATS = frozenset({"legacy-negative", "principal"})
 _BODY_LIMIT = 4096
 _ACTIVE_LIMIT = 1000
@@ -82,19 +82,25 @@ def account_subject(principal_id, subject_format):
 def _https_url(value, path, *, operator=False):
     try:
         p = urlsplit(value)
-        _, operators = _host_sets()
+        public, operators = _host_sets()
         valid = (isinstance(value, str) and p.scheme == "https" and p.hostname
                  and p.hostname == p.netloc and p.path == path
                  and _normalise_hostname(p.netloc) == p.netloc
                  and not p.query and not p.fragment and not p.username and not p.password
                  and len(value) <= 2048 and not any(c.isspace() for c in value)
                  and value == f"https://{p.hostname}{path}"
-                 and (not operator or p.hostname in operators))
+                 and (not operator or p.hostname in operators
+                      or (settings.invitation_bridge_ingress_host and p.hostname in public)))
     except (TypeError, ValueError):
         valid = False
     if not valid:
         raise RuntimeError("Invitation bridge requires a canonical HTTPS endpoint")
     return f"https://{p.hostname}"
+
+
+def _ingress_host():
+    """Keep the private transport Host distinct from the signed public origin."""
+    return settings.invitation_bridge_ingress_host or urlsplit(settings.invitation_bridge_url).netloc
 
 
 def validate_settings():
@@ -111,6 +117,12 @@ def validate_settings():
             and settings.require_auth and (settings.trust_npm_headers or settings.trust_forwarded_user)):
         raise RuntimeError("Invitation bridge requires verified private invitation authentication")
     _https_url(settings.invitation_bridge_url, PATH, operator=True)
+    ingress_host = _ingress_host()
+    _, operators = _host_sets()
+    if (not isinstance(ingress_host, str)
+            or _normalise_hostname(ingress_host) != ingress_host
+            or ingress_host not in operators):
+        raise RuntimeError("Invitation bridge requires an exact operator ingress hostname")
     _https_url(settings.invitation_sign_in_url, "/invitations/start")
     if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "geteuid"):
         raise RuntimeError("Invitation bridge requires protected POSIX key files")
@@ -138,7 +150,7 @@ def validate_settings():
         raise RuntimeError("Invitation bridge requires a distinct protected regular key file") from None
     _KEY = key
     _CONFIG = (settings.invitation_bridge_url, path, settings.invitation_sign_in_url,
-               settings.invitation_bridge_subject_format)
+               settings.invitation_bridge_subject_format, settings.invitation_bridge_ingress_host)
 
 
 def _enabled():
@@ -147,7 +159,7 @@ def _enabled():
         raise HTTPException(404, "Not found")
     if _KEY is None or _CONFIG != (
         settings.invitation_bridge_url, settings.invitation_bridge_secret_file, settings.invitation_sign_in_url,
-        settings.invitation_bridge_subject_format
+        settings.invitation_bridge_subject_format, settings.invitation_bridge_ingress_host
     ):
         raise HTTPException(503, "Invitation bridge unavailable")
 
@@ -171,7 +183,7 @@ def check_ingress(request):
     if (_host_scope(request) != "operator" or request.method != "POST"
             or request.scope.get("raw_path", b"") != PATH.encode()
             or request.scope.get("query_string")
-            or request.headers.getlist("host") != [urlsplit(settings.invitation_bridge_url).netloc]):
+            or request.headers.getlist("host") != [_ingress_host()]):
         raise HTTPException(404, "Not found")
     # The machine location must clear every browser identity/credential. A
     # human/operator key never substitutes for the distinct purpose HMAC.

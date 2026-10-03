@@ -33,6 +33,7 @@ def _navigation_settings(monkeypatch):
         "proxy_auth_secret": PROXY_SECRET,
         "operator_roles": "OWNER",
         "operator_ui_url": "",
+        "operator_ingress_host": "",
         "library_ui_url": "",
     }.items():
         monkeypatch.setattr(config.settings, key, value)
@@ -89,6 +90,52 @@ def test_link_does_not_expand_host_or_operator_gates(client):
     assert client.get("/", headers=_headers("VIEWER", "console.example.org")).status_code == 403
     assert client.get("/api/settings", headers=_headers("VIEWER", "console.example.org")).status_code == 403
     assert client.get("/", headers=_headers(host="unmapped.example.org")).status_code == 421
+
+
+@pytest.mark.parametrize("suffix", ["/admin", "/admin/"])
+def test_canonical_admin_proxy_prefix_preserves_role_and_host_gates(client, suffix):
+    config.settings.operator_ingress_host = "console.example.org"
+    config.settings.operator_ui_url = "https://library.example.org" + suffix
+    public = client.get("/", headers=_headers())
+    assert public.status_code == 200
+    assert public.context["admin_url"] == config.settings.operator_ui_url
+    operator = client.get("/", headers=_headers(host="console.example.org"))
+    assert operator.status_code == 200
+    assert operator.context["operator_path"] == "/admin"
+    assert 'data-operator-path="/admin"' in operator.text
+    assert 'href="/admin/manifest.webmanifest"' in operator.text
+    manifest = client.get("/manifest.webmanifest", headers={"host": "console.example.org"})
+    assert manifest.json()["start_url"] == "/admin/"
+    assert manifest.json()["scope"] == "/admin/"
+    public_manifest = client.get("/manifest.webmanifest", headers={"host": "library.example.org"})
+    assert public_manifest.json()["start_url"] == "/"
+    # The proxy must strip the prefix and set its fixed operator Host. Merely
+    # adding a path or forwarded host never changes the application host gate.
+    assert client.get("/admin/", headers=_headers()).status_code == 404
+    assert client.get("/api/settings", headers={**_headers(), "X-Forwarded-Host": "console.example.org"}).status_code == 404
+    assert client.get("/", headers=_headers("VIEWER", "console.example.org")).status_code == 403
+    assert client.get("/api/settings", headers=_headers("VIEWER", "console.example.org")).status_code == 403
+    viewer = client.get("/", headers=_headers("VIEWER"))
+    assert viewer.context["admin_url"] == ""
+    assert 'id="libAdminLink"' not in viewer.text
+
+
+def test_canonical_admin_proxy_library_return_links_use_configured_prefix(client):
+    config.settings.operator_ingress_host = "console.example.org"
+    config.settings.operator_ui_url = "https://library.example.org/admin"
+    response = client.get("/library", headers=_headers(host="console.example.org"))
+    assert response.context["admin_url"] == "/admin/"
+
+
+@pytest.mark.parametrize("url", [
+    "http://library.example.org/admin", "https://library.example.org/",
+    "https://library.example.org/admin/other", "https://library.example.org/%61dmin",
+    "https://library.example.org//admin", "https://library.example.org/admin/../",
+])
+def test_canonical_public_operator_destination_only_accepts_reserved_https_path(url):
+    config.settings.operator_ui_url = url
+    with pytest.raises(RuntimeError, match="OPERATOR_UI_URL"):
+        navigation.validate_navigation_settings()
 
 
 def test_operator_host_library_links_to_its_own_root(client):

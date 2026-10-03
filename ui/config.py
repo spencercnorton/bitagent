@@ -22,7 +22,12 @@ class Settings(BaseSettings):
     # Optional canonical navigation destinations, including a deployment's
     # scheme, port, or base path. Startup validation binds each URL to its
     # existing surface allowlist; these never alter authentication or routing.
+    # A library-host HTTPS URL with the exact /admin path also enables a fixed
+    # browser prefix. A trusted proxy must strip it and set an operator Host.
     operator_ui_url: str = ""
+    # Required for an HTTPS public-origin /admin proxy: the exact fixed virtual
+    # operator Host, separately allowlisted and never taken from a request.
+    operator_ingress_host: str = ""
     library_ui_url: str = ""
     # Optional cross-origin script for a shared app switcher on both shells
     # (`data-current="bitagent" data-me="/api/me"`). Empty = no tag and no
@@ -65,6 +70,9 @@ class Settings(BaseSettings):
     # principals. Its key never authorizes dashboard or human invitation APIs.
     private_invitation_bridge_enabled: bool = False
     invitation_bridge_url: str = ""
+    # Optional fixed operator Host sent by a trusted canonical-origin proxy.
+    # Empty preserves the bridge URL's exact Host; never read forwarded hosts.
+    invitation_bridge_ingress_host: str = ""
     invitation_bridge_secret_file: str = ""
     # Match the verified SSO service's account namespace; never infer aliases.
     invitation_bridge_subject_format: Literal["legacy-negative", "principal"] = "legacy-negative"

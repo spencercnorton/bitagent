@@ -10,9 +10,9 @@
   <link rel="stylesheet" href="/static/css/invitations.css?v={{ asset_version }}">
   <link rel="icon" href="/static/img/favicon.ico">
 </head>
-<body data-registration-account-id="{{ identity.id }}">
+<body data-registration-account-id="{{ identity.id }}" data-operator-path="{{ operator_path }}">
   <main class="inv-page">
-    <nav class="inv-nav" aria-label="Operator navigation"><a href="/">← Operator console</a><span>Invitations</span></nav>
+    <nav class="inv-nav" aria-label="Operator navigation"><a href="{{ operator_path }}/">← Operator console</a><span>Invitations</span></nav>
     <header class="inv-heading"><p class="inv-eyebrow">Owner account</p><h1>Enable invitations</h1><p>Allow your signed-in account to create invitation codes.</p></header>
     <section class="inv-card" aria-labelledby="issuerAccountTitle">
       <h2 id="issuerAccountTitle">{{ identity.display }}</h2>

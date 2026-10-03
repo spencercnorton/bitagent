@@ -49,7 +49,8 @@
     api: async function (method, body) {
       const options = {method, credentials: 'same-origin', cache: 'no-store', redirect: 'error'};
       if (body) { options.headers = {'Content-Type': 'application/json'}; options.body = JSON.stringify(body); }
-      const response = await root.fetch(path, options);
+      const prefix = document.body.dataset.operatorPath === '/admin' ? '/admin' : '';
+      const response = await root.fetch(prefix + path, options);
       if (!response.ok) throw new Error('Issuer request unavailable');
       return response.json();
     },

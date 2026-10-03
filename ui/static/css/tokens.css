@@ -1,17 +1,20 @@
 :root {
-  --color-bg: #ffffff;
-  --color-bg-subtle: #f8f9fb;
+  /* Shared BitAgent palette for discovery, accounts and administration. */
+  --color-brand: #c4f56b;
+  --color-brand-ink: #10201b;
+  --color-bg: #f6f8fb;
+  --color-bg-subtle: #eef3f7;
   --color-bg-raised: #ffffff;
   --color-bg-overlay: rgba(0, 0, 0, 0.4);
-  --color-bg-inset: #f0f2f5;
-  --color-fg: #1a1d23;
-  --color-fg-muted: #5c6370;
-  --color-fg-subtle: #8b929e;
-  --color-border: #dde1e8;
-  --color-border-subtle: #ebedf0;
-  --color-accent: #4f6ef7;
-  --color-accent-hover: #3b5de5;
-  --color-accent-subtle: rgba(79, 110, 247, 0.08);
+  --color-bg-inset: #e6edf3;
+  --color-fg: #122334;
+  --color-fg-muted: #4b6175;
+  --color-fg-subtle: #607386;
+  --color-border: #cbd8e3;
+  --color-border-subtle: #dce5ec;
+  --color-accent: #087b87;
+  --color-accent-hover: #066671;
+  --color-accent-subtle: #e4f3f2;
   --color-accent-fg: #ffffff;
   --color-success: #2da77a;
   --color-success-subtle: rgba(45, 167, 122, 0.08);
@@ -87,27 +90,27 @@
   --duration-base: 200ms;
   --duration-slow: 350ms;
 
-  --sidebar-width: 240px;
+  --sidebar-width: 260px;
   --header-height: 56px;
 }
 
 [data-theme="dark"] {
-  --color-bg: #0f1117;
-  --color-bg-subtle: #161920;
-  --color-bg-raised: #1c1f28;
+  --color-bg: #09121d;
+  --color-bg-subtle: #0f1b28;
+  --color-bg-raised: #122130;
   --color-bg-overlay: rgba(0, 0, 0, 0.6);
-  --color-bg-inset: #0c0d12;
-  --color-fg: #e4e7ed;
-  --color-fg-muted: #8b929e;
-  --color-fg-subtle: #5c6370;
-  --color-border: #2a2e38;
-  --color-border-subtle: #22252e;
-  --color-accent: #6c8cff;
-  --color-accent-hover: #8ba3ff;
-  --color-accent-subtle: rgba(108, 140, 255, 0.1);
-  --color-accent-fg: #ffffff;
-  --color-success: #3cc68a;
-  --color-success-subtle: rgba(60, 198, 138, 0.1);
+  --color-bg-inset: #08121e;
+  --color-fg: #edf5fc;
+  --color-fg-muted: #b4c4d5;
+  --color-fg-subtle: #8ba2b8;
+  --color-border: #2d4256;
+  --color-border-subtle: #203244;
+  --color-accent: #63ddd0;
+  --color-accent-hover: #8bf2e4;
+  --color-accent-subtle: #15342f;
+  --color-accent-fg: #082321;
+  --color-success: #bbed80;
+  --color-success-subtle: #203624;
   --color-warning: #f0a05c;
   --color-warning-subtle: rgba(240, 160, 92, 0.1);
   --color-danger: #f07070;
