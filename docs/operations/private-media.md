@@ -113,10 +113,11 @@ Only listed files are hashed. Files outside Plex can use `--manifest` with the
 same bounded `source_id`, `title`, `kind` and root-relative `files` fields.
 This does not discover arbitrary directories or promote a prepared generation.
 
-Plex discovery includes track versions in music sections (type `artist`).
+Add `--include-music` to opt into Plex track versions in music sections
+(type `artist`); the default retains its video-only discovery scope.
 Each track's title includes available artist and album text; versions retain
 their own Plex media identity. It does not create artist or album packs.
-Use `--sections` to select explicit video or music sections. Music and generic
+Use `--sections` to select explicit video or opted-in music sections. Music and generic
 units use the same path, hash, checkpoint, independent rehash and private
 metainfo checks as video units. The importer accepts the additional kinds;
 older readers reject them rather than reinterpret them as TV. Existing video

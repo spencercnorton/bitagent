@@ -631,13 +631,13 @@ def test_plex_music_section_reads_tracks_only_and_preserves_page_headers(tmp_pat
     monkeypatch.setattr(publisher, "build_opener", lambda *handlers: Opener())
     if streamed:
         records = publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path,
-                                              [("/plex/music", "Music")], section_ids={"9"})
+                                              [("/plex/music", "Music")], section_ids={"9"}, include_music=True)
         report = publisher.publish_stream(records, tmp_path, ANNOUNCE, tmp_path / "prepared", PIECE)
         assert report["metadata_counts"] == report["emitted_counts"] == {"music": 1}
         assert report["completeness"] == "complete" and report["rejected"] == 0
         assert publisher.verify_offline(None, tmp_path, tmp_path / "prepared") == 1
     else:
-        result = publisher.fetch_plex_inventory("https://plex.example.org", "synthetic-token", tmp_path, [("/plex/music", "Music")])
+        result = publisher.fetch_plex_inventory("https://plex.example.org", "synthetic-token", tmp_path, [("/plex/music", "Music")], include_music=True)
         assert [row["kind"] for row in result["releases"]] == ["music"]
     assert [request.full_url for request in requests] == [
         "https://plex.example.org/library/sections",
@@ -669,7 +669,7 @@ def test_streamed_music_rejections_remain_incomplete_and_auditable(tmp_path, mon
     class Opener:
         def open(self, request, timeout): return Response()
     monkeypatch.setattr(publisher, "build_opener", lambda *handlers: Opener())
-    records = publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path, [("/plex/music", "Music")])
+    records = publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path, [("/plex/music", "Music")], include_music=True)
     report = publisher.publish_stream(records, tmp_path, ANNOUNCE, tmp_path / "prepared", PIECE)
     assert report["completeness"] == "incomplete" and report["rejected"] == 1
     assert report["metadata_counts"] == report["rejected_counts"] == {"music": 1}
@@ -690,3 +690,29 @@ def test_explicit_nonvideo_leaf_checkpoint_resume_and_independent_rehash(tmp_pat
     source.write_bytes(b"modified second")
     with pytest.raises(metainfo.TorrentError, match="no longer match"):
         publisher.verify_offline(data, tmp_path, output)
+
+
+def test_plex_music_is_explicit_opt_in_and_default_scope_is_unchanged(tmp_path, monkeypatch):
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, limit):
+            return json.dumps({"MediaContainer": {"Directory": [{"key": "9", "type": "artist"}]}}).encode()
+    class Opener:
+        def open(self, request, timeout):
+            assert request.full_url == "https://plex.example.org/library/sections"
+            return Response()
+    monkeypatch.setattr(publisher, "build_opener", lambda *handlers: Opener())
+    records = list(publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path))
+    assert records == [{"_inventory_event": True, "counts": {}, "scope": {
+        "source": "plex", "include_packs": True, "requested_sections": "all video sections"}}]
+    with pytest.raises(metainfo.TorrentError, match="requested Plex media section"):
+        list(publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path, section_ids={"9"}))
+
+
+@pytest.mark.parametrize("field,value", [("title", []), ("title", "  "), ("parentTitle", {}), ("grandparentTitle", 123)])
+def test_plex_track_title_context_rejects_nontext_and_empty_title(tmp_path, field, value):
+    track = plex_track("/plex/music/01.flac")
+    track[field] = value
+    with pytest.raises(metainfo.TorrentError, match="title context"):
+        publisher.inventory_from_plex([track], tmp_path, [("/plex/music", "Music")])
