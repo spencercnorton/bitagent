@@ -10,8 +10,9 @@ and machine API adapters. Any browser client runs as an independent service.
 
 ```mermaid
 flowchart LR
-  DHT[Public DHT] --> Fetch[BEP-9 metadata retrieval]
-  Fetch --> Filter[Pre-fetch and content checks]
+  DHT[Public DHT] --> Blocklist[Pre-fetch blocklist]
+  Blocklist --> Fetch[BEP-9 metadata retrieval]
+  Fetch --> Filter[Content checks]
   Filter --> Classifier[Evidence preempt and CEL classifier]
   Classifier --> Match[Title and metadata matching]
   Match --> PG[(PostgreSQL)]
