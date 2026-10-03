@@ -45,6 +45,12 @@ _MAX_TORRENT_BYTES = 4 * 1024 * 1024
 _MAX_CATALOG_RELEASES = 1000
 _MAX_COUNTER = 2**63 - 1
 _TEMPLATES = Jinja2Templates(directory=Path(__file__).parent / "templates")
+# Static responses are immutable; a returning member needs a new URL whenever
+# these asset bytes change, including the private kind labels and filters.
+_TEMPLATES.env.globals["asset_version"] = hashlib.sha256(b"".join(
+    (Path(__file__).parent / "static" / name).read_bytes()
+    for name in ("css/tokens.css", "css/private-library.css", "js/private-library.js")
+)).hexdigest()[:12]
 _READINESS_TASK = None
 logger = logging.getLogger("bitagent-ui")
 
