@@ -2,6 +2,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const admin = document.body.dataset.admin === 'true';
+  const prefix = admin && document.body.dataset.operatorPath === '/admin' ? '/admin' : '';
   const pageSize = 25;
   let offset = 0, total = 0, generation = 0;
   const status = text => { $('status').textContent = text; };
@@ -13,7 +14,7 @@
     return `${value.toFixed(unit ? 1 : 0)} ${units[unit]}`;
   };
   async function api(path, options) {
-    const response = await fetch(path, {credentials: 'same-origin', ...options});
+    const response = await fetch(prefix + path, {credentials: 'same-origin', ...options});
     if (!response.ok) {
       let message = `Request failed (${response.status})`;
       try { message = (await response.json()).detail || message; } catch (_) { /* keep status */ }

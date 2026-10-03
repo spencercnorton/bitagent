@@ -1,6 +1,11 @@
 /* ── BitAgent Dashboard — app.js ─────────────────────────────────────── */
 
-const API = '';
+// The server emits only this fixed prefix for a configured same-origin proxy.
+// Never derive API routing from a caller-controlled URL or forwarded header.
+const API = typeof document !== 'undefined' && document.body?.dataset?.operatorPath === '/admin' ? '/admin' : '';
+function operatorPosterUrl(url) {
+  return typeof url === 'string' && url.startsWith('/api/poster-proxy?') ? API + url : url;
+}
 let currentTab = 'dashboard';
 let libOffset = 0, libLimit = 50, libTotal = 0, libView = 'grid';
 let libActiveType = 'movie';
@@ -1377,7 +1382,7 @@ async function openGroupDetail(key) {
       if (!posterId) return;
       try {
         const r = await fetch(`${API}/api/poster/${encodeURIComponent(posterId)}?source=${posterSource}&media_type=${mediaType}`);
-        if (r.ok) { const d = await r.json(); if (d.poster_url) _gd.posterUrl = d.poster_url; }
+        if (r.ok) { const d = await r.json(); if (d.poster_url) _gd.posterUrl = operatorPosterUrl(d.poster_url); }
       } catch (_) { /* keep placeholder */ }
     })(),
   ]);
@@ -1428,7 +1433,7 @@ async function hydrateTmdbPosters(root) {
               resolve();
             };
             img.onerror = () => resolve(); // placeholder stays in place
-            img.src = data.poster_url;
+            img.src = operatorPosterUrl(data.poster_url);
           });
         }
       }
@@ -3165,7 +3170,7 @@ async function runHealthChecks() {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
     try {
-      const r = await fetch(c.url, { signal: controller.signal, redirect: 'error' });
+      const r = await fetch(API + c.url, { signal: controller.signal, redirect: 'error' });
       const ms = (performance.now() - t0).toFixed(0);
       return { ...c, ok: r.ok, status: r.status, ms };
     } catch (e) {

@@ -77,6 +77,17 @@ HTTPS public origin, without a port, trailing slash, query or fragment, and its
 host must be in `PUBLIC_LIBRARY_HOSTS`. Only that exact public Host serves the
 registration and invitation endpoints; aliases and operator hosts do not.
 
+For a deployment with one public origin, the invitation bootstrap can use the
+canonical library HTTPS URL while the trusted proxy forwards the machine-only
+location with a private operator Host. Set `INVITATION_BRIDGE_INGRESS_HOST` to
+that exact hostname in `OPERATOR_HOSTS`. Keep the public and operator host lists
+disjoint. The signed request and response still bind the canonical external
+URL; the private transport Host grants no identity or membership. The proxy
+must restrict the exact machine location to the enrollment service, overwrite
+its transport proof and Host, and remove browser identity headers. Public
+library requests to the bootstrap route remain unavailable. Changing the
+ingress hostname requires a restart because it is sealed with the bridge key.
+
 This mode uses the existing membership and invitation ledgers. It neither
 creates an initial issuer nor changes account IDs, public keys, usage or
 preferences. An invitation still requires an active issuer; owner allowance
@@ -129,7 +140,8 @@ and the feature defaults to disabled:
 | Setting | Behavior |
 |---|---|
 | `PRIVATE_INVITATION_BRIDGE_ENABLED` | Requires authenticated private invitations and the verified proxy. |
-| `INVITATION_BRIDGE_URL` | Exact canonical HTTPS operator-origin `/api/invitations/bootstrap`, without port, query, fragment or credentials. |
+| `INVITATION_BRIDGE_URL` | Exact canonical HTTPS `/api/invitations/bootstrap`, without port, query, fragment or credentials. Its host must be an operator host, or a public library host when an explicit private ingress Host is configured. |
+| `INVITATION_BRIDGE_INGRESS_HOST` | Optional exact operator hostname used by the trusted machine proxy. Empty preserves the bridge URL's operator Host. Startup-only; does not enable public access or bypass the purpose signature. |
 | `INVITATION_BRIDGE_SECRET_FILE` | Distinct 32–4096-byte regular POSIX file, no symlinks/hard links or group/other permissions; exact file bytes are the HMAC key. |
 | `INVITATION_BRIDGE_SUBJECT_FORMAT` | Startup-only `legacy-negative` (default) or `principal`. Both require an exact positive integer principal; the SSO service must use the same format. |
 | `INVITATION_SIGN_IN_URL` | Fixed canonical HTTPS SSO `/invitations/start` form target; only the invitation landing page permits that origin in `form-action`. |

@@ -49,8 +49,49 @@ def _validated_url(raw: str, hosts: str, setting_name: str, host_setting: str) -
     return raw
 
 
+def configured_operator_url() -> str:
+    """Validate the console destination without changing either host gate.
+
+    A trusted reverse proxy can expose /admin on the library's HTTPS origin,
+    strip that prefix and send requests with a distinct operator Host. Only
+    this exact reserved path is permitted on the public host allowlist.
+    """
+    url = _validated_url(
+        settings.operator_ui_url,
+        f"{settings.operator_hosts},{settings.public_library_hosts}",
+        "OPERATOR_UI_URL", "OPERATOR_HOSTS or PUBLIC_LIBRARY_HOSTS",
+    )
+    if url:
+        parts = urlsplit(url)
+        host = _normalise_hostname(parts.netloc)
+        if host in _configured_hosts(settings.public_library_hosts, "PUBLIC_LIBRARY_HOSTS"):
+            if parts.scheme != "https" or parts.path not in {"/admin", "/admin/"}:
+                raise RuntimeError("OPERATOR_UI_URL on PUBLIC_LIBRARY_HOSTS must use HTTPS and the exact /admin path")
+            ingress = settings.operator_ingress_host
+            if (not ingress or _normalise_hostname(ingress) != ingress
+                    or ingress not in _configured_hosts(settings.operator_hosts, "OPERATOR_HOSTS")):
+                raise RuntimeError("Canonical OPERATOR_UI_URL requires an exact OPERATOR_INGRESS_HOST in OPERATOR_HOSTS")
+    return url
+
+
+def operator_path() -> str:
+    """Fixed browser prefix for an explicitly configured same-origin proxy."""
+    url = configured_operator_url()
+    if url and _normalise_hostname(urlsplit(url).netloc) in _configured_hosts(
+        settings.public_library_hosts, "PUBLIC_LIBRARY_HOSTS",
+    ):
+        return "/admin"
+    return ""
+
+
+def operator_ingress_host() -> str:
+    """Exact transport Host for narrow owner mutations on the console."""
+    url = configured_operator_url()
+    return settings.operator_ingress_host if operator_path() else urlsplit(url).netloc
+
+
 def validate_navigation_settings() -> None:
-    _validated_url(settings.operator_ui_url, settings.operator_hosts, "OPERATOR_UI_URL", "OPERATOR_HOSTS")
+    configured_operator_url()
     _validated_url(settings.library_ui_url, settings.public_library_hosts, "LIBRARY_UI_URL", "PUBLIC_LIBRARY_HOSTS")
 
 
@@ -101,11 +142,11 @@ def operator_url(request: Request, identity: dict) -> str:
         return ""
     scope = _host_scope(request)
     if scope == "operator":
-        return "/"
+        return operator_path() + "/"
     if scope != "public":
         return ""
     return (
-        _validated_url(settings.operator_ui_url, settings.operator_hosts, "OPERATOR_UI_URL", "OPERATOR_HOSTS")
+        configured_operator_url()
         or _fallback_url(request, settings.operator_hosts)
     )
 

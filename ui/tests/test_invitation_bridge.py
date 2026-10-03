@@ -34,6 +34,7 @@ def bridge_config(invitation_config, monkeypatch, tmp_path):
     for field, value in {
         "private_invitation_bridge_enabled": True,
         "invitation_bridge_url": ORIGIN + bridge.PATH,
+        "invitation_bridge_ingress_host": "",
         "invitation_bridge_secret_file": str(key),
         "invitation_sign_in_url": "https://sso.example.org/invitations/start",
     }.items():
@@ -308,6 +309,57 @@ def test_landing_only_form_origin_and_feature_off(client, monkeypatch):
     monkeypatch.setattr(config.settings, "private_invitation_bridge_enabled", False)
     landing = client.get("/invite", headers={"Host": "library.example.org"})
     assert "sso.example.org" not in landing.headers["Content-Security-Policy"]
+
+
+def test_public_signed_origin_with_private_ingress_preserves_enrollment_and_response(client, monkeypatch):
+    import sys
+    public_origin = "https://library.example.org"
+    monkeypatch.setattr(config.settings, "invitation_bridge_url", public_origin + bridge.PATH)
+    monkeypatch.setattr(config.settings, "invitation_bridge_ingress_host", "console.example.org")
+    monkeypatch.setattr(sys.modules[__name__], "ORIGIN", public_origin)
+    bridge.validate_settings()
+    begin = start_body(mint(client).json()["token"])
+    started = rpc(client, begin)
+    assert started.status_code == 200
+    bound = redemption(begin, started.json()["enrollmentId"], provider="bitagent-local")
+    assert rpc(client, bound).json()["accountId"] == "-12345"
+    assert rpc(client, {**bound, "operation": "status"}).json()["approved"] is True
+    # The canonical browser Host never opens the machine bridge, including
+    # when an otherwise valid purpose signature and proxy proof are supplied.
+    raw, h = signed(begin, Host="library.example.org")
+    assert client.post(bridge.PATH, headers=h, content=raw).status_code == 404
+    raw, h = signed(begin, Host="console-alt.example.org")
+    assert client.post(bridge.PATH, headers=h, content=raw).status_code == 404
+    raw, h = signed(begin, Origin=public_origin)
+    assert client.post(bridge.PATH, headers=h, content=raw).status_code == 401
+    monkeypatch.setattr(sys.modules[__name__], "ORIGIN", "https://console.example.org")
+    assert rpc(client, begin).status_code == 401
+
+
+@pytest.mark.parametrize("host", [
+    "library.example.org", "unknown.example.org", "CONSOLE.example.org",
+    "console.example.org:443", "console.example.org.", "*.example.org",
+    " console.example.org", "console.example.org/path",
+])
+def test_bridge_ingress_must_be_an_exact_operator_hostname(client, monkeypatch, host):
+    monkeypatch.setattr(config.settings, "invitation_bridge_ingress_host", host)
+    with pytest.raises(RuntimeError, match="exact operator ingress hostname"):
+        bridge.validate_settings()
+    assert bridge._KEY is None and bridge._CONFIG is None
+
+
+def test_bridge_public_origin_requires_allowlist_and_ingress_is_startup_sealed(client, monkeypatch):
+    monkeypatch.setattr(config.settings, "invitation_bridge_ingress_host", "console.example.org")
+    monkeypatch.setattr(config.settings, "invitation_bridge_url", "https://unknown.example.org" + bridge.PATH)
+    with pytest.raises(RuntimeError, match="canonical HTTPS endpoint"):
+        bridge.validate_settings()
+    monkeypatch.setattr(config.settings, "invitation_bridge_url", ORIGIN + bridge.PATH)
+    bridge.validate_settings()
+    monkeypatch.setattr(config.settings, "invitation_bridge_ingress_host", "console-alt.example.org")
+    assert rpc(client, start_body("bi_" + "a" * 43)).status_code == 503
+    assert bridge.sign_in_url() == ""
+    assert "invitation_bridge_ingress_host" in config.FROZEN_OVERRIDE_FIELDS
+    assert config.Settings(_env_file=None).invitation_bridge_ingress_host == ""
 
 
 def test_bridge_enrollment_cannot_be_bypassed_by_existing_human_identity(client):

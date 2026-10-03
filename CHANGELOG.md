@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Align administration with discovery's shared teal and navy palette, lime
+  product mark, typography, navigation and card treatments in both themes.
+- Support an HTTPS library-origin `/admin` proxy with an explicit, fixed
+  `OPERATOR_INGRESS_HOST`. Prefix operator API requests and navigation while
+  retaining disjoint host allowlists, verified operator roles and owner CSRF
+  checks. The proxy must strip `/admin` and set its fixed operator Host.
+- Add optional `INVITATION_BRIDGE_INGRESS_HOST` for canonical-origin machine
+  enrollment behind a fixed operator transport Host. The empty default keeps
+  legacy exact-host behavior; startup seals, proof and origin signatures remain
+  required, and the feature remains disabled by default.
+
 - Show a freshly generated invitation code alongside its link, with a
   separate copy action and a clear account-menu entry for code generation.
   Clear both secrets together when hidden, refreshed or leaving the page.

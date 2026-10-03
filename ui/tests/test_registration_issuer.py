@@ -111,6 +111,40 @@ def test_status_and_page_never_admit_but_explicit_self_action_preserves_every_ot
     assert minted.status_code == 201
 
 
+@pytest.mark.parametrize("suffix", ["/admin", "/admin/"])
+def test_canonical_admin_origin_keeps_exact_operator_transport_and_owner_csrf_gate(client, monkeypatch, suffix):
+    monkeypatch.setattr(config.settings, "operator_ui_url", "https://library.example.org" + suffix)
+    monkeypatch.setattr(config.settings, "operator_ingress_host", "console.example.org")
+    issuer.validate_settings()
+    h = owner_headers()
+    h["Origin"] = "https://library.example.org"
+    page = client.get(issuer.PAGE, headers=h)
+    assert page.status_code == 200
+    assert 'data-operator-path="/admin"' in page.text
+    assert 'href="/admin/"' in page.text
+    before = asyncio.run(snapshot())
+    # A browser/public Host and alternate operator Hosts cannot impersonate the
+    # fixed ingress, even with matching forwarded-host and owner claims.
+    for host in ["library.example.org", "console-alt.example.org", "console.example.org:443"]:
+        denied = {**h, "Host": host, "X-Forwarded-Host": "library.example.org"}
+        assert client.put(issuer.PATH, headers=denied, json={"expectedAccountId": OWNER}).status_code == 404
+    for origin in [ORIGIN, "https://library.example.org/admin", "https://foreign.example.org"]:
+        assert client.put(issuer.PATH, headers={**h, "Origin": origin}, json={"expectedAccountId": OWNER}).status_code == 403
+    assert client.put(issuer.PATH, headers={**h, "X-Auth-Priv": "VIEWER"}, json={"expectedAccountId": OWNER}).status_code == 403
+    assert asyncio.run(snapshot()) == before
+    assert client.put(issuer.PATH, headers=h, json={"expectedAccountId": OWNER}).status_code == 200
+    after = asyncio.run(snapshot())
+    assert {name for name in before if before[name] != after[name]} == {"private_members"}
+
+
+@pytest.mark.parametrize("ingress", ["", "library.example.org", "console.example.org:443", "CONSOLE.example.org", "unknown.example.org"])
+def test_canonical_admin_issuer_requires_explicit_exact_operator_ingress(ingress, monkeypatch):
+    monkeypatch.setattr(config.settings, "operator_ui_url", "https://library.example.org/admin")
+    monkeypatch.setattr(config.settings, "operator_ingress_host", ingress)
+    with pytest.raises(RuntimeError):
+        issuer.validate_settings()
+
+
 async def _key_rows():
     db = await database.get_db()
     return [dict(row) for row in await db.execute_fetchall("SELECT * FROM user_api_keys WHERE user_id=?", (OWNER,))]
@@ -248,6 +282,28 @@ def test_queued_admission_rechecks_boundary_before_its_only_write(monkeypatch):
             monkeypatch.setattr(config.settings, "site_registration_issuer_admission_enabled", False)
             private_indexer._WRITE_LOCK.release()
             assert (await pending).status_code == 404
+        db = await database.get_db()
+        assert not await db.execute_fetchall("SELECT * FROM private_members")
+    asyncio.run(run())
+
+
+def test_queued_canonical_admission_rechecks_current_browser_origin_before_write(monkeypatch):
+    import private_indexer
+    monkeypatch.setattr(config.settings, "operator_ui_url", "https://library.example.org/admin")
+    monkeypatch.setattr(config.settings, "operator_ingress_host", "console.example.org")
+
+    async def run():
+        await private_indexer._WRITE_LOCK.acquire()
+        transport = httpx.ASGITransport(app=_with_transport_peer(app_module.app, "127.0.0.1"))
+        async with httpx.AsyncClient(transport=transport, base_url=ORIGIN) as client:
+            h = {**owner_headers(), "Origin": "https://library.example.org"}
+            pending = asyncio.create_task(client.put(issuer.PATH, headers=h, json={"expectedAccountId": OWNER}))
+            await asyncio.sleep(.02)
+            # The transport Host remains valid, but the original browser origin
+            # no longer names the configured console when the writer resumes.
+            monkeypatch.setattr(config.settings, "operator_ui_url", ORIGIN)
+            private_indexer._WRITE_LOCK.release()
+            assert (await pending).status_code == 403
         db = await database.get_db()
         assert not await db.execute_fetchall("SELECT * FROM private_members")
     asyncio.run(run())

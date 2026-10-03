@@ -118,7 +118,8 @@ Settings are environment variables named after the fields in [`config.py`](confi
 | `BITAGENT_TORZNAB_URL` | derived | Torznab base for the `/torznab/*` proxy; defaults to the GraphQL URL with `/graphql` → `/torznab` |
 | `TORZNAB_API_KEY` | empty | The crawler's Torznab key (same name as the core's — set once). Users get personal keys, stored hashed, validated by this app's proxy |
 | `OPERATOR_HOSTS` / `PUBLIC_LIBRARY_HOSTS` | `localhost,127.0.0.1` / `library.localhost` | Explicit, disjoint, non-empty host allowlists. Any other `Host` is answered `421` before routing |
-| `OPERATOR_UI_URL` / `LIBRARY_UI_URL` | empty | Optional canonical navigation URLs for Admin / Back to library. Absolute HTTP(S) URLs whose hosts belong to the corresponding allowlist; credentials, queries and fragments are rejected. Prefer explicit URLs when public ports or paths differ |
+| `OPERATOR_UI_URL` / `LIBRARY_UI_URL` | empty | Optional canonical navigation URLs for Admin / Back to library. Absolute HTTP(S) URLs whose hosts belong to the corresponding allowlist; credentials, queries and fragments are rejected. An HTTPS public-library URL with the exact `/admin` path requires `OPERATOR_INGRESS_HOST` and enables a fixed browser prefix |
+| `OPERATOR_INGRESS_HOST` | empty | For the canonical `/admin` proxy, an exact hostname in `OPERATOR_HOSTS`. The trusted proxy must strip `/admin`, overwrite the upstream Host with this value and enforce operator authentication. Forwarded hosts never choose a surface |
 | `REQUIRE_AUTH` | `true` | `false` is the development bypass |
 | `DASHBOARD_API_KEY` | empty | An explicit operator credential for scripts: `?apikey=`, `X-Api-Key` or `Authorization: Bearer` |
 | `TRUST_FORWARDED_USER` / `TRUST_NPM_HEADERS` | `false` | Accept an identity header from a reverse proxy (`X-Forwarded-User`/`Remote-User`, or `X-Auth-User-Id`) |

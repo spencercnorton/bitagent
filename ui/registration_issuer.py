@@ -12,6 +12,7 @@ from config import settings
 from database import get_db
 from deps import _configured_hosts, _host_scope, _normalise_hostname, require_operator
 from memberships import write_membership
+from navigation import configured_operator_url, operator_ingress_host, operator_path
 from private_indexer import private_write
 
 router = APIRouter()
@@ -23,20 +24,21 @@ IDENTITY_HEADERS = ("x-auth-user-id", "x-auth-user", "x-forwarded-user", "remote
 
 
 def operator_origin():
-    raw = settings.operator_ui_url
+    raw = configured_operator_url()
     try:
         parts = urlsplit(raw)
         host = _normalise_hostname(parts.netloc)
         valid = (
             isinstance(raw, str) and host is not None and parts.scheme == "https"
-            and raw == f"https://{host}" and parts.netloc == host
-            and host in _configured_hosts(settings.operator_hosts, "OPERATOR_HOSTS")
+            and parts.netloc == host
+            and ((operator_path() == "/admin" and raw in {f"https://{host}/admin", f"https://{host}/admin/"})
+                 or (raw == f"https://{host}" and host in _configured_hosts(settings.operator_hosts, "OPERATOR_HOSTS")))
         )
     except (TypeError, ValueError):
         valid = False
     if not valid:
         raise RuntimeError("Issuer admission requires an exact HTTPS OPERATOR_UI_URL origin")
-    return raw
+    return f"https://{host}"
 
 
 def validate_settings():
@@ -67,7 +69,7 @@ def require_owner(request: Request):
         raise HTTPException(404, "Not found")
     if scope != "operator":
         raise HTTPException(421, "Misdirected request")
-    if (request.headers.getlist("host") != [urlsplit(operator_origin()).netloc]
+    if (request.headers.getlist("host") != [operator_ingress_host()]
             or request.scope.get("query_string")):
         raise HTTPException(404, "Not found")
     # The ordinary proxy resolver accepts aliases for compatibility. This narrow
@@ -151,6 +153,7 @@ async def admit_issuer(request: Request, identity=Depends(require_owner)):
             # Recheck the immutable request identity and current feature boundary
             # after waiting for the writer. Never manufacture a target or actor.
             current = require_owner(request)
+            check_mutation(request)
             if current["id"] != identity["id"]:
                 raise HTTPException(403, "Account changed; reload before continuing")
             rows = await db.execute_fetchall("SELECT active FROM private_members WHERE user_id=?", (current["id"],))

@@ -13,27 +13,34 @@
   <!-- use-credentials: the SSO gate sits in front of every path, and manifest
        fetches are credential-less by default — without this the fetch bounces
        to the login redirect and the browser never offers install. -->
-  <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">
+  <link rel="manifest" href="{{ operator_path }}/manifest.webmanifest" crossorigin="use-credentials">
+  <script>
+    try {
+      var saved = localStorage.getItem('bitagent-theme');
+      var dark = saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    } catch (_) {}
+  </script>
   <link rel="stylesheet" href="/static/css/tokens.css?v={{ asset_version }}">
   <link rel="stylesheet" href="/static/css/app.css?v={{ asset_version }}">
   <link rel="icon" href="/static/img/favicon.ico" sizes="any">
   <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
 </head>
-<body>
+<body data-operator-path="{{ operator_path }}">
 <a class="skip-link" href="#mainContent" onclick="event.preventDefault();document.getElementById('mainContent').focus()">Skip to content</a>
 <div class="app-layout">
   <!-- ── Sidebar ──────────────────────────────────────────────────── -->
   <aside class="sidebar" id="sidebar" aria-label="Operator navigation">
     <div class="sidebar-brand">
-      <svg viewBox="0 0 32 32" fill="none"><rect width="32" height="32" rx="8" fill="var(--color-accent)"/><path d="M8 11h6v2H8zm0 4h10v2H8zm0 4h8v2H8zm18-7l-5 5-3-3 1.4-1.4L21 14.2l3.6-3.6L26 12z" fill="#fff"/></svg>
+      <svg viewBox="0 0 40 40" fill="none" aria-hidden="true"><rect x="1" y="1" width="38" height="38" rx="12" fill="var(--color-brand)"/><path d="M12 10h9a7 7 0 015.5 11.3A6 6 0 0123 32H12V10zm6 5v5h3a2.5 2.5 0 000-5h-3zm0 10v2h5a1 1 0 000-2h-5z" fill="var(--color-brand-ink)"/></svg>
       <div>
         <h1>BitAgent</h1>
-        <small>Operator console · v{{ app_version }}</small>
+        <small>ADMINISTRATION</small>
       </div>
     </div>
     <nav class="sidebar-nav" aria-label="Administration">
-      {% if private_indexer_enabled %}<a class="nav-item" href="/private-admin">Private library members</a>{% endif %}
-      {% if issuer_admission_available %}<a class="nav-item" href="/registration-admin">Invitation issuer</a>{% endif %}
+      {% if private_indexer_enabled %}<a class="nav-item" href="{{ operator_path }}/private-admin">Private library members</a>{% endif %}
+      {% if issuer_admission_available %}<a class="nav-item" href="{{ operator_path }}/registration-admin">Invitation issuer</a>{% endif %}
       <div class="sidebar-nav-group">
         <div class="sidebar-nav-label">Overview</div>
         <a class="nav-item active" data-tab="dashboard" href="#dashboard" onclick="event.preventDefault();switchTab('dashboard')">
@@ -83,6 +90,7 @@
     <a class="nav-item sidebar-library-link" id="operatorLibraryLink" href="{{ library_url }}" referrerpolicy="no-referrer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>Back to library</a>
     <button class="btn btn-ghost sidebar-close" onclick="closeSidebar()" aria-label="Close navigation">Close navigation <span aria-hidden="true">×</span></button>
     <div class="sidebar-footer">
+      <div class="sidebar-version">Operator console <span>v{{ app_version }}</span></div>
       <div class="theme-toggle">
         <span id="darkModeLabel">Dark mode</span>
         <div class="theme-toggle-switch" onclick="toggleTheme()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleTheme();}" role="switch" tabindex="0" aria-labelledby="darkModeLabel" aria-checked="false" id="themeToggleSwitch"></div>
@@ -111,6 +119,7 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         <div>
+          <p class="page-eyebrow">Administration</p>
           <h2 class="page-title" id="pageTitle" tabindex="-1">Dashboard</h2>
           <p class="page-subtitle" id="pageSubtitle">System overview and live metrics</p>
         </div>
@@ -1289,7 +1298,7 @@ Categories: 3000, 3010, 3020</div>
      exposes the verified privilege as `priv` on /api/me, and that check must
      be same-origin. -->
 <script src="{{ app_switcher_script_url }}"
-        data-current="bitagent" data-me="/api/me" defer></script>
+        data-current="bitagent" data-me="{{ operator_path }}/api/me" defer></script>
 {% endif %}
 </body>
 </html>
