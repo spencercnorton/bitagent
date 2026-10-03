@@ -16,6 +16,7 @@ from fastapi import HTTPException
 
 from config import settings
 import private_readiness as readiness
+from private_media import KINDS
 
 PAGE_LIMIT = 100
 PAGE_BYTES = 2 * 1024 * 1024
@@ -204,7 +205,7 @@ def _item(row, view):
             or not isinstance(item["source_id"], str) or not _SOURCE.fullmatch(item["source_id"])
             or not isinstance(item["info_hash"], str) or not re.fullmatch(r"[0-9a-f]{40}", item["info_hash"])
             or not isinstance(item["title"], str) or not item["title"].strip() or len(item["title"]) > 500
-            or item["kind"] not in {"movie", "episode", "season", "show"}
+            or item["kind"] not in KINDS
             or type(item["size"]) is not int or not 0 < item["size"] <= 2**63-1
             or any(type(item[k]) is not int or item[k] not in {0, 1} for k in ("ready", "withdrawn"))
             or (item["verified_at"] is not None and (type(item["verified_at"]) not in {int, float} or not math.isfinite(item["verified_at"])))):

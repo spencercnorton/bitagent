@@ -4,6 +4,7 @@
   const admin = document.body.dataset.admin === 'true';
   const prefix = admin && document.body.dataset.operatorPath === '/admin' ? '/admin' : '';
   const pageSize = 25;
+  const kindLabels = {movie: 'Movie', episode: 'Episode', season: 'Season', show: 'Show', music: 'Music', generic: 'Other'};
   let offset = 0, total = 0, generation = 0;
   const status = text => { $('status').textContent = text; };
   const bytes = n => {
@@ -64,7 +65,7 @@
         } catch (error) { status(error.message); } finally { copy.disabled = false; }
       });
       actions.append(copy);
-      return [item.title, item.kind, bytes(item.size), `${item.seeders} / ${item.leechers}`, actions];
+      return [item.title, kindLabels[item.kind] || item.kind, bytes(item.size), `${item.seeders} / ${item.leechers}`, actions];
     });
     table($('releases'), ['Release', 'Type', 'Size', 'Seeds / peers', 'Download'], rows);
     $('page-status').textContent = total ? `${offset + 1}–${offset + rows.length} of ${total}` : 'No available releases';

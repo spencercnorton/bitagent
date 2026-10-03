@@ -55,7 +55,7 @@ def test_legacy_schema_adds_deny_without_rewriting_rows(tmp_path):
     assert [row["private_access"] for row in rows] == [0, 0, 0]
 
 
-@pytest.mark.parametrize("function", ["caps", "search", "movie", "tvsearch", "get"])
+@pytest.mark.parametrize("function", ["caps", "search", "movie", "tvsearch", "music", "get"])
 def test_public_key_remap_does_not_grant_private_surfaces(client, monkeypatch, function):
     _, release_id = setup_release(client)
     secret = client.post("/api/account/api-key", headers=identity()).json()["apiKeySecret"]

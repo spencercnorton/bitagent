@@ -448,15 +448,15 @@ def test_private_searches_update_account_usage_only_for_successful_gets(client):
     assert client.get("/torznab/private/api", params={**params, "t": "get", "id": release_id}).status_code == 200
     assert client.head("/torznab/private/api", params={**params, "t": "search"}).status_code == 200
     assert client.get("/torznab/private/api", params={**params, "t": "search", "cat": "invalid"}).status_code == 400
-    assert client.get("/torznab/private/api", params={**params, "t": "music"}).status_code == 400
+    assert client.get("/torznab/private/api", params={**params, "t": "book"}).status_code == 400
     assert client.get("/torznab/private/api", params={"t": "search", "apikey": "invalid"}).status_code == 401
     assert count() == 0
-    for function in ("search", "movie", "tvsearch"):
+    for function in ("search", "movie", "tvsearch", "music"):
         assert client.get("/torznab/private/api", params={**params, "t": function}).status_code == 200
-    assert count() == 3  # Empty successful TV feeds are search requests too.
+    assert count() == 4  # Empty successful TV/audio feeds are search requests too.
     assert client.put("/api/private/members/member", json={"active": False}, headers=identity("owner", "OWNER")).status_code == 200
     assert client.get("/torznab/private/api", params={**params, "t": "search"}).status_code == 401
-    assert count() == 3
+    assert count() == 4
 
 
 def test_tracker_delta_accounting_baselines_and_self_only_metrics(client):

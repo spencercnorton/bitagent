@@ -593,3 +593,100 @@ def test_streamed_episodes_convert_only_their_own_series_metadata(tmp_path, monk
     assert len(emitted) == 3
     assert all(record["tvdb_id"] == 1000 for record in emitted)
     assert all(len(payloads) == 2 and payloads[0]["ratingKey"] == "500" for payloads in observed)
+
+
+def plex_track(path, rating_key="900", media_id=901):
+    return {"type": "track", "ratingKey": rating_key, "title": "Synthetic Track",
+            "grandparentTitle": "Synthetic Artist", "parentTitle": "Synthetic Album",
+            "Media": [{"id": media_id, "Part": [{"file": path}]}]}
+
+
+def test_plex_music_versions_keep_explicit_parts_and_no_video_identifiers(tmp_path):
+    track = plex_track("/plex/music/01.flac")
+    track["Guid"] = [{"id": "imdb://tt1234567"}, {"id": "tvdb://123"}]
+    track["Media"].append({"id": 902, "Part": [{"file": "/plex/music/01.mp3"}]})
+    inventory = publisher.inventory_from_plex([track], tmp_path, [("/plex/music", "Music")])
+    assert inventory == {"version": 1, "releases": [
+        {"source_id": "plex:900:901", "kind": "music", "title": "Synthetic Artist - Synthetic Album - Synthetic Track", "files": ["Music/01.flac"]},
+        {"source_id": "plex:900:902", "kind": "music", "title": "Synthetic Artist - Synthetic Album - Synthetic Track", "files": ["Music/01.mp3"]},
+    ]}
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_plex_music_section_reads_tracks_only_and_preserves_page_headers(tmp_path, monkeypatch, streamed):
+    write(tmp_path, "Music/01.flac", b"synthetic music")
+    responses = [
+        {"MediaContainer": {"Directory": [{"key": "9", "type": "artist"}]}},
+        {"MediaContainer": {"totalSize": 1, "Metadata": [plex_track("/plex/music/01.flac")]}},
+    ]
+    requests = []
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, limit): return json.dumps(responses.pop(0)).encode()
+    class Opener:
+        def open(self, request, timeout):
+            requests.append(request)
+            return Response()
+    monkeypatch.setattr(publisher, "build_opener", lambda *handlers: Opener())
+    if streamed:
+        records = publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path,
+                                              [("/plex/music", "Music")], section_ids={"9"})
+        report = publisher.publish_stream(records, tmp_path, ANNOUNCE, tmp_path / "prepared", PIECE)
+        assert report["metadata_counts"] == report["emitted_counts"] == {"music": 1}
+        assert report["completeness"] == "complete" and report["rejected"] == 0
+        assert publisher.verify_offline(None, tmp_path, tmp_path / "prepared") == 1
+    else:
+        result = publisher.fetch_plex_inventory("https://plex.example.org", "synthetic-token", tmp_path, [("/plex/music", "Music")])
+        assert [row["kind"] for row in result["releases"]] == ["music"]
+    assert [request.full_url for request in requests] == [
+        "https://plex.example.org/library/sections",
+        "https://plex.example.org/library/sections/9/all?type=10&includeGuids=1",
+    ]
+    assert requests[-1].get_header("X-plex-container-start") == "0"
+    assert requests[-1].get_header("X-plex-container-size") == "250"
+
+
+@pytest.mark.parametrize("problem", ["unmapped", "empty", "wrong-kind", "missing-id"])
+def test_streamed_music_rejections_remain_incomplete_and_auditable(tmp_path, monkeypatch, problem):
+    track = plex_track("/plex/music/01.flac")
+    if problem == "unmapped":
+        track["Media"][0]["Part"][0]["file"] = "/outside/01.flac"
+    elif problem == "empty":
+        track["Media"] = []
+    elif problem == "wrong-kind":
+        track["type"] = "album"
+    else:
+        del track["ratingKey"]
+    responses = [
+        {"MediaContainer": {"Directory": [{"key": "9", "type": "artist"}]}},
+        {"MediaContainer": {"totalSize": 1, "Metadata": [track]}},
+    ]
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, limit): return json.dumps(responses.pop(0)).encode()
+    class Opener:
+        def open(self, request, timeout): return Response()
+    monkeypatch.setattr(publisher, "build_opener", lambda *handlers: Opener())
+    records = publisher.iter_plex_releases("https://plex.example.org", "synthetic-token", tmp_path, [("/plex/music", "Music")])
+    report = publisher.publish_stream(records, tmp_path, ANNOUNCE, tmp_path / "prepared", PIECE)
+    assert report["completeness"] == "incomplete" and report["rejected"] == 1
+    assert report["metadata_counts"] == report["rejected_counts"] == {"music": 1}
+    assert report["release_count"] == 0
+
+
+@pytest.mark.parametrize("kind", ["music", "generic"])
+def test_explicit_nonvideo_leaf_checkpoint_resume_and_independent_rehash(tmp_path, kind):
+    write(tmp_path, "unit/01.bin", b"synthetic first")
+    source = write(tmp_path, "unit/02.bin", b"synthetic second")
+    data = inventory(["unit/01.bin", "unit/02.bin"], kind)
+    output = tmp_path / "prepared"
+    first = publisher.publish_offline(data, tmp_path, ANNOUNCE, output, PIECE)
+    assert first["emitted_counts"] == {kind: 1} and first["seed_verified"] is False
+    second = publisher.publish_offline(data, tmp_path, ANNOUNCE, output, PIECE, resume=True)
+    assert second["hashes_built"] == 0 and second["cache_reused"] == 1
+    assert publisher.verify_offline(data, tmp_path, output) == 1
+    source.write_bytes(b"modified second")
+    with pytest.raises(metainfo.TorrentError, match="no longer match"):
+        publisher.verify_offline(data, tmp_path, output)

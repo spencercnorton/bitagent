@@ -135,19 +135,23 @@ def _private_caps() -> bytes:
     searching = ET.SubElement(caps, "searching")
     ET.SubElement(searching, "search", available="yes", supportedParams="q")
     ET.SubElement(searching, "movie-search", available="yes", supportedParams="q,imdbid,tmdbid")
+    ET.SubElement(searching, "audio-search", available="yes", supportedParams="q")
     ET.SubElement(
         searching, "tv-search", available="yes",
         supportedParams="q,imdbid,tmdbid,tvdbid,season,ep",
     )
     categories = ET.SubElement(caps, "categories")
     ET.SubElement(categories, "category", id="2000", name="Movies")
+    ET.SubElement(categories, "category", id="3000", name="Audio")
     ET.SubElement(categories, "category", id="5000", name="TV")
+    ET.SubElement(categories, "category", id="8000", name="Other")
     return ET.tostring(caps, encoding="utf-8", xml_declaration=True)
 
 
 def _private_feed(result: dict, base_url: str, api_key: str) -> bytes:
     """Private releases use authenticated torrent URLs, never public magnets."""
     from urllib.parse import urlencode
+    from private_media import CATEGORY_BY_KIND
 
     namespace = "http://torznab.com/schemas/2015/feed"
     ET.register_namespace("torznab", namespace)
@@ -180,7 +184,7 @@ def _private_feed(result: dict, base_url: str, api_key: str) -> bytes:
             if value is not None:
                 ET.SubElement(item, f"{{{namespace}}}attr", name=name, value=str(value))
 
-        attr("category", 2000 if release["kind"] == "movie" else 5000)
+        attr("category", CATEGORY_BY_KIND[release["kind"]])
         attr("size", release["size"])
         # Unknown swarm counts stay absent; a download-capable release is not
         # evidence that someone is currently seeding it.
@@ -230,7 +234,7 @@ async def private_torznab(request: Request):
         except HTTPException as exc:
             code = 100 if exc.status_code in {401, 403} else 300 if exc.status_code == 404 else 203
             return _torznab_error(exc.status_code, code, str(exc.detail))
-    elif function in {"search", "movie", "tvsearch"}:
+    elif function in {"search", "movie", "tvsearch", "music"}:
         params["t"] = function
         try:
             result = await private_indexer.search_releases(params)
@@ -244,7 +248,7 @@ async def private_torznab(request: Request):
     else:
         return _torznab_error(400, 202, "Function not available")
     await touch_user_api_key(row["id"])
-    if request.method == "GET" and function in {"search", "movie", "tvsearch"}:
+    if request.method == "GET" and function in {"search", "movie", "tvsearch", "music"}:
         try:
             await record_api_search(row["user_id"])
         except Exception as exc:
