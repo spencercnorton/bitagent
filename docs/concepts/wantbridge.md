@@ -8,9 +8,9 @@ It is not magic. Wantbridge cannot create torrents that don't exist on the DHT; 
 
 ## How wants enter the system
 
-One path feeds the wantlist: the `*arr` applications the core polls (`internal/wantbridge`). There is no operator-defined want and no dashboard form — the [Wants tab](../ui-guide.md#wants-tab) only observes what the bridge is tracking.
+One path feeds the wantlist: the `*arr` applications the core polls (`internal/wantbridge`). The backend polls those sources directly.
 
-**Derived from `*arr` wantlists.** The core polls each configured Sonarr/Radarr/Lidarr for its missing/wanted list and records every entry as a want — show + season + episode, movie, or album. Operators get wantbridge behaviour without ever touching the Wants tab.
+**Derived from `*arr` wantlists.** The core polls each configured Sonarr/Radarr/Lidarr for its missing/wanted list and records every entry as a want — show + season + episode, movie, or album. Configured sources supply the wants without an interactive form.
 
 A want lives as long as the `*arr` still reports the title as missing; each poll replaces the previous snapshot.
 
@@ -22,7 +22,7 @@ Three levers, all in the same direction.
 
 **BEP-9 fetch queue priority.** When a candidate infohash passes the pre-fetch filters (CSAM blocklist, classifier early-rejects), it goes into the BEP-9 fetch queue. Wantbridge reorders the queue so candidates *likely* to match an active want jump to the front. The likelihood signal is conservative — title regex match against the want, mostly — so it's a soft preference, not a hard skip of non-matches.
 
-**Classifier priority lane.** Once metadata is fetched, the classifier processes a high-priority lane for wantbridge-matched torrents. They reach the Library and the Torznab feed milliseconds-to-seconds faster than background traffic.
+**Classifier priority lane.** Once metadata is fetched, the classifier processes a high-priority lane for wantbridge-matched torrents. They reach the catalog and the Torznab feed milliseconds-to-seconds faster than background traffic.
 
 The net effect: when Sonarr asks for an episode that BitAgent's DHT crawler is *about* to discover, wantbridge can collapse "discovery → indexed → searchable" from minutes to seconds.
 
@@ -50,23 +50,18 @@ This is the focus area for the next minor release. The infrastructure works (wan
 
 ## Inspecting wantbridge
 
-The dashboard exposes wantbridge state in three places.
-
-- **Wants tab** — observation of the wants the bridge is tracking. See [ui-guide.md → Wants tab](../ui-guide.md#wants-tab).
-- **Dashboard tab** — `wantbridge_yield_pct` is a top-line metric.
-- **Library tab** — filter to "wantbridge-matched" to see what the system pulled in because of an active want.
-
-Programmatic inspection via GraphQL is on the roadmap; for now, the dashboard is the canonical surface.
+Use the `bitagent_wantbridge_*` Prometheus families to inspect observed wants,
+poll health and matches. Enabling observations does not prove active crawl
+prioritization; retain the implementation/status distinction above.
 
 ## Honest expectations
 
 If you're new to BitAgent and wondering whether to tune wantbridge: don't, yet. Get the basic crawler running, let it index for a few days, and see whether your `*arr` searches return results. If they do, wantbridge is doing its job invisibly. If they don't, the gap is more likely a DHT or classifier issue than a wantbridge tuning question — go to [troubleshooting.md](../troubleshooting.md) first.
 
-If you're an operator chasing a specific high-value title that BitAgent doesn't seem to find, *that* is a wantbridge tuning candidate: add an operator-defined want with priority 100 and see whether the crawl picks it up over the next 24 hours.
+If you're an operator chasing a specific high-value title that BitAgent doesn't seem to find, *that* is a wantbridge tuning candidate: inspect the polled source and match metrics before tuning its configuration.
 
 ## See also
 
-- [Wants tab guide](../ui-guide.md#wants-tab)
 - [Concepts / Classification](classification.md) — how matched torrents flow through the priority lane
 - [Project / Improvements](../project/improvements.md)
 - [Troubleshooting](../troubleshooting.md)

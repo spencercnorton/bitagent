@@ -97,7 +97,7 @@ func provideNodeIdentity(p identityParams) identityResult {
 	log := p.Logger.Named("externalip.watcher")
 
 	// ctx is created up front so an OnStop can precede first Get()
-	// without leaking a watcher goroutine (see internal/ui/worker.go).
+	// without leaking a watcher goroutine.
 	ctx, cancel := context.WithCancel(context.Background())
 
 	onChange := func(old, current netip.Addr) {

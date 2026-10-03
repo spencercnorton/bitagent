@@ -59,7 +59,7 @@ The most common cause is using `localhost` from inside Sonarr's container, where
 Check that the API Key field matches `TORZNAB_API_KEY` exactly. Whitespace and quotes are easy to fat-finger when copying from a `.env` file.
 
 **Search returns 0 results**
-Confirm that BitAgent has discovered torrents. In the BitAgent dashboard, the Library tab should show recent entries. If empty, check the DHT bootstrap configuration in your deployment.
+Confirm crawl metrics and inspect recent entries with the [GraphQL API](../reference/graphql-api.md). If empty, check DHT routing and worker configuration.
 
 `[screenshot: sonarr-test-failed-401]`
 

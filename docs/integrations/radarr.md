@@ -46,7 +46,7 @@ A title-only query falls back when Radarr doesn't have a TMDB ID for the movie y
 ## Troubleshooting
 
 **Searches return 0 results**
-Verify in the BitAgent dashboard that the Library tab shows recent classifications tagged as `movie`. Empty Library means the DHT crawler hasn't found relevant content yet (typical first-day behaviour) or the classifier is mis-routing into `tv_show` (classifier rules need tuning — see the classifier documentation).
+Use the [GraphQL API](../reference/graphql-api.md) to inspect recent movie classifications. An empty catalog can reflect DHT warmup; unexpected content types need classifier inspection.
 
 **Custom Formats not matching**
 BitAgent emits source/resolution/HDR tags via Torznab `<info>` attributes. If Radarr's Custom Format engine isn't picking them up, check that your CFs match BitAgent's exact tag names (case-sensitive). The reference table is in the Torznab API reference.

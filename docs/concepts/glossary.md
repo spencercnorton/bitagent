@@ -1,6 +1,6 @@
 # Glossary
 
-Terms used throughout BitAgent's documentation, code, and dashboard. Alphabetical.
+Terms used throughout BitAgent's documentation and code. Alphabetical.
 
 ## A
 
@@ -23,9 +23,6 @@ BitTorrent Enhancement Proposal 33: DHT scrapes. Returns a bloom-filter approxim
 
 ### BEP-51
 BitTorrent Enhancement Proposal 51: DHT infohash indexing — the `sample_infohashes` RPC. The fast-path mechanism BitAgent uses to discover new infohashes from neighbouring DHT nodes.
-
-### ui worker
-The Python FastAPI dashboard under `ui/`, run inside the BitAgent image as the core worker `ui` (off by default; `UI_ENABLED=true`). Read-only relative to the core — never mutates indexing state directly; all writes go through the GraphQL API.
 
 ## C
 
@@ -82,11 +79,6 @@ Kademlia routing table. The structured peer cache the DHT crawler maintains in m
 ### LLM rerank stage
 Optional final classifier stage that calls an external LLM for ambiguous torrents that CEL couldn't classify. Two-layer opt-in (`Enabled` + `EnableLive`), aggressively gated, sha256 LRU cached. See [concepts/classification.md#stage-3-llm-rerank-stage](classification.md#stage-3-llm-rerank-stage).
 
-## O
-
-### operator-internal
-Refers to the maintainer's Portainer / Gluetun-specific deployment (not shipped). NOT the public quickstart. Operator-internal env vars (`SONARR_URL`, `EVIDENCE_WEBHOOK_SECRET`, `VPN_*`, etc.) are not present in `examples/docker-compose.public.yml`.
-
 ## P
 
 ### peer
@@ -125,7 +117,7 @@ The [Newznab-derived API spec](https://torznab.github.io/spec-1.3-draft/) used b
 BitAgent's active-acquisition layer. Biases the crawler toward indexing infohashes that match active operator-defined or `*arr`-derived wants. See [concepts/wantbridge.md](wantbridge.md).
 
 ### wants
-The titles the polled `*arr` applications are still missing; observed in the dashboard's Wants tab. See [ui-guide.md → Wants tab](../ui-guide.md#wants-tab).
+The titles that configured `*arr` applications still report as missing. See [wantbridge](wantbridge.md).
 
 ## See also
 

@@ -8,7 +8,7 @@
   <a href="https://buy.stripe.com/8x26oH2U44f65TRe574wM04"><img alt="Donate" src="https://img.shields.io/badge/donate-Stripe-635bff.svg?logo=stripe&logoColor=white"></a>
 </p>
 
-**BitAgent is a self-hosted BitTorrent DHT crawler and indexer built for the \*arr stack.** It crawls the DHT into a Postgres corpus, classifies every torrent it finds, and serves the result to Sonarr, Radarr, Lidarr, Readarr and Prowlarr over Torznab. What makes it different is the loop: it watches what your \*arrs actually grab and import, and feeds that ground truth back into classification, ranking and retention. The core is a hardened Go service; the operator dashboard and the LLM stages ship in the same image and stay off until you turn them on.
+**BitAgent is a self-hosted BitTorrent DHT crawler and indexer built for the \*arr stack.** It crawls the DHT into a Postgres corpus, classifies every torrent it finds, and serves the result to Sonarr, Radarr, Lidarr, Readarr and Prowlarr over Torznab. What makes it different is the loop: it watches what your \*arrs actually grab and import, and feeds that ground truth back into classification, ranking and retention. The public distribution is a standalone Go backend: crawling, scrubbing, matching, cleanup and machine APIs. Optional LLM stages remain off until explicitly configured.
 
 <p align="center">
   <img src="docs/assets/diagrams/pipeline.svg" alt="How BitAgent works: the DHT is crawled into a Postgres corpus, each torrent goes down a classification ladder (your own evidence, CEL rules, an optional LLM stage) and is served over Torznab, GraphQL and Prometheus; downloads that worked flow back in as evidence." width="100%">
@@ -18,20 +18,17 @@ BitAgent started in April 2026 as a fork of [`bitmagnet-io/bitmagnet`](https://g
 
 ## See it run
 
-<p align="center">
-  <img src="docs/assets/recordings/quickstart.png" alt="A terminal session: docker compose brings up bitagent and Postgres, the crawler's persisted-torrent counter climbs within a minute, a GraphQL query returns the corpus broken down by content type, and the Torznab caps document announces the indexer." width="100%">
-</p>
 
-Two containers, no accounts, no API keys. From a clone of this repository:
+
+Two containers: the backend and PostgreSQL. From a clone of this repository:
 
 ```sh
 cp examples/.env.example examples/.env.public     # set POSTGRES_PASSWORD, nothing else is required
 docker compose -f examples/docker-compose.public.yml --env-file examples/.env.public up -d --build
 curl -s localhost:3333/metrics | grep dht_crawler_persisted   # climbing within a minute
-open http://localhost:8080                                     # the operator console
 ```
 
-Then add `http://<host>:3333/torznab/` as a Torznab indexer in Prowlarr (or in each \*arr directly — [per-app guides](docs/integrations/sonarr.md)), and point the \*arr's webhook at `/evidence/arr/<instance>` so the evidence loop closes ([`docs/evidence.md`](docs/evidence.md)). A GraphQL playground is served at `/graphql`, Prometheus metrics at `/metrics`, and the quickstart turns the dashboard on at `http://localhost:8080` (loopback only, no login). [`examples/README.md`](examples/README.md) covers the stack in detail; the recording above is that stack on a laptop, and the numbers are what a fresh instance sees in its first few minutes.
+Then add `http://<host>:3333/torznab/` as a Torznab indexer in Prowlarr (or in each \*arr directly — [per-app guides](docs/integrations/sonarr.md)), and point the \*arr's webhook at `/evidence/arr/<instance>` so the evidence loop closes ([`docs/evidence.md`](docs/evidence.md)). GraphQL accepts JSON `POST` requests at `/graphql`, and Prometheus metrics are available at `/metrics`. Set a Torznab key and protect the remaining APIs before exposing them beyond a trusted network. [`examples/README.md`](examples/README.md) covers the stack in detail.
 
 ## What BitAgent adds
 
@@ -59,7 +56,7 @@ Every torrent your \*arrs grab and report back comes with a free answer key: the
 | v2.9.2 — fuzzy matcher stops dropping punctuated titles | 93.7% | 90.8% | 95.5% |
 | v2.10.0 — + title-level \*arr evidence | 97.5% | 93.1% | 99.3% |
 | v2.10.2 — + site-prefix parser fix | 97.8% | 93.1% | 99.3% |
-| **v2.10.7 — + EP-numbered and bilingual titles (current)** | **98.1%** | **93.9%** | **99.3%** |
+| **v2.10.7 — + EP-numbered and bilingual titles** | **98.1%** | **93.9%** | **99.3%** |
 
 On the rows the whole deterministic pipeline still cannot match — live TMDB search included — the LLM matcher's answer was the \*arr's identity on 15 of the 18 it answered. Its identity gate accepted only the ones it could corroborate against an independently parsed title, and attached nothing wrong — so where it withheld a right answer, the parser's title was the problem, not the model; v2.10.7 fixed two such shapes.
 
@@ -90,22 +87,19 @@ The guardrails are the same across stages. Every stage runs in shadow mode first
 | LLM stages | TMDB matcher, type fallback, content-filter tier, junk judge — all opt-in, budgeted, shadow-first |
 | Swarm data | BEP-15 tracker scrape, seeds history, revalidation via DHT |
 | Metrics | `bitagent_*` Prometheus families, `pgstats`, `dashstats`, Grafana dashboards in `observability/`, legacy `bitmagnet_*` dual-emit |
-| Dashboard | the `ui` worker: operator console + public library in the same image, off until `UI_ENABLED=true` — [`ui/README.md`](ui/README.md) |
 | CLI | `worker`, `classifier`, `reprocess`, `attribution`, `eval-freeze` / `eval-replay` / `matcher-eval` / `batch-llm-match`, backfills — see [`docs/reference/cli.md`](docs/reference/cli.md) |
 
-## The dashboard
+## Distribution boundary
 
-The operator console and public library ship inside the BitAgent image as the worker `ui`: a small FastAPI app under [`ui/`](ui/) that the Go core starts, supervises and restarts with backoff, whose logs flow into the core's own log stream, and which reads the core over GraphQL and Prometheus on `127.0.0.1:3333` and never writes to the corpus. It is **off by default** (`UI_ENABLED=false`), so a crawler stays headless unless you ask; the quickstart stack turns it on and serves it at `http://localhost:8080`. On an existing deployment, set `UI_ENABLED=true`, publish port 8080, mount a volume at `/data` for its SQLite file and recreate the container — or run it on its own with `UI_ENABLED=true bitagent worker run --keys ui` (the core-side keys are in [`docs/configuration.md`](docs/configuration.md), the UI's own in [`ui/README.md`](ui/README.md)).
+This repository publishes the reusable backend under the MIT license. Its
+container contains the Go executable and runtime certificates/tools; it serves
+Torznab, GraphQL, metrics, import and evidence endpoints. It does not bundle a
+browser interface, account service or site deployment configuration.
 
-<p align="center">
-  <img src="ui/docs/screenshots/dashboard.png" alt="The operator dashboard: source status, observation times, indexer win rate, match rate, grab liveness and crawl throughput" width="100%">
-</p>
-<p align="center">
-  <img src="ui/docs/screenshots/library.png" alt="The public library: Admin navigation and empty-state fallbacks for enrichment and provider browsing" width="49%">
-  <img src="ui/docs/screenshots/ai.png" alt="The AI tab: source observation status, four LLM stages, estimated token cost, partial usage and a rate projection awaiting samples" width="49%">
-</p>
-
-One app serves two hostnames. The **operator console** shows indexer win rate, match rate, grab liveness, evidence per source, a quarantine you can spot-check, observations for four optional LLM stages with estimated token cost, Settings in four groups with runtime overrides and deployment references, a search tester and a GraphQL explorer. The **public library** is for the people you share the indexer with: poster browse and search, and a personal Torznab key per user, stored hashed and rate-limited, so nobody sees the core's credential. Verified operators see **Admin** in the library, and the console provides **Back to library**; Opening Admin still requires console authentication and operator authority. `OPERATOR_HOSTS` and `PUBLIC_LIBRARY_HOSTS` select the surface; only a verified role grants operator authority. The quickstart runs with `REQUIRE_AUTH=false`, fine on your own machine and never on anything someone else can reach — the real tiers (`DASHBOARD_API_KEY`, or a reverse proxy that performs the login and injects identity with a proof header) are documented in [`ui/README.md`](ui/README.md); the tabs are walked through in [`docs/ui-guide.md`](docs/ui-guide.md). The screenshots use synthetic demo observations; the library example shows unavailable enrichment and provider browsing with no matched titles.
+Version 4.0 separates that backend from the hosted product. Existing 3.x
+combined-image installations must keep their site on its own release and move
+the crawler to the 4.x backend image. PostgreSQL remains the backend's system
+of record. See [the migration guide](docs/migration-v4.md).
 
 ## Documentation
 
@@ -115,8 +109,8 @@ One app serves two hostnames. The **operator console** shows indexer win rate, m
 - [Docs index](docs/index.md) · [Quickstart](docs/quickstart.md) · [Configuration](docs/configuration.md) · [FAQ](docs/faq.md) · [Troubleshooting](docs/troubleshooting.md)
 - Core: [Evidence pipeline](docs/evidence.md) — how *arr grabs and imports become labels, priors and liveness
 - Concepts: [Architecture](docs/concepts/architecture.md) · [DHT crawler](docs/concepts/dht-crawler.md) · [Classification](docs/concepts/classification.md) · [Swarm health](docs/concepts/swarm-health.md) · [Compatibility contract](docs/concepts/compatibility.md) · [Wantbridge](docs/concepts/wantbridge.md) · [Glossary](docs/concepts/glossary.md)
-- Reference: [Torznab API](docs/reference/torznab-api.md) · [GraphQL API](docs/reference/graphql-api.md) · [Dashboard guide](docs/ui-guide.md) · [Dashboard module](ui/README.md) · [Metrics](docs/reference/metrics.md) · [CLI](docs/reference/cli.md)
-- Operations: [Security](docs/operations/security.md) · [Monitoring](docs/operations/monitoring.md) · [Private tracker mode](docs/integrations/private-tracker-mode.md) · [CSAM defence](docs/csam-defense.md)
+- Reference: [Torznab API](docs/reference/torznab-api.md) · [GraphQL API](docs/reference/graphql-api.md) · [Metrics](docs/reference/metrics.md) · [CLI](docs/reference/cli.md)
+- Operations: [Security](docs/operations/security.md) · [Monitoring](docs/operations/monitoring.md) · [CSAM defence](docs/csam-defense.md)
 - Project: [Improvements over upstream](docs/project/improvements.md) · [Benchmarks](docs/project/benchmarks.md) · [Legal disclaimer](docs/legal/disclaimer.md)
 
 ## Development
@@ -127,18 +121,13 @@ cd bitagent
 
 go test ./...                        # vanilla suite, CGO off
 CGO_ENABLED=1 go test -race ./...    # race-detector suite
-go build .                           # produces ./bitagent
-
-# the dashboard on its own (see ui/README.md for the env it reads):
-cd ui && python3.12 -m venv .venv && . .venv/bin/activate && pip install --require-hashes -r requirements.lock
-REQUIRE_AUTH=false python -m uvicorn app:app --no-proxy-headers --port 8080
-cd ..
+task build                           # versioned ./bitagent from VERSION
 
 # run against a real Postgres:
 POSTGRES_HOST=localhost POSTGRES_PASSWORD=bitagent ./bitagent worker run --all
 ```
 
-Contributions are welcome — read [CONTRIBUTING.md](CONTRIBUTING.md) first. This repository is a release mirror: pull requests are reviewed here and ship in the next tagged release.
+Contributions are welcome — read [CONTRIBUTING.md](CONTRIBUTING.md) first. GitHub is the development home of the public backend; changes ship in tagged releases.
 
 ## Support
 
@@ -152,7 +141,7 @@ Licensed under the MIT licence, inherited from [`bitmagnet-io/bitmagnet`](https:
 
 BitAgent's baseline is upstream commit `2b9e8ea`, the head of upstream `main` from July 2025 until May 2026. The fork was cut in April 2026 and stopped tracking upstream on a schedule at the rebrand that month; the `upstream` remote stays configured for security-fix surveillance.
 
-The diagram and the recording on this page live in [`docs/assets/`](docs/assets/); the recording is an animated PNG captured from the quickstart stack on a laptop with a fresh database, and every number in it is what that instance reported.
+The backend pipeline diagram lives in [`docs/assets/`](docs/assets/).
 
 ---
 

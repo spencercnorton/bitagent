@@ -7,11 +7,11 @@ BitAgent exposes a GraphQL endpoint at `:3333/graphql`. The schema is generated 
 | Property | Value |
 |---|---|
 | Endpoint | `POST http://<host>:3333/graphql` |
-| Playground | `GET http://<host>:3333/graphql` (renders the gqlgen playground) |
+| Browser page | none; `GET /graphql` returns `404` |
 | Auth | none by default — front with a reverse proxy for public exposure |
 | Schema introspection | enabled |
 
-Tools that work out of the box: GraphQL Studio, Insomnia, Bruno, IntelliJ HTTP client, the gqlgen playground.
+Use curl or a separate GraphQL client with JSON POST requests.
 
 ## Top-level Query fields
 
@@ -72,7 +72,7 @@ query Search {
 
 ### Category facet counts (no item rows)
 
-Useful for the dashboard sidebar and for cardinality probes.
+Useful for category aggregation and cardinality probes.
 
 ```graphql
 query Facets {
@@ -271,7 +271,6 @@ Field-level errors return `data` with the partial result and a non-empty `errors
 
 ## See also
 
-- [Dashboard API reference](dashboard-api.md)
 - [Torznab API reference](torznab-api.md)
 - [CLI reference](cli.md) — many GraphQL operations have a CLI equivalent (`reprocess`, `classifier show`)
 - [Configuration](../configuration.md)

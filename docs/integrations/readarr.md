@@ -55,7 +55,7 @@ The URL field is referencing `localhost`, which from inside Readarr's container 
 The API Key field does not match `TORZNAB_API_KEY`. Common causes: trailing whitespace pasted from a `.env` file, surrounding quotes, a stale value left over from a previous BitAgent install.
 
 **Search returns 0 results**
-Confirm BitAgent has discovered torrents at all — open the BitAgent dashboard's Library tab. If empty, the DHT bootstrap is the problem (see [troubleshooting.md](../troubleshooting.md)). If the dashboard shows torrents but Readarr's search misses, try the same `author`+`title` query manually via curl against `/torznab/api?t=book`. If curl returns results and Readarr does not, the issue is most likely a Readarr category-map mismatch.
+Inspect crawl metrics and the [GraphQL catalog](../reference/graphql-api.md). If no torrents have been discovered, review [troubleshooting](../troubleshooting.md). If the catalog contains torrents but Readarr's search misses, try the same `author`+`title` query manually via curl against `/torznab/api?t=book`. If curl returns results and Readarr does not, the issue is most likely a Readarr category-map mismatch.
 
 **Audiobook search returns ebooks (or vice versa)**
 The category map on the BitAgent indexer entry is wrong for the Readarr instance type. For an ebook instance, only 7000-series categories should be selected. For an audiobook instance, only `3030`. Mixed selections cause Readarr to ingest results from the wrong media class.

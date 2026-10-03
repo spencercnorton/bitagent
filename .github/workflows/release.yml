@@ -36,7 +36,7 @@ jobs:
         run: |
           printf '%s\n' "$RELEASE_TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
           git merge-base --is-ancestor HEAD origin/main
-          VERSION=$(sed -n 's/^__version__ = "\([^"]*\)"/\1/p' ui/version.py)
+          VERSION=$(cat VERSION)
           test "$RELEASE_TAG" = "v$VERSION"
       - name: Create release asset directory
         run: mkdir -p release-assets
@@ -56,10 +56,7 @@ jobs:
           test "$(docker image inspect "$IMAGE:$RELEASE_TAG" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "$GITHUB_SHA"
           test "$(docker image inspect "$IMAGE:$RELEASE_TAG" --format '{{index .Config.Labels "org.opencontainers.image.created"}}')" = "$BUILD_DATE"
           test "$(docker image inspect "$IMAGE:$RELEASE_TAG" --format '{{index .Config.Labels "org.opencontainers.image.source"}}')" = "$BUILD_SOURCE"
-          docker run --rm --network none --read-only --tmpfs /data:uid=10001,gid=10001 \
-            --user 10001:10001 --entrypoint python3 --workdir /app/ui \
-            --env EXPECTED_VERSION="${RELEASE_TAG#v}" "$IMAGE:$RELEASE_TAG" \
-            -c 'import os; import app, account_usage, discovery; from version import __version__; assert __version__ == os.environ["EXPECTED_VERSION"]'
+          sh scripts/check_backend_image.sh "$IMAGE:$RELEASE_TAG" "$RELEASE_TAG"
           docker push "$IMAGE:$RELEASE_TAG"
           docker image inspect "$IMAGE:$RELEASE_TAG" --format '{{index .RepoDigests 0}}' > release-assets/IMAGE_DIGEST.txt
           docker logout ghcr.io

@@ -23,7 +23,6 @@ import (
 	"github.com/spencercnorton/bitagent/internal/seeds"
 	"github.com/spencercnorton/bitagent/internal/tmdb"
 	"github.com/spencercnorton/bitagent/internal/torznab"
-	"github.com/spencercnorton/bitagent/internal/ui"
 )
 
 func TestEnvBinding_ChatBackendsAreExplicitAndIndependent(t *testing.T) {
@@ -415,11 +414,8 @@ func TestEnvBinding_SeedsTrackerUrls(t *testing.T) {
 	}
 }
 
-// TestEnvBinding_ComposeKeys pins every env key that the two shipped compose
-// files set on the bitagent service — deploy/docker-compose.yml (the Kleos
-// Portainer stack) and examples/docker-compose.public.yml (the public
-// quickstart) — exactly as spelled there, against the section each is meant
-// to configure.
+// TestEnvBinding_ComposeKeys pins the documented backend Compose keys and
+// optional processing integrations against the section each configures.
 //
 // Both files shipped keys carrying a `BITMAGNET_` prefix that binds to
 // nothing: the resolver joins the section key with the ToSnake'd Go field
@@ -457,9 +453,6 @@ func TestEnvBinding_ComposeKeys(t *testing.T) {
 		}},
 		{"tmdb", tmdb.NewDefaultConfig(), map[string]string{
 			"TMDB_API_KEY": "tmdb-key",
-		}},
-		{"ui", ui.NewDefaultConfig(), map[string]string{
-			"UI_ENABLED": "true",
 		}},
 		{"classifier_llm", llmstage.NewDefaultConfig(), map[string]string{
 			"CLASSIFIER_LLM_ENABLED":     "false",

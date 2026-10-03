@@ -1,120 +1,61 @@
-# Examples — self-hoster quickstart
+# Headless backend quickstart
 
-Two compose files live in this repo. Pick the one that matches your
-deployment shape:
+The public stack runs the BitAgent Go backend and PostgreSQL. It includes DHT
+crawling, classification, curation, Torznab, GraphQL and metrics. The hosted
+site, accounts, library and admin pages run independently.
 
-| File | Audience | Image source | VPN integration |
-|---|---|---|---|
-| `examples/docker-compose.public.yml` (this) | New self-hosters | builds from local source via `Dockerfile` | none — direct host networking |
-| the maintainer's private compose | Operator-internal stack | private registry image | `service:gluetun` (VPN-attached) |
-
-If you're reading the public README and want to try BitAgent on your
-own machine, **use `examples/docker-compose.public.yml`**. The
-private file pins operator-specific Portainer and secrets-store
-conventions you don't need.
-
-## Quickstart
+## Start and verify
 
 ```bash
-# 1. clone
 git clone https://github.com/spencercnorton/bitagent.git
 cd bitagent
-
-# 2. set env
 cp examples/.env.example examples/.env.public
-$EDITOR examples/.env.public   # at minimum: set POSTGRES_PASSWORD
-
-# 3. boot
+# Set a unique POSTGRES_PASSWORD in examples/.env.public.
 docker compose -f examples/docker-compose.public.yml \
-  --env-file examples/.env.public \
-  up -d --build
-
-# 4. verify
-curl -s http://localhost:3333/metrics | head -5
-# bitagent_dht_crawler_persisted_total{entity="torrent"} 0
-# ...
-
-# 5. the operator console (loopback only, no login in this stack)
-open http://localhost:8080
-# the public library is the same port under another hostname
-open http://library.localhost:8080
-
-# 6. (optional) GraphQL playground
-open http://localhost:3333/graphql
+  --env-file examples/.env.public up -d --build
+curl --fail http://localhost:3333/metrics
+curl --fail http://localhost:3333/graphql \
+  -H 'Content-Type: application/json' \
+  --data '{"query":"{ version }"}'
 ```
 
-The first `up` builds the image from source — expect 2-4 min on a
-warm Docker. Subsequent boots reuse the cached image.
+There is no browser UI or GraphQL playground in this image. The backend
+runs without the hosted site, any account system, or private hardware.
+Optional metadata and LLM stages use your own configuration and credentials.
 
-## What you get
+## Endpoints
 
-- **`bitagent`** — the DHT crawler + classifier + HTTP API on port 3333,
-  plus the operator dashboard on port 8080 (the `ui` worker inside the
-  same container, `UI_ENABLED=true` in this file; off by default in the
-  image)
-- **`postgres`** — Postgres 16 on its default 5432, named volume for data
-
-That's it. No VPN, no extra observability stack. Add those layers as
-you need them; this stack is the smallest viable BitAgent. To run the
-crawler headless, set `UI_ENABLED=false` in `.env.public`.
-
-## Endpoints (default)
-
-| Path | What it does | Auth |
+| Path | Purpose | Authentication |
 |---|---|---|
-| `:8080/` | Operator console (`OPERATOR_HOSTS`) and public library (`PUBLIC_LIBRARY_HOSTS`), selected by `Host` | `REQUIRE_AUTH=false` here, so bound to 127.0.0.1 — see `ui/README.md` before exposing |
-| `/graphql` | Query/mutation API | none unless you front it |
-| `/torznab` | Newznab/Torznab feed for *arr clients | `TORZNAB_API_KEY` if set |
-| `/metrics` | Prometheus exposition | none |
-| `/import` | NDJSON bulk-import sink (`POST` only) | none unless you front it |
-| `/evidence/arr/*` | Sonarr/Radarr webhook ingest | `X-Evidence-Token` header |
+| `POST /graphql` | Query/mutation API | Trusted proxy required when exposed |
+| `/torznab` | Torznab feed for *arr clients | `TORZNAB_API_KEY` when set |
+| `/metrics` | Prometheus metrics | Trusted proxy required when exposed |
+| `POST /import` | NDJSON bulk import | Trusted proxy required when exposed |
+| `/evidence/arr/*` | *arr webhook ingestion | `X-Evidence-Token` header |
 
-For exposing this publicly, **put a reverse proxy in front** that
-adds auth (Caddy/Traefik with `forward_auth`, NPM with `auth_request`,
-or similar). The bare HTTP server has no opinion about auth — it
-trusts whoever's connecting.
+PostgreSQL has no published host port. Protect the HTTP API independently
+before exposing it outside your trusted network. Set `TORZNAB_API_KEY` before
+sharing the feed. LLM, content-filter enforcement and destructive retention
+remain opt-in; inspect their shadow metrics before enabling live changes.
 
-## Adding a VPN
+The persistent volumes store PostgreSQL, core configuration and core data.
+Existing upstream-compatible paths under `/root/.config/bitmagnet` and
+`/root/.local/share/bitmagnet` are preserved.
 
-The public quickstart skips VPN integration to keep the dependency
-graph small. If you want DHT traffic egressing through a VPN tunnel,
-the cleanest pattern is:
+## Upgrade and recovery
 
-1. Add a `gluetun` service to `examples/docker-compose.public.yml`
-   (see `deploy/docker-compose.yml` for an example shape).
-2. Change bitagent's network mode to `network_mode: service:gluetun`.
-3. Move the bitagent `ports:` block to the gluetun service —
-   `service:` networking forwards through the gluetun container.
-4. Wire your VPN provider's keys into the gluetun env block.
-
-## Upgrading
+Build a checked immutable release and retain its image digest. Back up
+PostgreSQL and core state before upgrading, then verify metrics, migrations
+and Torznab compatibility. Rebuilding preserves the named volumes:
 
 ```bash
-git pull
 docker compose -f examples/docker-compose.public.yml \
-  --env-file examples/.env.public \
-  up -d --build
+  --env-file examples/.env.public up -d --build
 ```
 
-The Postgres data volume persists across rebuilds. Migrations run
-automatically on boot.
+`docker compose -f examples/docker-compose.public.yml down` stops the stack
+while retaining state. Adding `--volumes` deletes all three named volumes,
+including the indexed corpus.
 
-## Removing everything
-
-```bash
-docker compose -f examples/docker-compose.public.yml down --volumes
-```
-
-Drops all four volumes — your indexed torrents and the dashboard's
-SQLite file are gone. Skip
-`--volumes` to keep the database between deletes.
-
-## See also
-
-- `README.md` — repo overview
-- `ui/README.md` — the dashboard module: every setting it reads and
-  the auth tiers for a real deployment
-- `SECURITY.md` — supported versions, vulnerability reporting,
-  threat model, CSAM-defense layer
-- `docs/csam-defense.md` — pre-fetch double-hash blocklist details
-- `deploy/README.md` — operator-internal Portainer git-backed stack
+See [operations](../docs/OPERATIONS.md), [configuration](../docs/configuration.md)
+and [security](../SECURITY.md) for detailed guidance.

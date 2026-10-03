@@ -1,17 +1,15 @@
-# BitAgent deployment and operations
+# Backend deployment and operations
 
-BitAgent combines the Go indexer with an optional Python operator console.
-The public Compose stack builds from this repository and stores catalog
-state in PostgreSQL. Optional LLM stages are explicitly configured features;
-installing the application is not evidence that those stages are active.
+BitAgent 4.x is a Go backend with PostgreSQL storage. It exposes machine APIs
+and metrics, and runs independently of any browser interface or hosted account
+system. Optional metadata, evidence, LLM and cleanup features use configuration
+you supply; installation does not establish that those features are active.
 
-## Install the reproducible public stack
+## Install the public stack
 
-Use Docker and Compose with persistent disk, sufficient database capacity and
-UDP network access for DHT. Start with a small deployment and measure memory,
-disk growth and crawl rate before sizing a larger instance.
+Use Docker Compose with persistent storage and outbound TCP/UDP access:
 
-```bash
+```sh
 git clone https://github.com/spencercnorton/bitagent.git
 cd bitagent
 cp examples/.env.example examples/.env.public
@@ -19,85 +17,56 @@ openssl rand -hex 32   # POSTGRES_PASSWORD
 openssl rand -hex 32   # TORZNAB_API_KEY
 ```
 
-Put the two values in `examples/.env.public`, then:
+Store the generated values in the ignored environment file, then run:
 
-```bash
+```sh
 docker compose -f examples/docker-compose.public.yml --env-file examples/.env.public config --quiet
 docker compose -f examples/docker-compose.public.yml --env-file examples/.env.public up -d --build
 docker compose -f examples/docker-compose.public.yml --env-file examples/.env.public ps
 curl --fail http://localhost:3333/metrics
 ```
 
-The console is at `http://localhost:8080`; the example binds it to loopback and
-uses no login. Keep that binding for initial setup. Place authentication and
-TLS in front of any exposed console. Review the core's separate API bindings;
-a loopback console does not make another published port private.
+The example exposes backend HTTP on loopback and peer traffic on the configured
+peer port. PostgreSQL stays on the Compose network. There is no browser page.
+Use [quickstart](quickstart.md) and [examples](../examples/README.md) for the
+exact network layout and commands.
 
-![Public-stack quickstart recording with counts only](assets/recordings/quickstart.png)
+## Configure and verify integrations
 
-## Configure integrations
-
-| Area | Configure and verify |
+| Area | Verify |
 |---|---|
-| PostgreSQL | Required password, persistent volume, disk capacity and backup |
-| DHT | UDP access and routing; verify peers and persisted-torrent metrics |
-| Torznab | Set a key; test capabilities before adding an indexer to an *arr app |
-| Console | `UI_ENABLED`; authenticated access when exposed outside loopback |
-| Metadata | Your own provider key; verify provider quota and error handling |
-| LLM workflows | Explicit keys, budgets, modes and independent evaluation |
+| PostgreSQL | Password, persistent volume, capacity and tested restore |
+| DHT | UDP routing, bootstrap peers and persisted-torrent metrics |
+| Torznab | API key and capabilities from the client network |
+| GraphQL/import/metrics | Trusted network or authenticated reverse proxy |
+| Metadata | Provider configuration, quota and actual provider responses |
+| Evidence | Configured source endpoints and independent webhook secret |
+| LLM/cleanup | Explicit mode, budget, dry-run metrics and recovery plan |
 
-Use [configuration](configuration.md) as the setting reference. Connect Sonarr,
-Radarr or Prowlarr using an address reachable from their own container/network,
-not blindly `localhost`. Follow [the quickstart](quickstart.md) for the exact
-public Compose layout and [UI guide](ui-guide.md) for console behavior.
+[Configuration](configuration.md) documents backend settings. Client services
+on another host cannot use your own `localhost`; choose an address reachable
+from their network. Protect APIs before expanding the loopback HTTP binding.
 
-## Security and data handling
+## Health and capacity
 
-Do not expose PostgreSQL. Protect Torznab with its API key and review GraphQL,
-metrics and evidence-webhook exposure independently. Keep API keys in an
-ignored environment file or a secret manager; do not paste Compose-rendered
-configuration into an issue.
+Verify both services are healthy. Observe `/metrics`, container logs, queue
+depth, database growth and provider errors. Crawl warmup varies with routing
+and network conditions; an empty early search is not a fixed-duration failure.
+Test Torznab capabilities and a synthetic request before connecting a full
+client stack. Evaluate optional processing in shadow/dry-run mode before
+accepting live verdicts or deletion.
 
-Real torrent names, acquisition history and evaluation rows may identify a
-person. Use generated records for screenshots and tests. Publish aggregate
-benchmarks only when their measurement procedure and limits are clear. Do
-not enable destructive classification or purge modes without independently
-reviewed evidence and a tested recovery path.
+## Backup, upgrade and recovery
 
-## Health, capacity and verification
+Back up PostgreSQL and optional configuration/data volumes. Store secrets
+separately in encrypted backups. Restore into an isolated database with DHT
+and external calls disabled until recovered configuration has been reviewed.
 
-Verify both services are healthy, metrics remain reachable and the persisted
-counter changes after bootstrap. Use the console's System health checks and
-check database disk growth, queue depth and provider errors. An empty search
-immediately after startup can reflect DHT warmup; repeated empty results need
-network and worker checks rather than an assumed fixed startup duration.
+Record the running release and immutable image digest. Upgrade with the
+published digest and verify migrations, APIs, metrics and crawl progress.
+A migration can make a binary-only downgrade unsafe; retain the matching
+backup and previous artifact. For 3.x combined images, follow
+[the 4.0 migration](migration-v4.md).
 
-Test Torznab capabilities and one synthetic integration request before
-connecting an entire automation stack. Test LLM stages with their budgets and
-shadow/evaluation modes before accepting live verdicts.
-
-## Backup, upgrades and restore
-
-Back up PostgreSQL, operator configuration and any additional persistent state
-listed in your deployment. Save secrets separately in an encrypted backup.
-Rehearse restoration into an isolated database with external API calls and
-DHT traffic disabled until the recovered settings have been reviewed.
-
-Record the release version and image digest before upgrading. Build from an
-immutable public tag; verify service health, migrations, API compatibility,
-crawl progress and UI behavior afterward. Restore the matching database
-backup when a migration makes a binary-only downgrade unsafe.
-
-## Troubleshooting
-
-| Symptom | Check and next action |
-|---|---|
-| No DHT progress | Check UDP access, bootstrap peers and worker enablement. |
-| Database restarts or workers stall | Check disk, memory, PostgreSQL health and connection limits. |
-| Torznab returns 401 | Compare the configured key with the caller's key privately. |
-| *arr cannot connect | Test reachability from its network; check the host/port and API path. |
-| Console is unavailable | Check UI_ENABLED, the worker, port binding and reverse-proxy configuration. |
-| LLM feature appears inert | Check mode, key, budget and actual workflow metrics. |
-
-See [troubleshooting](troubleshooting.md), [monitoring](operations/monitoring.md)
-and [security](operations/security.md) for the detailed operational references.
+See [security](operations/security.md), [monitoring](operations/monitoring.md)
+and [troubleshooting](troubleshooting.md) for further operational guidance.

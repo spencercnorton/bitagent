@@ -126,13 +126,12 @@ Each stage emits a confidence on `[0, 1]`:
 - **CEL** — typically `0.7–0.95`, encoded per rule. Strong patterns score higher; loose heuristics score lower.
 - **LLM** — the model's reported confidence, capped at `0.95` (we never trust an LLM's `1.0`).
 
-The dashboard's Library tab uses these scores to colour-code rows. The Torznab response also exposes the score, so `*arr` Custom Formats can prefer high-confidence releases.
+The Torznab response exposes the score, so `*arr` Custom Formats can prefer high-confidence releases.
 
 ## Where labels surface
 
 - **Torznab** — `<newznab:attr name="category" value="2040"/>` on each item.
 - **GraphQL** — `TorrentContent.contentType` field; aggregations expose facet counts.
-- **Dashboard** — Library tab, with confidence pill (green/yellow/grey).
 
 ## Reprocessing
 

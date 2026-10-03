@@ -1,9 +1,8 @@
 # Security Policy
 
 BitAgent is a self-hosted BitTorrent DHT crawler. Most installations sit
-behind a tailnet or LAN, but the `/torznab` and (planned) public-release
-endpoints are designed to be reachable from the open internet when the
-operator chooses. We treat security findings as first-class.
+behind a trusted network or authenticated reverse proxy. The public image
+contains the backend and machine APIs; each operator controls their exposure.
 
 ## Supported versions
 
@@ -41,10 +40,9 @@ are negotiable for complex fixes or upstream coordination.
 **In scope:**
 
 - The BitAgent Go codebase (`internal/`, `main.go`, build/CI scaffolding)
-- The web UI under `ui/` (Python FastAPI operator console and public library, run by the core as the `ui` worker)
 - The example deployment under `examples/`
 - Documented integration paths (Sonarr/Radarr evidence webhook, torznab,
-  GraphQL admin surface)
+  GraphQL API)
 
 **Out of scope:**
 
@@ -74,9 +72,8 @@ findings are credited in `SECURITY.md` once a fix has shipped.
   `TORZNAB_API_KEY` for any deployment that is reachable from outside
   your tailnet/LAN.
 - The GraphQL admin surface is privileged. It currently expects to live
-  behind a trusted reverse proxy or tailnet; the public-release plan
-  layers an API-key gate on the dashboard side
-  (`DASHBOARD_API_KEY` and the proxy tiers in `ui/README.md` → Authentication).
+  behind a trusted reverse proxy or service network. The Torznab key does
+  not protect GraphQL, import or metrics; protect these APIs independently.
 - Postgres is the system of record. A SQL-injection or unsafe migration
   would be high severity; only `gorm` parameterised paths are accepted
   in the data layer.

@@ -1,106 +1,33 @@
-# One image: the Go core plus the Python operator console / public library
-# under ui/, which the core supervises as the `ui` worker (off by default;
-# UI_ENABLED=true, with `worker run --all` or `--keys ui`).
-#
-# The runtime base is the UI's digest-pinned python:slim so its hash-locked
-# wheels stay exactly what requirements.lock verified. The core is a static
-# binary, so it does not care which libc the runtime ships.
-
+# The public image contains only the headless Go indexing backend.
 FROM golang:1.26.8-alpine3.23@sha256:a8fa79c5bd40d880b52bd3b6d7669ecdcfd00e85facdd427d279efb5ddd79cb1 AS build
 
-# git: `git describe` below, and Go's -buildvcs=auto errors when .git is
-# present but no git binary is.
 RUN apk --no-cache add git
-
 WORKDIR /build
-
 COPY go.mod go.sum ./
 RUN go mod download
-
 COPY . .
 
-# CI and release builds pass VERSION. Clean source archives have no Git
-# metadata; an unversioned development build reports dev in that case.
+# VERSION is the release source of truth, including source archives without Git.
+# CI and release builds pass the same version explicitly for OCI labels.
 ARG VERSION
-# CGO_ENABLED=0 is load-bearing: the alpine toolchain defaults to 1 and links
-# the binary against musl, which the Debian runtime does not have.
 RUN CGO_ENABLED=0 go build \
-    -ldflags "-s -w -X github.com/spencercnorton/bitagent/internal/version.GitTag=${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || printf dev)}" \
+    -ldflags "-s -w -X github.com/spencercnorton/bitagent/internal/version.GitTag=${VERSION:-v$(cat VERSION)}" \
     -o /build/bitagent .
 
-
-FROM python:3.12.13-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b AS ui-deps
-COPY ui/requirements.txt ui/requirements.lock ./
-RUN python -m pip install --no-cache-dir --require-hashes -r requirements.lock \
-    && python -m pip check \
-    && rm -rf \
-        /usr/local/lib/python3.12/site-packages/_distutils_hack \
-        /usr/local/lib/python3.12/site-packages/distutils-precedence.pth \
-        /usr/local/lib/python3.12/site-packages/pip \
-        /usr/local/lib/python3.12/site-packages/pip-*.dist-info \
-        /usr/local/lib/python3.12/site-packages/pkg_resources \
-        /usr/local/lib/python3.12/site-packages/setuptools \
-        /usr/local/lib/python3.12/site-packages/setuptools-*.dist-info \
-        /usr/local/lib/python3.12/site-packages/wheel \
-        /usr/local/lib/python3.12/site-packages/wheel-*.dist-info
-
-
-FROM python:3.12.13-slim-bookworm@sha256:d50fb7611f86d04a3b0471b46d7557818d88983fc3136726336b2a4c657aa30b
+FROM alpine:3.23@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
 
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=1970-01-01T00:00:00Z
 ARG SOURCE=https://github.com/spencercnorton/bitagent
-# The epoch marks an unspecified development build date. Published images
-# always receive the checked source commit's timestamp and full revision.
 LABEL org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.source="${SOURCE}"
 
-# PYTHONUNBUFFERED: the core reads uvicorn's stdout/stderr line by line into
-# its own logger, so the child must not block-buffer.
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-# curl: compose healthchecks. libpcre2/libssh2 are pulled explicitly to get
-# past the base image's CVE'd versions (unpinned: the archive only serves the
-# fixed version or newer, and a point release drops the old one).
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl libpcre2-8-0 libssh2-1 \
-    && rm -rf /var/lib/apt/lists/* \
-        /usr/local/lib/python3.12/ensurepip \
-        /usr/local/lib/python3.12/site-packages/_distutils_hack \
-        /usr/local/lib/python3.12/site-packages/distutils-precedence.pth \
-        /usr/local/lib/python3.12/site-packages/pip \
-        /usr/local/lib/python3.12/site-packages/pip-*.dist-info \
-        /usr/local/lib/python3.12/site-packages/pkg_resources \
-        /usr/local/lib/python3.12/site-packages/setuptools \
-        /usr/local/lib/python3.12/site-packages/setuptools-*.dist-info \
-        /usr/local/lib/python3.12/site-packages/wheel \
-        /usr/local/lib/python3.12/site-packages/wheel-*.dist-info \
-    && rm -f /usr/local/bin/pip /usr/local/bin/pip3 \
-        /usr/local/bin/pip3.12 /usr/local/bin/wheel
-
-# No USER: the core always ran as root and the estate and quickstart composes
-# mount /root/.config/bitmagnet and /root/.local/share/bitmagnet, which a USER
-# would silently orphan. The core spawns the web-facing UI child as appuser
-# (internal/ui/worker.go) when it runs as root, so /data is appuser-owned; a
-# UI-only deployment can also run the whole container non-root with
-# `user: "10001:10001"` in compose, as the old bitagent-ui stack did. /data
-# existing is what makes ui/config.py put its SQLite file there instead of
-# under /app/ui.
-RUN useradd -m -u 10001 appuser \
-    && mkdir -p /data \
-    && chown appuser:appuser /data
-
-COPY --from=ui-deps /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
+# TLS roots for metadata/LLM APIs, time zones, and the Compose health probe.
+RUN apk --no-cache add ca-certificates curl tzdata
+# Preserve existing /root/.config/bitmagnet and /root/.local/share/bitmagnet
+# volume paths. The site runs independently with its own user and state.
 COPY --from=build /build/bitagent /usr/bin/bitagent
-
-# Flat-layout app: every root-level module plus assets. Glob so a new module
-# cannot be silently left out of the image (crash-looped bitagent-ui v1.2.0).
-COPY ui/*.py /app/ui/
-COPY ui/static /app/ui/static
-COPY ui/templates /app/ui/templates
-
 ENTRYPOINT ["bitagent"]
