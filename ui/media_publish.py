@@ -3,7 +3,8 @@
 Run ``python media_publish.py --manifest inventory.json --root /media/library
 --announce https://tracker.example.org/announce --output prepared``. Input uses
 version=1 and releases with source_id, title, kind and a relative files array.
-Movies and episodes have one or more parts; season/show releases are packs.
+Movies, episodes, music and generic releases have explicit file sets;
+season/show releases are packs. Plex music discovery emits track versions.
 The catalog contains portable metainfo for a protected importer. The separate
 seeding map is local preparation data, never an HTTP response or public asset.
 """
@@ -27,13 +28,13 @@ from torrent_metainfo import (
     relative_media_path, safe_component, validate_announce_url, verify_torrent_files,
     BuiltTorrent, HashPacer, source_snapshot, parse_metainfo, info_hash, adaptive_piece_length,
 )
+from private_media import KINDS
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_CATALOG_BYTES = 128 * 1024 * 1024
 MAX_RELEASES = 1_000_000
 MAX_IMPORT_RELEASES = 1000
 MAX_IMPORT_BYTES = 4 * 1024 * 1024
-KINDS = {"movie", "episode", "season", "show"}
 
 
 def _inventory(value: dict) -> list[dict]:
@@ -77,7 +78,7 @@ def _inventory(value: dict) -> list[dict]:
 
 def inventory_from_plex(payloads: list[dict], root: Path, path_maps: list[tuple[str, str]] | None = None,
                         include_packs: bool = True) -> dict:
-    """Map real Plex media parts to movie/episode releases and optional packs.
+    """Map real Plex media parts to movie/episode/music leaves and TV packs.
 
     Path maps pair an absolute Plex/container prefix with a relative path under
     the configured root. With no maps, Plex paths must already be below root.
@@ -125,9 +126,10 @@ def inventory_from_plex(payloads: list[dict], root: Path, path_maps: list[tuple[
     preferred_episodes = {}
     seen = set()
     for metadata in payloads:
-        kind = metadata.get("type")
-        if kind not in {"movie", "episode"}:
+        plex_kind = metadata.get("type")
+        if plex_kind not in {"movie", "episode", "track"}:
             continue
+        kind = "music" if plex_kind == "track" else plex_kind
         rating_key = str(metadata.get("ratingKey") or "")
         if not rating_key:
             raise TorrentError("Plex media has no stable rating key")
@@ -135,7 +137,11 @@ def inventory_from_plex(payloads: list[dict], root: Path, path_maps: list[tuple[
         if not isinstance(media_versions, list) or not media_versions:
             raise TorrentError("Plex media has no downloadable parts")
         # Torznab tvdbid/tmdbid on TV searches names the series, not the episode.
-        identifiers = ids(metadata) if kind == "movie" else show_ids.get(str(metadata.get("grandparentRatingKey")), {})
+        identifiers = {}
+        if kind == "movie":
+            identifiers = ids(metadata)
+        elif kind == "episode":
+            identifiers = show_ids.get(str(metadata.get("grandparentRatingKey")), {})
         for version_number, media in enumerate(media_versions):
             parts = media.get("Part")
             if not isinstance(parts, list) or not parts:
@@ -146,6 +152,13 @@ def inventory_from_plex(payloads: list[dict], root: Path, path_maps: list[tuple[
                 raise TorrentError("duplicate Plex media identity")
             seen.add(source_id)
             title = str(metadata.get("title") or "")
+            if kind == "music":
+                context = [metadata.get("originalTitle") or metadata.get("grandparentTitle"),
+                           metadata.get("parentTitle"), title]
+                if (not isinstance(metadata.get("title"), str) or not title.strip()
+                        or any(value is not None and not isinstance(value, str) for value in context)):
+                    raise TorrentError("Plex track has invalid title context")
+                title = " - ".join(value.strip() for value in context if value and value.strip())
             release = {"source_id": source_id, "kind": kind, "title": title, "files": files, **identifiers}
             if kind == "episode":
                 if type(metadata.get("parentIndex")) is not int or type(metadata.get("index")) is not int:
@@ -206,8 +219,8 @@ def _plex_page(result: dict, start: int, previous_total) -> tuple[list[dict], in
 
 def fetch_plex_inventory(base_url: str, token: str, root: Path,
                          path_maps: list[tuple[str, str]] | None = None,
-                         include_packs: bool = True) -> dict:
-    """Read movie/episode inventory from Plex; no library or downloader mutations."""
+                         include_packs: bool = True, include_music: bool = False) -> dict:
+    """Read video/track inventory from Plex; no library or downloader mutations."""
     parsed = urlsplit(base_url)
     if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password
             or parsed.query or parsed.fragment or parsed.path not in {"", "/"}
@@ -230,18 +243,20 @@ def fetch_plex_inventory(base_url: str, token: str, root: Path,
     sections = get("/library/sections").get("Directory", [])
     payloads = []
     for section in sections:
-        if section.get("type") not in {"movie", "show"}:
+        if section.get("type") not in ({"movie", "show", "artist"} if include_music else {"movie", "show"}):
             continue
         key = str(section.get("key") or "")
         if not key.isdigit():
             raise TorrentError("invalid Plex section identity")
-        for media_type in ((1,) if section["type"] == "movie" else (2, 4)):
+        for media_type in {"movie": (1,), "show": (2, 4), "artist": (10,)}[section["type"]]:
             start = 0
             previous_page = None
             previous_total = "first"
             for _ in range(400):
                 page = get(f"/library/sections/{key}/all?type={media_type}&includeGuids=1", start)
                 rows, total, finished = _plex_page(page, start, previous_total)
+                if section["type"] == "artist" and any(row.get("type") != "track" for row in rows):
+                    raise TorrentError("Plex music section returned a non-track asset")
                 previous_total = total
                 page_identity = tuple(str(row.get("ratingKey")) for row in rows)
                 if rows and page_identity == previous_page:
@@ -261,12 +276,14 @@ def fetch_plex_inventory(base_url: str, token: str, root: Path,
 
 def iter_plex_releases(base_url: str, token: str, root: Path,
                        path_maps: list[tuple[str, str]] | None = None,
-                       include_packs: bool = True, section_ids: set[str] | None = None):
+                       include_packs: bool = True, section_ids: set[str] | None = None,
+                       include_music: bool = False):
     """Page Plex metadata and audit every unmapped/empty asset explicitly.
 
     Media blobs are bounded to a page. TV pack aggregation retains only titles,
     identifiers and distinct file paths for one section, never encoded torrents.
     A uniform approved root permits genuine packs across its mounted subtrees.
+    Music sections require explicit opt-in; existing video discovery stays scoped.
     """
     parsed = urlsplit(base_url)
     if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password
@@ -325,13 +342,15 @@ def iter_plex_releases(base_url: str, token: str, root: Path,
         return result
 
     sections = get("/library/sections").get("Directory", [])
-    available = {str(section.get("key")) for section in sections if section.get("type") in {"movie", "show"}}
+    section_types = {"movie", "show", "artist"} if include_music else {"movie", "show"}
+    available = {str(section.get("key")) for section in sections if section.get("type") in section_types}
     if section_ids is not None and not section_ids <= available:
-        raise TorrentError("requested Plex video section is missing")
-    yield {"_inventory_event": True, "counts": {}, "scope": {"source": "plex", "include_packs": include_packs, "requested_sections": sorted(section_ids) if section_ids else "all video sections"}}
+        raise TorrentError("requested Plex media section is missing")
+    yield {"_inventory_event": True, "counts": {}, "scope": {"source": "plex", "include_packs": include_packs,
+           "requested_sections": sorted(section_ids) if section_ids else "all video and music sections" if include_music else "all video sections"}}
     for section in sections:
         section_id = str(section.get("key", ""))
-        if section.get("type") not in {"movie", "show"} or (section_ids is not None and section_id not in section_ids):
+        if section.get("type") not in section_types or (section_ids is not None and section_id not in section_ids):
             continue
         if not section_id.isdigit():
             raise TorrentError("invalid Plex section identity")
@@ -362,12 +381,14 @@ def iter_plex_releases(base_url: str, token: str, root: Path,
                         yield reject(f"plex:season:{key[0]}:{key[1]}", "season", "duplicate Plex season identity")
                     else:
                         season_metadata[key] = row
-        media_type = 1 if section["type"] == "movie" else 4
-        kind = "movie" if media_type == 1 else "episode"
+        media_type, kind = {"movie": (1, "movie"), "show": (4, "episode"), "artist": (10, "music")}[section["type"]]
         for rows in pages(section_id, media_type):
             yield {"_inventory_event": True, "section_id": section_id, "counts": {kind: len(rows)}}
             for row in rows:
                 rating_key = str(row.get("ratingKey") or "missing")
+                if kind == "music" and row.get("type") != "track":
+                    yield reject("plex:" + rating_key, kind, "Plex music section returned a non-track asset")
+                    continue
                 versions = row.get("Media")
                 valid = False
                 if not isinstance(versions, list) or not versions:
@@ -809,7 +830,8 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--plex-url")
     parser.add_argument("--plex-token-env", default="PLEX_TOKEN")
     parser.add_argument("--path-map", action="append", default=[], help="Plex absolute prefix=relative prefix below --root")
-    parser.add_argument("--sections", help="Optional comma-separated Plex video section IDs")
+    parser.add_argument("--sections", help="Optional comma-separated Plex video or music section IDs")
+    parser.add_argument("--include-music", action="store_true", help="Explicitly include Plex track versions from music sections")
     parser.add_argument("--no-packs", action="store_true")
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--announce")
@@ -841,7 +863,8 @@ def main(argv: list[str] | None = None) -> int:
                     raise TorrentError("path map requires source=destination")
                 maps.append(tuple(mapping.split("=", 1)))
             releases = iter_plex_releases(args.plex_url, os.environ.get(args.plex_token_env, ""), args.root,
-                                          maps or None, not args.no_packs, set(args.sections.split(",")) if args.sections else None)
+                                          maps or None, not args.no_packs, set(args.sections.split(",")) if args.sections else None,
+                                          include_music=args.include_music)
         report = publish_stream(releases, args.root, args.announce, args.output, args.piece_length, args.resume, args.full_catalog, pacer)
         print(f"Prepared {report['release_count']} private releases; reused {report['cache_reused']} verified hash checkpoints; rejected {report['rejected']}. Live seeding remains unverified.")
         return 0 if report["completeness"] == "complete" else 3

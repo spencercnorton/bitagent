@@ -83,9 +83,10 @@ def test_private_caps_are_limited_to_implemented_modes(client, private_feed):
     root = ET.fromstring(response.content)
     assert root.tag == "caps"
     assert root.find("registration").get("open") == "no"
-    assert [node.get("id") for node in root.findall("categories/category")] == ["2000", "5000"]
+    assert [node.get("id") for node in root.findall("categories/category")] == ["2000", "3000", "5000", "8000"]
     assert root.find("searching/movie-search").get("supportedParams") == "q,imdbid,tmdbid"
     assert root.find("searching/music-search") is None
+    assert root.find("searching/audio-search").attrib == {"available": "yes", "supportedParams": "q"}
     assert root.find("limits").attrib == {"max": "100", "default": "100"}
     assert not private_feed["searched"]
 
@@ -149,7 +150,7 @@ def test_private_download_uses_authenticated_identity(client, private_feed):
 
 
 def test_private_feed_rejects_unsupported_or_invalid_search(client, private_feed, monkeypatch):
-    response = client.get("/torznab/private/api?t=music&apikey=ba_test")
+    response = client.get("/torznab/private/api?t=book&apikey=ba_test")
     assert response.status_code == 400
     assert ET.fromstring(response.content).get("code") == "202"
 

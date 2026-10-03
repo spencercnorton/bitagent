@@ -35,6 +35,7 @@ from deps import require_operator, _configured_hosts
 from memberships import write_membership
 import privatebindings
 import privatecatalog
+from private_media import KINDS, TV_KINDS, CATEGORY_KINDS
 import private_readiness as readiness
 
 router = APIRouter()
@@ -44,6 +45,12 @@ _MAX_TORRENT_BYTES = 4 * 1024 * 1024
 _MAX_CATALOG_RELEASES = 1000
 _MAX_COUNTER = 2**63 - 1
 _TEMPLATES = Jinja2Templates(directory=Path(__file__).parent / "templates")
+# Static responses are immutable; a returning member needs a new URL whenever
+# these asset bytes change, including the private kind labels and filters.
+_TEMPLATES.env.globals["asset_version"] = hashlib.sha256(b"".join(
+    (Path(__file__).parent / "static" / name).read_bytes()
+    for name in ("css/tokens.css", "css/private-library.css", "js/private-library.js")
+)).hexdigest()[:12]
 _READINESS_TASK = None
 logger = logging.getLogger("bitagent-ui")
 
@@ -307,7 +314,7 @@ def _validate_release(item: dict) -> dict:
         if (not isinstance(title, str) or not title.strip() or len(title) > 500
                 or any((ord(c) < 32 and c not in "\t\n\r") or 0xD800 <= ord(c) <= 0xDFFF or ord(c) in {0xFFFE,0xFFFF} for c in title)
                 or not isinstance(source_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,200}", source_id)
-                or kind not in {"movie", "episode", "season", "show"}):
+                or kind not in KINDS):
             raise ValueError("Invalid release metadata")
         metadata = {}
         for key in ("imdb_id", "tmdb_id", "tvdb_id", "season"):
@@ -560,10 +567,7 @@ async def search_releases(params) -> dict:
             raise HTTPException(422, "Invalid category")
         kinds = set()
         for cat in map(int, cats.split(",")):
-            if 2000 <= cat < 3000:
-                kinds.add("movie")
-            if 5000 <= cat < 6000:
-                kinds.update({"episode", "season", "show"})
+            kinds.update(CATEGORY_KINDS.get(cat // 1000 * 1000, ()))
         if not kinds:
             where.append("0")
         else:
@@ -572,7 +576,10 @@ async def search_releases(params) -> dict:
     if mode == "movie":
         where.append("a.kind='movie'")
     if mode == "tvsearch":
-        where.append("a.kind!='movie'")
+        where.append("a.kind IN (" + ",".join("?" for _ in TV_KINDS) + ")")
+        args.extend(sorted(TV_KINDS))
+    if mode == "music":
+        where.append("a.kind='music'")
     for field, param in (("imdb_id", "imdbid"), ("tmdb_id", "tmdbid"), ("tvdb_id", "tvdbid"), ("season", "season")):
         value = params.get(param)
         if value is not None and value != "":

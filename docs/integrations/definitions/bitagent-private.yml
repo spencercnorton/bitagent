@@ -10,10 +10,14 @@ links:
 caps:
   categorymappings:
     - {id: 2000, cat: Movies, desc: "Movies"}
+    - {id: 3000, cat: Audio, desc: "Music"}
     - {id: 5000, cat: TV, desc: "TV"}
+    - {id: 8000, cat: Other, desc: "Other"}
   modes:
     search: [q]
     movie-search: [q, imdbid, tmdbid]
+    # Cardigann calls this mode music-search; wire caps use audio-search.
+    music-search: [q]
     tv-search: [q, imdbid, tmdbid, tvdbid, season, ep]
 settings:
   - name: apikey

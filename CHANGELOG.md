@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add private `music` and `generic` leaf releases to the offline publisher,
+  protected catalogue, member library and private Torznab feed. Explicit
+  `--include-music` Plex discovery includes track versions; Music and Other
+  use Audio 3000 and Other 8000.
+  Music supports text search only. Keep version-1 video manifests, torrent
+  layouts, private key permissions and fresh seed verification unchanged.
+
 - Align administration with discovery's shared teal and navy palette, lime
   product mark, typography, navigation and card treatments in both themes.
 - Support an HTTPS library-origin `/admin` proxy with an explicit, fixed

@@ -105,6 +105,31 @@ network access and permission expiry at the VPN/client firewall as well.
 
 ## Prepare genuine torrents
 
+Version-1 inventories accept `movie`, `episode`, `season`, `show`, `music`
+and `generic`. Music and generic releases are explicit leaf file sets: choose
+one track, album, encoding or other bounded unit in the private inventory.
+Keep its human context in `title`; no artist/album identifiers are inferred.
+Only listed files are hashed. Files outside Plex can use `--manifest` with the
+same bounded `source_id`, `title`, `kind` and root-relative `files` fields.
+This does not discover arbitrary directories or promote a prepared generation.
+
+Add `--include-music` to opt into Plex track versions in music sections
+(type `artist`); the default retains its video-only discovery scope.
+Each track's title includes available artist and album text; versions retain
+their own Plex media identity. It does not create artist or album packs.
+Use `--sections` to select explicit video or opted-in music sections. Music and generic
+units use the same path, hash, checkpoint, independent rehash and private
+metainfo checks as video units. The importer accepts the additional kinds;
+older readers reject them rather than reinterpret them as TV. Existing video
+fields and torrent `info` dictionaries remain unchanged.
+
+Member filters expose Music and Other alongside Movies and TV. Private
+Torznab maps music to Audio 3000 and generic to Other 8000; Books 7000 is
+unimplemented. Query `t=music` supports `q` only and is advertised as
+`audio-search` in capabilities. Use `t=search&cat=8000` for Other. TV searches
+include only episode, season and show releases. These kinds belong only to
+the private SQLite library and do not change public DHT classification.
+
 Run the publisher where the actual media files are mounted. Plex discovery is
 read-only. Supply the Plex token through the named environment variable and
 explicitly map container paths to directories beneath the media root:
