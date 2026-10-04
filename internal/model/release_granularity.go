@@ -34,7 +34,7 @@ var completeSeriesRegex = regexp.MustCompile(
 // multi-episode release is labelled a partial-season pack rather than a
 // multi-episode file. Scene multi-episode files are 2-3 episodes (S01E01E02,
 // double specials); anything larger is a pack of individual episodes.
-// ponytail: files_count could refine this split but counts non-video files
+// files_count could refine this split but counts non-video files
 // (nfo/srt), so a fixed threshold is the honest deterministic rule.
 const maxMultiEpisode = 3
 

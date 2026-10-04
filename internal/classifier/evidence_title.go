@@ -49,7 +49,7 @@ type TitleEvidence struct {
 }
 
 const (
-	// ponytail: fixed thresholds, calibrated on one library's benchmark (against
+	// Fixed thresholds, calibrated on one library's benchmark (against
 	// the pre-deploy approximation of the fixed matcher, 2 votes fixed 150 rows
 	// and 3 votes 141; both broke 0). A share above 1⁄2 also means a tied vote
 	// can never pass. Make these config when a second library disagrees.
