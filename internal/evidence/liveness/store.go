@@ -216,7 +216,7 @@ returning info_hash, status, coalesce(last_qb_state, ''), suspect_first_seen_at,
 //
 // The explicit “::timestamptz“ cast on $2's first use resolves a
 // PostgreSQL prepared-statement type-inference ambiguity that surfaced
-// after the priors-learner merge (kleos-v1.18.0 → cf7babd8). Without
+// after the priors-learner merge. Without
 // it, the planner sees $2 in both “blacklisted_at = $2“ and “$2 +
 // $3::interval“ and can't pick a single type — the “+“ operator has
 // multiple overloads (timestamptz+interval, text+text via concat, etc.)
