@@ -437,7 +437,7 @@ func (c processor) recordDeleteVerdicts(ctx context.Context, dv []deleteVerdict)
 // independent of workflow, rule, and content — which is what makes the
 // resulting rows a valid basis for a proportion estimate.
 //
-// ponytail: sampled, not exhaustive. classifier_delete runs at ~160k/day, so
+// Sampled, not exhaustive. classifier_delete runs at ~160k/day, so
 // capturing every name costs ~15 GB/year to answer a question that needs a few
 // hundred adjudicated rows. At 1/128 this yields ~1,250 names/day — already
 // ~4x the n=300 a Wilson bound wants. Raise the constant only if a per-rule

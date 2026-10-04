@@ -6,7 +6,7 @@ package model
 // layers: a fresh deterministic 'name' value always wins; an absent
 // deterministic signal never downgrades an 'llm' row.
 //
-// ponytail: plain constants + NullString field, not a go-enum type — the
+// Plain constants + NullString field, not a go-enum type — the
 // source is internal provenance with two values; generate the enum when a
 // GQL/torznab surface needs it.
 const (

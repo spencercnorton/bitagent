@@ -809,7 +809,7 @@ func EvaluationLLMMatchCandidateGate(
 // guarded by llmMatchCandidateUnambiguous and llmMatchYearCompatible rather
 // than by this function.
 //
-// ponytail: word-boundary differences are deliberately NOT folded. Collapsing
+// Word-boundary differences are deliberately NOT folded. Collapsing
 // spacing would recover a further 8 rejections in the same window ("Uma Musume"
 // vs "Umamusume", "K.G.F" vs "KGF", "Hoop-La" vs "Hoopla") but it also merges
 // distinct works — "Black Bird" vs "Blackbird" — so it needs a real

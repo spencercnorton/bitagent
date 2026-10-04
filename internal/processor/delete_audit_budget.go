@@ -28,7 +28,7 @@ import (
 // ~160k times a day). A durable cap would mean counting rows per delete — far
 // more machinery than the guarantee is worth.
 //
-// ponytail: in-memory counter, per-process. If collection ever needs to
+// Deliberately simple: in-memory counter, per-process. If collection ever needs to
 // survive restarts with an exact global cap, count rows once at startup and
 // seed the counter — do not add a per-delete query.
 type deleteAuditBudget struct {

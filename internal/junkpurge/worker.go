@@ -642,7 +642,7 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 				// very next cycle — so a deterministic bad reply is re-bought
 				// every hour, forever.
 				//
-				// ponytail: a flat cooldown, not an N-strikes counter. This turns
+				// A flat cooldown, not an N-strikes counter. This turns
 				// an unbounded loop into one call per cooldown (24h default), with
 				// no schema change. If a persistent poison pill still costs too
 				// much, the upgrade is a failure count on junkpurge_sync_claims
@@ -1292,7 +1292,7 @@ func (w *purgeWorker) logWouldExpire(ctx context.Context, pool *pgxpool.Pool) {
 // both are in verdicts.blockingVerdicts, so serving and BEP-9 exclusion are
 // unchanged. Best-effort; logs on error.
 //
-// ponytail: no second "really delete after N days" horizon. expired_at is the
+// No second "really delete after N days" horizon. expired_at is the
 // marker one would key on if owner decision D4 elects to re-arm a destructive
 // purge — add it then, not speculatively.
 func (w *purgeWorker) expireQuarantine(ctx context.Context, pool *pgxpool.Pool) {

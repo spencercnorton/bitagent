@@ -100,7 +100,7 @@ func clampRangeEnd(start, end int64) int64 {
 // episodes. The guard is skipped when the raw range text carries an explicit
 // e/E marker before the end number ("E779-E1080") — that marker proves an
 // episode, and the only e/E the range token can consume is that marker.
-// ponytail: a word-boundary redesign of the token is the durable fix — it also
+// Known gap: a word-boundary redesign of the token is the durable fix — it also
 // stops "s1080p" parsing as season 10 — but changes enough name classes to
 // need its own MR and eval.
 func clampEpisodeRangeEnd(start, end int64, rawRange string) int64 {
