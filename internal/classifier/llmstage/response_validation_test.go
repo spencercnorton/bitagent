@@ -33,6 +33,7 @@ func TestLiveWorkflowRejectsAmbiguousTypeResponses(t *testing.T) {
 		"unknown_field":        answerEnvelope(t, `{"category":"movie","confidence":0.99,"attach":true}`),
 		"field_case":           answerEnvelope(t, `{"Category":"movie","confidence":0.99}`),
 		"duplicate_choices":    []byte(`{"choices":[],"choices":[{"finish_reason":"stop","message":{"content":"{\"category\":\"movie\",\"confidence\":0.99}"}}]}`),
+		"unicode_choices":      []byte(`{"choiceſ":[],"choiceſ":[{"finish_reason":"stop","message":{"content":"{\"category\":\"movie\",\"confidence\":0.99}"}}]}`),
 		"duplicate_finish":     []byte(`{"choices":[{"finish_reason":"length","finish_reason":"stop","message":{"content":"{\"category\":\"movie\",\"confidence\":0.99}"}}]}`),
 		"duplicate_content":    []byte(`{"choices":[{"finish_reason":"stop","message":{"content":"{}","content":"{\"category\":\"movie\",\"confidence\":0.99}"}}]}`),
 	} {

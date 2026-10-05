@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"unicode"
 )
 
 // encoding/json otherwise accepts duplicate object fields by choosing the
@@ -37,10 +38,10 @@ func validateUniqueResponseJSON(raw []byte) error {
 					return err
 				}
 				name, ok := key.(string)
-				if !ok || seen[strings.ToLower(name)] {
+				if !ok || seen[responseFieldFold(name)] {
 					return errors.New("duplicate response JSON field")
 				}
-				seen[strings.ToLower(name)] = true
+				seen[responseFieldFold(name)] = true
 				if err := value(depth + 1); err != nil {
 					return err
 				}
@@ -64,4 +65,18 @@ func validateUniqueResponseJSON(raw []byte) error {
 		return errors.New("trailing response JSON data")
 	}
 	return nil
+}
+
+// Match encoding/json's Unicode simple-fold equivalence, including aliases
+// such as long s. Lowercasing alone does not cover that equivalence class.
+func responseFieldFold(name string) string {
+	return strings.Map(func(character rune) rune {
+		minimum := character
+		for next := unicode.SimpleFold(character); next != character; next = unicode.SimpleFold(next) {
+			if next < minimum {
+				minimum = next
+			}
+		}
+		return minimum
+	}, name)
 }
