@@ -138,11 +138,11 @@ func TestExtractMany_SkipsCachedAndDuplicateNames(t *testing.T) {
 }
 
 func TestExtractMany_InventedIDsAreDropped(t *testing.T) {
-	// Response invents id 99 and duplicates id 1; ids 2..8 are missing → 7
-	// single fallbacks.
+	// Response invents id 99 and duplicates id 1. The ambiguous id 1 and all
+	// missing ids 2..8 must use independent single-request fallbacks.
 	items := `{"items":[{"id":1,"title":"Some Movie 0","year":2020,"type":"movie","is_anime":false,"is_pack":false,"is_adult":false},{"id":1,"title":"Dup","year":2020,"type":"movie","is_anime":false,"is_pack":false,"is_adult":false},{"id":99,"title":"Ghost","year":2020,"type":"movie","is_anime":false,"is_pack":false,"is_adult":false}]}`
 	contents := []string{items}
-	for i := 1; i < 8; i++ {
+	for i := 0; i < 8; i++ {
 		contents = append(contents, fmt.Sprintf(`{"title":"Some Movie %d","year":2020,"type":"movie","is_anime":false,"is_pack":false,"is_adult":false}`, i))
 	}
 	srv, calls := chatServer(t, contents...)
@@ -150,11 +150,12 @@ func TestExtractMany_InventedIDsAreDropped(t *testing.T) {
 
 	st := c.ExtractMany(context.Background(), batchTorrents(8), 8)
 
-	assert.Equal(t, 8, int(atomic.LoadInt32(calls)))
+	assert.Equal(t, 9, int(atomic.LoadInt32(calls)))
 	assert.Equal(t, 8, st.OK)
-	assert.Equal(t, 7, st.Singles)
+	assert.Equal(t, 8, st.Singles)
 
-	// The first-seen item for id 1 wins, not the duplicate.
+	// This title comes from its single-request fallback, never either of the
+	// conflicting batch rows.
 	ext, err := c.Extract(context.Background(), batchTorrents(1)[0])
 	require.NoError(t, err)
 	assert.Equal(t, "Some Movie 0", ext.Title)

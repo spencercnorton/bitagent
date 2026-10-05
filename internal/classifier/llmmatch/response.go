@@ -1,6 +1,7 @@
 package llmmatch
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,9 +27,9 @@ var (
 // boundary. Production-fidelity evaluation calls the same function so status,
 // body-limit, envelope, refusal, and empty-content behavior cannot drift.
 //
-// The matcher intentionally accepts the first choice's content exactly as
-// returned. Refusal and empty-content handling belongs to the downstream model
-// object decoder, matching the live action path.
+// Missing optional finish/role metadata is accepted for compatible providers.
+// Explicit refusal, errors, incomplete output and ambiguous choices cannot
+// authorize a match. Empty content is rejected by the downstream model decoder.
 func ReadMatcherChatResponse(
 	statusCode int,
 	body io.Reader,
@@ -50,12 +51,19 @@ func ReadMatcherChatResponse(
 	if statusCode != http.StatusOK {
 		return raw, nil, fmt.Errorf("%w: %d", ErrMatcherChatHTTPStatus, statusCode)
 	}
+	if err := validateMatcherJSON(raw); err != nil {
+		return raw, nil, fmt.Errorf("%w: %v", ErrMatcherChatEnvelope, err)
+	}
 	// Accounting is decoded separately by recordUsage. A malformed optional
 	// usage field makes spend partial; it must not veto otherwise valid content.
 	var outer struct {
+		Error   json.RawMessage `json:"error"`
 		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
+			FinishReason json.RawMessage `json:"finish_reason"`
+			Message      struct {
+				Content string          `json:"content"`
+				Role    json.RawMessage `json:"role"`
+				Refusal json.RawMessage `json:"refusal"`
 			} `json:"message"`
 		} `json:"choices"`
 	}
@@ -65,5 +73,34 @@ func ReadMatcherChatResponse(
 	if len(outer.Choices) == 0 {
 		return raw, nil, ErrMatcherChatNoChoices
 	}
+	if len(outer.Choices) != 1 {
+		return raw, nil, fmt.Errorf("%w: expected exactly one choice", ErrMatcherChatEnvelope)
+	}
+	choice := outer.Choices[0]
+	if matcherJSONValuePresent(outer.Error) || matcherRefusalRejected(choice.Message.Refusal) ||
+		!matcherOptionalStringEquals(choice.FinishReason, "stop") ||
+		!matcherOptionalStringEquals(choice.Message.Role, "assistant") {
+		return raw, nil, fmt.Errorf("%w: incomplete, refused or errored output", ErrMatcherChatEnvelope)
+	}
 	return raw, []byte(outer.Choices[0].Message.Content), nil
+}
+
+func matcherJSONValuePresent(raw json.RawMessage) bool {
+	return len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
+}
+
+func matcherRefusalRejected(raw json.RawMessage) bool {
+	if !matcherJSONValuePresent(raw) {
+		return false
+	}
+	var value string
+	return json.Unmarshal(raw, &value) != nil || value != ""
+}
+
+func matcherOptionalStringEquals(raw json.RawMessage, expected string) bool {
+	if len(raw) == 0 {
+		return true
+	}
+	var value *string
+	return json.Unmarshal(raw, &value) == nil && value != nil && *value == expected
 }

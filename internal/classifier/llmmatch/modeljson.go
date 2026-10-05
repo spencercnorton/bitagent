@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Model replies are not a wire format we control. Both stages used to hand the
@@ -34,12 +36,28 @@ import (
 // the input unchanged when it cannot find a better candidate, so a genuinely
 // malformed reply still surfaces as a decode error rather than silently
 // becoming an empty object.
-func sanitizeModelJSON(raw []byte) []byte {
+func sanitizeModelJSON(raw []byte) ([]byte, error) {
 	s := strings.TrimSpace(string(raw))
 
 	// Reasoning models emit their trace first; keep only what follows.
-	if i := strings.LastIndex(s, "</think>"); i >= 0 {
+	if strings.HasPrefix(s, "<think>") {
+		i := strings.Index(s, "</think>")
+		if i < 0 || strings.Contains(s[i+len("</think>"):], "</think>") {
+			return nil, fmt.Errorf("ambiguous model reasoning blocks")
+		}
 		s = strings.TrimSpace(s[i+len("</think>"):])
+	}
+	// Do this before stripping fences/prose: choosing the first object would
+	// otherwise hide a contradictory second answer (including another fence).
+	if start, end := firstBalancedObjectSpan(s); start >= 0 {
+		if strings.ContainsRune(s[end:], '{') {
+			return nil, fmt.Errorf("multiple model answer objects")
+		}
+		if strings.Count(s[:start], "```")+strings.Count(s[end:], "```") > 2 {
+			return nil, fmt.Errorf("multiple model answer fences")
+		}
+	} else if strings.Count(s, "```") > 2 {
+		return nil, fmt.Errorf("multiple model answer fences")
 	}
 
 	// Strip one fenced block: ```json\n{...}\n``` or ```\n{...}\n```.
@@ -56,6 +74,9 @@ func sanitizeModelJSON(raw []byte) []byte {
 		}
 		s = strings.TrimSpace(s)
 	}
+	if strings.HasPrefix(s, "[") {
+		return nil, fmt.Errorf("model reply is not a JSON object")
+	}
 
 	// Anything else (leading prose, trailing commentary): take the first
 	// balanced object.
@@ -65,17 +86,25 @@ func sanitizeModelJSON(raw []byte) []byte {
 		}
 	}
 	if s == "" {
-		return raw
+		return raw, nil
 	}
-	return []byte(s)
+	return []byte(s), nil
 }
 
 // firstBalancedObject returns the first brace-balanced JSON object in s,
 // ignoring braces inside string literals. Empty when there is none.
 func firstBalancedObject(s string) string {
-	start := strings.IndexByte(s, '{')
+	start, end := firstBalancedObjectSpan(s)
 	if start < 0 {
 		return ""
+	}
+	return s[start:end]
+}
+
+func firstBalancedObjectSpan(s string) (int, int) {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return -1, -1
 	}
 	depth, inStr, esc := 0, false, false
 	for i := start; i < len(s); i++ {
@@ -94,11 +123,11 @@ func firstBalancedObject(s string) string {
 		case c == '}':
 			depth--
 			if depth == 0 {
-				return s[start : i+1]
+				return start, i + 1
 			}
 		}
 	}
-	return ""
+	return -1, -1
 }
 
 // coerceInt accepts a JSON number, a numeric string, or null, and yields 0 for
@@ -196,13 +225,128 @@ func coerceString(raw json.RawMessage) string {
 // declined" — indistinguishable from healthy operation, and silent. Same for a
 // bare number, string or array.
 func requireJSONObject(raw []byte) ([]byte, error) {
-	clean := bytes.TrimSpace(sanitizeModelJSON(raw))
+	if len(raw) == 0 || len(raw) > matcherChatResponseLimit {
+		return nil, fmt.Errorf("model reply exceeds bounded decode size")
+	}
+	clean, err := sanitizeModelJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	clean = bytes.TrimSpace(clean)
 	if len(clean) == 0 || clean[0] != '{' {
 		return nil, fmt.Errorf(
 			"model reply is not a JSON object: %.80q", string(clean),
 		)
 	}
+	if err := validateMatcherJSON(clean); err != nil {
+		return nil, err
+	}
 	return clean, nil
+}
+
+// Provider metadata is extensible, but duplicate names are ambiguous even
+// when escaped or case folded. Use the same Unicode simple folding as
+// encoding/json struct matching before any last-key-wins decoding.
+func validateMatcherJSON(raw []byte) error {
+	if len(raw) == 0 || len(raw) > matcherChatResponseLimit {
+		return fmt.Errorf("matcher JSON exceeds bounded decode size")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var consume func(int) error
+	consume = func(depth int) error {
+		if depth > 32 {
+			return fmt.Errorf("matcher JSON nesting exceeds limit")
+		}
+		token, err := decoder.Token()
+		if err != nil {
+			return fmt.Errorf("invalid matcher JSON: %w", err)
+		}
+		delim, container := token.(json.Delim)
+		if !container {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := map[string]bool{}
+			for decoder.More() {
+				key, err := decoder.Token()
+				if err != nil {
+					return fmt.Errorf("invalid matcher JSON field: %w", err)
+				}
+				name, ok := key.(string)
+				if !ok {
+					return fmt.Errorf("invalid matcher JSON field")
+				}
+				name = foldedMatcherFieldName(name)
+				if seen[name] {
+					return fmt.Errorf("duplicate matcher JSON field")
+				}
+				seen[name] = true
+				if err := consume(depth + 1); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for decoder.More() {
+				if err := consume(depth + 1); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("invalid matcher JSON delimiter")
+		}
+		closing, err := decoder.Token()
+		if err != nil || delim == '{' && closing != json.Delim('}') || delim == '[' && closing != json.Delim(']') {
+			return fmt.Errorf("invalid matcher JSON closing delimiter")
+		}
+		return nil
+	}
+	if err := consume(0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return fmt.Errorf("trailing matcher JSON data")
+	}
+	return nil
+}
+
+func foldedMatcherFieldName(name string) string {
+	return strings.Map(func(r rune) rune {
+		folded := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			if next < folded {
+				folded = next
+			}
+		}
+		return folded
+	}, name)
+}
+
+// Model answer fields are a flat, explicit contract. Provider envelope
+// metadata remains extensible; a model cannot add or alias action fields.
+func validateModelFields(clean []byte, allowed ...string) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(clean, &fields); err != nil {
+		return fmt.Errorf("not a JSON object: %w", err)
+	}
+	for name, raw := range fields {
+		found := false
+		for _, field := range allowed {
+			if name == field {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("unsupported model answer field")
+		}
+		value := bytes.TrimSpace(raw)
+		if len(value) == 0 || value[0] == '{' || value[0] == '[' {
+			return fmt.Errorf("model answer field is not scalar")
+		}
+	}
+	return nil
 }
 
 // rawExtraction is the tolerant wire shape for a stage-1 reply. Every field is
@@ -228,6 +372,11 @@ type rawExtraction struct {
 func decodeExtraction(raw []byte) (Extraction, error) {
 	clean, err := requireJSONObject(raw)
 	if err != nil {
+		return Extraction{}, err
+	}
+	// id is the existing batch extraction item's echoed position. The single
+	// extraction path ignores it; the batch caller validates its range.
+	if err := validateModelFields(clean, "title", "year", "type", "season", "episode", "is_anime", "is_pack", "is_adult", "english", "id"); err != nil {
 		return Extraction{}, err
 	}
 	var re rawExtraction
@@ -278,6 +427,9 @@ func decodeExtraction(raw []byte) (Extraction, error) {
 func decodeRerank(raw []byte) (int64, float64, error) {
 	clean, err := requireJSONObject(raw)
 	if err != nil {
+		return 0, 0, err
+	}
+	if err := validateModelFields(clean, "tmdb_id", "confidence"); err != nil {
 		return 0, 0, err
 	}
 	var re struct {
