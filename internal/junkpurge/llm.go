@@ -853,8 +853,9 @@ func parseBatchJudgments(text string, n int) ([]Judgment, error) {
 	return out, nil
 }
 
-// encoding/json otherwise silently accepts a later duplicate field. On a
-// quarantine decision that could turn an ambiguous keep into a confident junk.
+// encoding/json otherwise silently accepts a later duplicate field, including
+// case variants of a struct field. On a quarantine decision that could turn an
+// ambiguous keep into a confident junk.
 func rejectDuplicateJunkJSON(raw []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
@@ -880,10 +881,11 @@ func rejectDuplicateJunkJSON(raw []byte) error {
 					return err
 				}
 				name, ok := key.(string)
-				if !ok || seen[name] {
+				folded := strings.ToLower(name)
+				if !ok || seen[folded] {
 					return fmt.Errorf("duplicate or invalid JSON field")
 				}
-				seen[name] = true
+				seen[folded] = true
 				if err = walk(depth + 1); err != nil {
 					return err
 				}

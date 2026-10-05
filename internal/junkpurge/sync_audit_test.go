@@ -134,12 +134,14 @@ func TestAuditedJudgePrivacyAndStorageFailuresBlockDispatchOrApplication(t *test
 }
 
 func TestAuditedJudgeRetainsMalformedNon200AndBoundedResponses(t *testing.T) {
-	for _, kind := range []string{"malformed", "non200", "oversize"} {
+	for _, kind := range []string{"malformed", "case_variant", "non200", "oversize"} {
 		t.Run(kind, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				switch kind {
 				case "malformed":
 					_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"verdict\":\"junk\",\"confidence\":9}"}}]}`))
+				case "case_variant":
+					_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"verdict\":\"real_mangled\",\"Verdict\":\"junk\",\"confidence\":0.99}"}}]}`))
 				case "non200":
 					w.WriteHeader(201)
 					_, _ = w.Write([]byte("unexpected status"))
@@ -233,14 +235,34 @@ func TestAuditedGroupedFallbackUsesEachExactSource(t *testing.T) {
 }
 
 func TestJunkDecisionRejectsDuplicateFields(t *testing.T) {
-	for _, content := range []string{`{"verdict":"real_mangled","verdict":"junk","confidence":0.99}`, `{"verdict":"junk","confidence":0.1,"confidence":0.99}`} {
+	for _, content := range []string{
+		`{"verdict":"real_mangled","verdict":"junk","confidence":0.99}`,
+		`{"verdict":"junk","confidence":0.1,"confidence":0.99}`,
+		`{"verdict":"real_mangled","Verdict":"junk","confidence":0.99}`,
+		`{"verdict":"junk","confidence":0.1,"Confidence":0.99}`,
+		`{"verdict":"real_mangled","Verdi\u0063t":"junk","confidence":0.99}`,
+	} {
 		_, err := parseJudgment(content)
 		require.Error(t, err)
 	}
-	_, err := parseBatchJudgments(`[{"i":1,"i":2,"verdict":"junk","confidence":0.99},{"i":1,"verdict":"real_mangled","confidence":0.9}]`, 2)
-	require.Error(t, err)
-	_, _, err = decodeChatReply([]byte(`{"choices":[],"choices":[{"message":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`))
-	require.Error(t, err)
+	for _, content := range []string{
+		`[{"i":1,"i":2,"verdict":"junk","confidence":0.99},{"i":1,"verdict":"real_mangled","confidence":0.9}]`,
+		`[{"i":1,"I":2,"verdict":"junk","confidence":0.99},{"i":1,"verdict":"real_mangled","confidence":0.9}]`,
+		`[{"i":1,"verdict":"real_mangled","Verdict":"junk","confidence":0.99},{"i":2,"verdict":"real_mangled","confidence":0.9}]`,
+	} {
+		_, err := parseBatchJudgments(content, 2)
+		require.Error(t, err)
+	}
+	for _, raw := range []string{
+		`{"choices":[],"choices":[{"message":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
+		`{"choices":[],"Choices":[{"message":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
+		`{"choices":[{"finish_reason":"length","Finish_Reason":"stop","message":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
+		`{"choices":[{"message":{"content":"{\"verdict\":\"real_mangled\",\"confidence\":0.99}","Content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
+		`{"choices":[{"message":{"content":"{\"verdict\":\"real_mangled\",\"Verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
+	} {
+		_, err := EvaluationParseHTTPJudgments([]byte(raw), 1)
+		require.Error(t, err)
+	}
 }
 
 func TestEvaluationParseHTTPJudgmentsUsesProductionParser(t *testing.T) {
