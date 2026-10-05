@@ -68,7 +68,7 @@ func NewMetrics() *Metrics {
 		}),
 		expiredTotal: dualemit.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "expired_total",
-			Help: "Cumulative quarantine entries permanently deleted + blacklisted after the review window.",
+			Help: "Cumulative quarantine entries tombstoned after the review window; snapshots remain restorable.",
 		}),
 		llmDeferredTotal: dualemit.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "llm_deferred_total",
@@ -76,7 +76,7 @@ func NewMetrics() *Metrics {
 		}),
 		circuitBreaks: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "circuit_breaks_total",
-			Help: "Cycles whose application was paused by a circuit breaker, by reason: capture_unavailable | llm_unavailable | junk_rate_anomaly.",
+			Help: "Cycles whose application was paused by a circuit breaker, by reason: capture_unavailable | llm_unavailable | invalid_response | junk_rate_anomaly.",
 		}, []string{"reason"}),
 		cycleErrorsTotal: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "cycle_errors_total",
@@ -100,11 +100,11 @@ func NewMetrics() *Metrics {
 		}),
 		llmRequests: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "llm_requests_total",
-			Help: "Provider requests by processing mode, model and outcome.",
+			Help: "Judge attempts by processing mode, model and outcome, including pre-dispatch failures.",
 		}, []string{"processing", "model", "outcome"}),
 		llmFailures: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "llm_failures_total",
-			Help: "Failed provider requests by processing mode, model and bounded reason: canceled | timeout | transport | response_read | rate_limited | server_error | request_rejected | request_build | budget_exhausted | budget_unavailable | unavailable | invalid_response.",
+			Help: "Failed judge attempts by processing mode, model and bounded reason: canceled | timeout | transport | response_read | rate_limited | server_error | request_rejected | request_build | budget_exhausted | budget_unavailable | audit_unavailable | unavailable | invalid_response.",
 		}, []string{"processing", "model", "reason"}),
 		llmTokens: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "llm_tokens_total",

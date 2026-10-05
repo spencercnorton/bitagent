@@ -126,6 +126,29 @@ CREATE TABLE junkpurge_quarantine (
 	_, err = pool.Exec(ctx, releasesUp)
 	require.NoError(t, err)
 
+	t.Run("unresolved malformed reply keeps entire cycle out of quarantine", func(t *testing.T) {
+		hashes := [][]byte{bytes20(81), bytes20(82), bytes20(83)}
+		for i, h := range hashes {
+			insertCandidate(t, pool, h, []string{"synthetic invalid reply", "synthetic junk item", "synthetic real film"}[i])
+		}
+		cfg := NewDefaultConfig()
+		cfg.Enabled = true
+		cfg.EnablePurge = true
+		cfg.BatchSize = 3
+		cfg.LLMNamesPerCall = 1
+		w := &purgeWorker{cfg: cfg, pool: lazy.New(func() (*pgxpool.Pool, error) { return pool, nil }), judge: malformedCycleJudge{}, metrics: NewMetrics(), logger: zap.NewNop().Sugar(), batchLeaseOwner: "synthetic-malformed-cycle"}
+		w.runCycle(ctx)
+		var n int
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM torrents WHERE info_hash=ANY($1)`, hashes).Scan(&n))
+		require.Equal(t, 3, n)
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_quarantine WHERE info_hash=ANY($1)`, hashes).Scan(&n))
+		require.Zero(t, n)
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_judgments WHERE info_hash=ANY($1) AND reason='sync_cycle:invalid_response'`, hashes).Scan(&n))
+		require.Equal(t, 2, n, "valid evidence remains attributable to an incomplete cycle")
+		_, err := pool.Exec(ctx, `DELETE FROM junkpurge_judgments WHERE info_hash=ANY($1); DELETE FROM torrents WHERE info_hash=ANY($1)`, hashes)
+		require.NoError(t, err)
+	})
+
 	t.Run("isolated unavailable group preserves later evidence but blocks purge", func(t *testing.T) {
 		hashes := [][]byte{bytes20(51), bytes20(52), bytes20(53), bytes20(54)}
 		for index, hash := range hashes {
