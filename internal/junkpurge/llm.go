@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
@@ -881,7 +882,7 @@ func rejectDuplicateJunkJSON(raw []byte) error {
 					return err
 				}
 				name, ok := key.(string)
-				folded := strings.ToLower(name)
+				folded := junkJSONFieldIdentity(name)
 				if !ok || seen[folded] {
 					return fmt.Errorf("duplicate or invalid JSON field")
 				}
@@ -906,6 +907,20 @@ func rejectDuplicateJunkJSON(raw []byte) error {
 		return err
 	}
 	return requireEOF(decoder)
+}
+
+// Match encoding/json's case-insensitive struct fields, including Unicode
+// aliases such as the long s in "choiceſ". Lowercasing alone misses those.
+func junkJSONFieldIdentity(name string) string {
+	return strings.Map(func(r rune) rune {
+		least := r
+		for folded := unicode.SimpleFold(r); folded != r; folded = unicode.SimpleFold(folded) {
+			if folded < least {
+				least = folded
+			}
+		}
+		return least
+	}, name)
 }
 
 func truncate(s string, n int) string {

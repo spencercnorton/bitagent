@@ -256,6 +256,9 @@ func TestJunkDecisionRejectsDuplicateFields(t *testing.T) {
 	for _, raw := range []string{
 		`{"choices":[],"choices":[{"message":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
 		`{"choices":[],"Choices":[{"message":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
+		`{"choices":[],"choiceſ":[{"message":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
+		`{"choices":[{"message":{"content":"{\"verdict\":\"real_mangled\",\"confidence\":0.99}"}}],"choice\u017f":[{"message":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
+		`{"choices":[{"message":{"content":"{\"verdict\":\"real_mangled\",\"confidence\":0.99}"},"meſſage":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
 		`{"choices":[{"finish_reason":"length","Finish_Reason":"stop","message":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
 		`{"choices":[{"message":{"content":"{\"verdict\":\"real_mangled\",\"confidence\":0.99}","Content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
 		`{"choices":[{"message":{"content":"{\"verdict\":\"real_mangled\",\"Verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
