@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -26,6 +27,9 @@ func answerEnvelope(t *testing.T, answer string) []byte {
 func TestLiveWorkflowRejectsAmbiguousTypeResponses(t *testing.T) {
 	valid := `{"category":"movie","confidence":0.99}`
 	for name, raw := range map[string][]byte{
+		"provider_error":       []byte(strings.TrimSuffix(string(answerEnvelope(t, valid)), "}") + `,"error":{"message":"synthetic failure"}}`),
+		"wrong_role":           []byte(strings.Replace(string(answerEnvelope(t, valid)), `"assistant"`, `"user"`, 1)),
+		"null_role":            []byte(strings.Replace(string(answerEnvelope(t, valid)), `"assistant"`, `null`, 1)),
 		"category_duplicate":   answerEnvelope(t, `{"category":"unknown","category":"movie","confidence":0.99}`),
 		"confidence_duplicate": answerEnvelope(t, `{"category":"movie","confidence":0.01,"confidence":0.99}`),
 		"escaped_duplicate":    answerEnvelope(t, `{"category":"unknown","cate\u0067ory":"movie","confidence":0.99}`),

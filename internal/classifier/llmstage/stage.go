@@ -365,10 +365,12 @@ type chatResponse struct {
 	Choices []struct {
 		FinishReason string `json:"finish_reason"`
 		Message      struct {
-			Content string `json:"content"`
-			Refusal string `json:"refusal"`
+			Content string          `json:"content"`
+			Refusal string          `json:"refusal"`
+			Role    json.RawMessage `json:"role"`
 		} `json:"message"`
 	} `json:"choices"`
+	Error json.RawMessage `json:"error"`
 }
 
 type chatUsageResponse struct {
@@ -460,6 +462,15 @@ func parseResponse(raw []byte) (Decision, error) {
 	}
 	if len(outer.Choices) != 1 || outer.Choices[0].FinishReason != "stop" || outer.Choices[0].Message.Refusal != "" {
 		return Decision{}, errors.New("incomplete, refused or ambiguous chat response")
+	}
+	if len(outer.Error) != 0 && strings.TrimSpace(string(outer.Error)) != "null" {
+		return Decision{}, errors.New("chat response contains a provider error")
+	}
+	if rawRole := outer.Choices[0].Message.Role; len(rawRole) != 0 {
+		var role string
+		if json.Unmarshal(rawRole, &role) != nil || role != "assistant" {
+			return Decision{}, errors.New("chat response message is not assistant output")
+		}
 	}
 	var ans llmAnswer
 	content := []byte(outer.Choices[0].Message.Content)
