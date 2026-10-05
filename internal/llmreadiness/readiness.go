@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -19,6 +20,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
 	"github.com/spencercnorton/bitagent/internal/classifier/llmstage"
 	"github.com/spencercnorton/bitagent/internal/junkpurge"
+	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmeval"
 )
 
@@ -103,6 +105,7 @@ type Metrics struct {
 	Ambiguous      int `json:"ambiguous"`
 	Scored         int `json:"scored"`
 	Unscorable     int `json:"unscorable"`
+	PolicyDeclined int `json:"policy_declined"`
 	Actions        int `json:"actions"`
 	PotentialHarms int `json:"potential_harms"`
 	HarmGroups     int `json:"harm_groups"`
@@ -397,35 +400,43 @@ func observation(r Record) (prediction string, confidence float64, action bool, 
 		return
 	}
 	var d struct {
-		Outcome         string   `json:"outcome"`
-		Category        string   `json:"category"`
-		Confidence      *float64 `json:"confidence"`
-		English         *bool    `json:"is_english"`
-		WouldApply      *bool    `json:"would_apply"`
-		WouldDrop       *bool    `json:"would_drop"`
-		Verdict         string   `json:"verdict"`
-		WouldQuarantine *bool    `json:"would_quarantine"`
-		MinConfidence   *float64 `json:"min_confidence"`
-		Live            *bool    `json:"live"`
-		Reason          string   `json:"reason"`
-		RequestIndex    *int     `json:"request_index"`
-		RequestSize     *int     `json:"request_size"`
+		Outcome          string   `json:"outcome"`
+		Category         string   `json:"category"`
+		Confidence       *float64 `json:"confidence"`
+		English          *bool    `json:"is_english"`
+		WouldApply       *bool    `json:"would_apply"`
+		WouldDrop        *bool    `json:"would_drop"`
+		Verdict          string   `json:"verdict"`
+		WouldQuarantine  *bool    `json:"would_quarantine"`
+		MinConfidence    *float64 `json:"min_confidence"`
+		Live             *bool    `json:"live"`
+		Reason           string   `json:"reason"`
+		RequestIndex     *int     `json:"request_index"`
+		RequestSize      *int     `json:"request_size"`
+		LiveAllowedTypes []string `json:"live_allowed_types,omitempty"`
 	}
 	if DecodeStrict(r.Decision, &d) != nil || d.Confidence == nil || math.IsNaN(*d.Confidence) || math.IsInf(*d.Confidence, 0) || *d.Confidence < 0 || *d.Confidence > 1 || d.MinConfidence == nil || *d.MinConfidence <= 0 || *d.MinConfidence > 1 || d.Live == nil {
 		return
 	}
 	confidence = *d.Confidence
 	var policy struct {
-		MinConfidence *float64 `json:"min_confidence"`
-		Live          *bool    `json:"live"`
-		RequestIndex  *int     `json:"request_index"`
-		RequestSize   *int     `json:"request_size"`
+		MinConfidence    *float64 `json:"min_confidence"`
+		Live             *bool    `json:"live"`
+		RequestIndex     *int     `json:"request_index"`
+		RequestSize      *int     `json:"request_size"`
+		LiveAllowedTypes []string `json:"live_allowed_types,omitempty"`
 	}
 	if json.Unmarshal(r.TaskInput, &policy) != nil || policy.MinConfidence == nil || policy.Live == nil || *policy.MinConfidence != *d.MinConfidence || *policy.Live != *d.Live {
 		return "", 0, false, false
 	}
 	switch r.Task {
 	case "classifier_type":
+		if !validTypePolicyJSON(r.TaskInput, policy.LiveAllowedTypes) || !validTypePolicyJSON(r.Decision, d.LiveAllowedTypes) ||
+			!llmcapture.ValidTypeLiveAllowedTypes(policy.LiveAllowedTypes) ||
+			!llmcapture.ValidTypeLiveAllowedTypes(d.LiveAllowedTypes) ||
+			!slices.Equal(policy.LiveAllowedTypes, d.LiveAllowedTypes) {
+			return "", 0, false, false
+		}
 		raw, err := base64.StdEncoding.DecodeString(*r.ResponseBase64)
 		if err != nil {
 			return "", 0, false, false
@@ -437,10 +448,17 @@ func observation(r Record) (prediction string, confidence float64, action bool, 
 		if !allowed(r.Task, d.Category) || d.Category == "ambiguous" || d.WouldApply == nil {
 			return "", 0, false, false
 		}
-		if d.Outcome != "classified" && d.Outcome != "low_confidence" && d.Outcome != "unknown" {
+		if d.Outcome != "classified" && d.Outcome != "low_confidence" && d.Outcome != "unknown" && d.Outcome != "policy_declined" {
 			return "", 0, false, false
 		}
 		if *d.WouldApply != (d.Outcome == "classified") || *d.WouldApply && (confidence < *d.MinConfidence || d.Category == "unknown") {
+			return "", 0, false, false
+		}
+		allowedType := llmcapture.TypeLiveAllowed(d.Category, policy.LiveAllowedTypes)
+		if d.Outcome == "classified" && !allowedType ||
+			d.Outcome == "policy_declined" && (allowedType || confidence < *d.MinConfidence || d.Category == "unknown") ||
+			d.Outcome == "low_confidence" && (confidence >= *d.MinConfidence || d.Category == "unknown") ||
+			d.Outcome == "unknown" && d.Category != "unknown" {
 			return "", 0, false, false
 		}
 		prediction = d.Category
@@ -505,6 +523,21 @@ func observation(r Record) (prediction string, confidence float64, action bool, 
 	return
 }
 
+// Match the capture store's JSON policy binding: only an absent legacy field
+// or an explicit array is valid. JSON null is not an absent SQL JSON key.
+func validTypePolicyJSON(raw json.RawMessage, decoded []string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return false
+	}
+	value, present := fields["live_allowed_types"]
+	if !present {
+		return len(decoded) == 0
+	}
+	value = bytes.TrimSpace(value)
+	return len(value) > 0 && value[0] == '['
+}
+
 // BinomialUpper95 is an exact one-sided Clopper-Pearson bound. Independent
 // release-family groups, not duplicate source rows, form its denominator.
 func BinomialUpper95(k, n int) *float64 {
@@ -550,7 +583,7 @@ func bucketKey(r Record) string {
 	delete(wire, "input")
 	// This includes routing/provider pins, output caps, dimensions and other
 	// non-source request parameters rather than pooling changed wire policies.
-	policyJSON, _ := json.Marshal(map[string]any{"min_confidence": policy["min_confidence"], "live": policy["live"], "openai_data_sharing": policy["openai_data_sharing"], "wire": wire})
+	policyJSON, _ := json.Marshal(map[string]any{"min_confidence": policy["min_confidence"], "live": policy["live"], "live_allowed_types": policy["live_allowed_types"], "openai_data_sharing": policy["openai_data_sharing"], "wire": wire})
 	return r.Task + "|" + r.Model + "|" + r.Build + "|" + r.Contract + "|" + r.PromptVersion + "|" + r.ContractHash + "|" + hash(policyJSON)
 }
 
@@ -648,6 +681,15 @@ func Score(s Snapshot, h string, a, b Submission) (Report, error) {
 		if !ok {
 			v.m.Unscorable++
 			continue
+		}
+		if r.Task == "classifier_type" {
+			var decision struct {
+				Outcome string `json:"outcome"`
+			}
+			_ = json.Unmarshal(r.Decision, &decision)
+			if decision.Outcome == "policy_declined" {
+				v.m.PolicyDeclined++
+			}
 		}
 		if action {
 			v.m.Actions++

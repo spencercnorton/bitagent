@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
 )
 
@@ -51,6 +52,12 @@ type Config struct {
 	// type_fallback boundary, then subjected to its normal exclusion policy.
 	// A runner without that boundary cannot apply a type prediction.
 	EnableLive bool `yaml:"enable_live"`
+
+	// LiveAllowedTypes limits which confidence-qualified predictions may supply
+	// a workflow type. Empty retains the legacy set of supported types. Use
+	// canonical movie,tv,music,audiobook,book values; this policy also bounds
+	// shadow would_apply evidence and never overrides deterministic types.
+	LiveAllowedTypes []string `yaml:"live_allowed_types"`
 
 	// APIKey for OpenAI. Populated from Infisical at deploy.
 	APIKey string `yaml:"api_key"`
@@ -138,6 +145,9 @@ func NewDefaultConfig() Config {
 
 // Validate is repeated at the outbound boundary for standalone callers.
 func (c Config) Validate() error {
+	if !llmcapture.ValidTypeLiveAllowedTypes(c.LiveAllowedTypes) {
+		return fmt.Errorf("classifier_llm: live_allowed_types must contain unique canonical movie,tv,music,audiobook,book values")
+	}
 	if !c.Enabled {
 		return nil
 	}

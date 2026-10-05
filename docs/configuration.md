@@ -75,6 +75,7 @@ automatically.
 |---|---|---|
 | `CLASSIFIER_LLM_MATCH_CHAT_BACKEND` | `openai` | Chat contract for the matcher's extraction and candidate reranking calls. |
 | `CLASSIFIER_LLM_CHAT_BACKEND` | `openai` | Chat contract for the type fallback classifier. |
+| `CLASSIFIER_LLM_LIVE_ALLOWED_TYPES` | unset | Comma-separated canonical `movie,tv,music,audiobook,book` values eligible for type-only application. Unset retains all supported types. For example, `movie,tv` keeps other predictions unknown without newly invoking their exclusion policy. The allowlist also bounds shadow `would_apply` evidence and is captured with each decision. |
 
 For an Ollama server reachable on the same host, configure its full
 OpenAI-compatible chat endpoint and an installed model explicitly:

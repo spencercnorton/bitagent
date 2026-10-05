@@ -82,6 +82,9 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	taskInputObject := map[string]any{
 		"min_confidence": s.cfg.MinConfidence, "live": s.cfg.EnableLive,
 	}
+	if len(s.cfg.LiveAllowedTypes) > 0 {
+		taskInputObject["live_allowed_types"] = s.cfg.LiveAllowedTypes
+	}
 	if s.cfg.ChatBackend.Effective() == llmprovider.ChatBackendOllama {
 		taskInputObject["chat_backend"] = llmprovider.ChatBackendOllama
 	}
@@ -225,6 +228,7 @@ func (s *Stage) recordDecision(ctx context.Context, t model.Torrent, d Decision,
 	policy := llmcapture.TypeDecision{
 		Category: string(d.MediaType), Confidence: d.Confidence,
 		MinConfidence: s.cfg.MinConfidence, Live: s.cfg.EnableLive,
+		LiveAllowedTypes: s.cfg.LiveAllowedTypes,
 	}
 	_, known := mediaTypeToContentType(d.MediaType)
 	switch {
@@ -234,6 +238,8 @@ func (s *Stage) recordDecision(ctx context.Context, t model.Torrent, d Decision,
 		policy.Outcome = "unknown"
 	case d.Confidence < s.cfg.MinConfidence:
 		policy.Outcome = "low_confidence"
+	case !llmcapture.TypeLiveAllowed(string(d.MediaType), s.cfg.LiveAllowedTypes):
+		policy.Outcome = "policy_declined"
 	default:
 		policy.Outcome, policy.WouldApply = "classified", true
 	}

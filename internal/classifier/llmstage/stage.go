@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -66,6 +67,12 @@ func NewStage(
 	logger *zap.SugaredLogger,
 	admission ...Admission,
 ) *Stage {
+	// The policy is owned by this stage, not by the caller's mutable slice.
+	cfg.LiveAllowedTypes = slices.Clone(cfg.LiveAllowedTypes)
+	slices.Sort(cfg.LiveAllowedTypes)
+	if len(cfg.LiveAllowedTypes) == 0 {
+		cfg.LiveAllowedTypes = nil
+	}
 	cacheSize := cfg.CacheSize
 	if cacheSize <= 0 || cacheSize > 100000 {
 		cacheSize = 1
@@ -238,6 +245,10 @@ func (s *Stage) fallback(ctx context.Context, t model.Torrent, innerResult class
 	if !ok {
 		return innerResult, false
 	}
+	if !llmcapture.TypeLiveAllowed(string(decision.MediaType), s.cfg.LiveAllowedTypes) {
+		s.metrics.gateRejectsTotal.WithLabelValues("type_policy_declined").Inc()
+		return innerResult, false
+	}
 
 	result := innerResult
 	result.ContentType = model.NewNullContentType(contentType)
@@ -319,6 +330,8 @@ func (s *Stage) cacheKey(t model.Torrent) string {
 	_, _ = h.Write(t.InfoHash.Bytes())
 	_, _ = h.Write(buildBoundedRequestBody(s.cfg, t))
 	_, _ = fmt.Fprintf(h, "|%s|%t|%g", s.cfg.Endpoint, s.cfg.EnableLive, s.cfg.MinConfidence)
+	policy, _ := json.Marshal(s.cfg.LiveAllowedTypes)
+	_, _ = h.Write(policy)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
