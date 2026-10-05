@@ -60,10 +60,12 @@ services:
       CSAM_BLOCKLIST_EXPORT_UPSTREAM_URL: "${CSAM_BLOCKLIST_EXPORT_UPSTREAM_URL:-}"
 
       # --- Content filter (English-only / NSFW / format curation) ---
-      # OFF by default; flip Enabled+Enforce in two stages once you've
-      # validated the shadow-mode drop counts.
+      # OFF by default. Observe deterministic and model decisions separately
+      # and independently qualify model accuracy before enforcement.
       CONTENT_FILTER_ENABLED: "${CONTENT_FILTER_ENABLED:-false}"
       CONTENT_FILTER_ENFORCE: "${CONTENT_FILTER_ENFORCE:-false}"
+      CONTENT_FILTER_LLM_ENABLED: "${CONTENT_FILTER_LLM_ENABLED:-false}"
+      CONTENT_FILTER_LLM_ENFORCE: "${CONTENT_FILTER_LLM_ENFORCE:-false}"
 
       # --- Retention (deletion of stale torrents) ---
       # OFF by default. Flip RETENTION_ENABLED first; let

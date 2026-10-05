@@ -80,6 +80,9 @@ func TestParseLLMVerdict_Malformed(t *testing.T) {
 		`{"is_english":false,"confidence":0.99,"reason":null}`,
 		`{"is_english":false,"confidence":0.99,"reason":"x","extra":true}`,
 		`{"is_english":false,"confidence":0.99,"reason":""}`,
+		`{"is_english":true,"is_english":false,"confidence":0.99,"reason":"x"}`,
+		`{"is_english":false,"confidence":0.99,"confidence":1,"reason":"x"}`,
+		`{"is_english":false,"confidence":0.99,"reason":"line\nbreak"}`,
 		`{"is_english":false,"confidence":0.99,"reason":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}`,
 	}
 	for _, b := range bad {

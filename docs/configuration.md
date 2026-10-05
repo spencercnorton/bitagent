@@ -150,14 +150,63 @@ A pre-fetch double-hashed blocklist filters infohashes before BitAgent ever does
 
 ## Content filter
 
-Drops torrents whose title is non-English / non-Latin-script / has blocked extensions / matches NSFW keywords. **Two-stage opt-in** so you can quantify the impact before turning it on.
+The deterministic tier checks language tags, title script, release audio
+markers, extensions and NSFW criteria. The optional LLM tier classifies the
+residual cohort after upstream classification. Both tiers can be observed
+before their decisions affect persistence.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CONTENT_FILTER_ENABLED` | `false` | Stage 1: shadow mode. Filter rules run, counterfactual metrics are emitted, but no torrent is actually dropped. |
-| `CONTENT_FILTER_ENFORCE` | `false` | Stage 2: enforcement. Drops actually take effect. Requires `CONTENT_FILTER_ENABLED=true`. |
+| `CONTENT_FILTER_ENABLED` | `false` | Examines inputs and emits counterfactual metrics. Required for either tier. |
+| `CONTENT_FILTER_ENFORCE` | `false` | Applies deterministic drops. Also controls the LLM tier when its mode is inherited. |
+| `CONTENT_FILTER_LLM_ENABLED` | `false` | Allows residual language inference after privacy, durable capture and budget admission. |
+| `CONTENT_FILTER_LLM_ENFORCE` | `inherit` | `false`: model decisions stay shadow; `true`: applies model drops and optional provider-unavailable deferral; `inherit` or unset: follows `CONTENT_FILTER_ENFORCE` for compatibility. |
+| `CONTENT_FILTER_LLM_DEFER_ON_UNAVAILABLE` | `false` | With model enforcement active, unavailable endpoints can defer an input for retry. Malformed responses, exhausted budgets and low-confidence verdicts keep it. |
 
-The recommended workflow is to set `ENABLED=true` for at least a week, watch `bitagent_contentfilter_*` metrics, then flip `ENFORCE=true` once the drop pattern looks reasonable.
+Set the model mode explicitly in new configurations. For YAML, quote it:
+`llm_enforce: "false"`. Values are exactly `inherit`, `true` or `false`; invalid
+values fail startup. The shipped defaults keep both tiers inactive, and the
+public environment example sets the model mode to `false`.
+
+With both enable flags true, the application modes are:
+
+| `CONTENT_FILTER_ENFORCE` | `CONTENT_FILTER_LLM_ENFORCE` | Result |
+|---|---|---|
+| `false` | `false` | Both tiers shadow |
+| `true` | `false` | Deterministic live, model shadow |
+| `false` | `true` | Deterministic shadow, model live on the residual cohort |
+| `true` | `true` | Both tiers live |
+| either | `inherit` / unset | Legacy behavior: both follow `CONTENT_FILTER_ENFORCE` |
+
+A deterministic match always ends the decision ladder, including when that
+tier is shadow. Model-only enforcement therefore acts on eligible residuals;
+it does not reclassify deterministic matches. English release tokens (`ENG`,
+`English`, `EN`) veto residual model inference so a title-language guess cannot
+overrule that English-inclusive release evidence. The veto leaves deterministic
+policy unchanged. Existing configurations retain
+the inherited behavior on upgrade. Startup logs show effective modes and
+warn when an inherited model mode is live.
+
+Before model enforcement, independently label prospective shadow samples and
+qualify the exact model, provider, prompt and request contract. Separate release
+families across evaluation splits and inspect English, anime, dual-audio and
+ambiguous-title false drops. A model's confidence and the number of shadow
+would-drops do not establish accuracy. Keep the model shadow until the
+operator's accepted harm bound passes; changing a model or prompt requires
+fresh qualification.
+
+Production inference requires durable request, HTTP result and terminal
+decision capture, finite daily/monthly budgets and bounded request/output sizes.
+Each source must pass current privacy admission; title-family cache entries
+cannot authorize a new source. Exact-source durable replay avoids duplicate
+provider calls. A failed audit or privacy recheck returns an error for retry
+before model application. Private inputs never leave the process. Invalid,
+incomplete or malformed results keep; they cannot drop or trigger an
+unavailable-provider deferral loop. Track the `llm_non_english` reason in
+`bitagent_contentfilter_drop_total` and `bitagent_contentfilter_would_drop_total`
+separately from deterministic reasons. To roll back model application, set
+`CONTENT_FILTER_LLM_ENFORCE=false`; set `CONTENT_FILTER_LLM_ENABLED=false` to
+stop new model dispatches too.
 
 ## Retention
 

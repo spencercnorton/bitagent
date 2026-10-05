@@ -134,3 +134,12 @@ func TestValidateProductionLLMConfigAcceptsOnlyExactOpenAIDataSharingRoute(t *te
 		})
 	}
 }
+
+func TestProvideFilterRejectsInvalidEnforcementModeEvenWithoutProvider(t *testing.T) {
+	cfg := contentfilter.NewDefaultConfig()
+	cfg.LLMEnforce = "yes"
+	_, err := provideFilter(filterParams{Config: cfg, Logger: zap.NewNop().Sugar()})
+	if err == nil || !strings.Contains(err.Error(), "llm_enforce") {
+		t.Fatalf("invalid enforcement mode must fail startup, got %v", err)
+	}
+}

@@ -599,9 +599,41 @@ func parseLLMVerdict(text string) (LLMVerdict, error) {
 		Reason     *string  `json:"reason"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(s))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&raw); err != nil {
-		return LLMVerdict{}, err
+	// Read the flat object explicitly: encoding/json otherwise accepts
+	// duplicate keys with last-value-wins semantics, so a contradictory
+	// is_english field could silently become a destructive verdict.
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return LLMVerdict{}, errors.New("verdict must be a JSON object")
+	}
+	seen := make(map[string]bool, 3)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return LLMVerdict{}, err
+		}
+		key, ok := token.(string)
+		if !ok || seen[key] {
+			return LLMVerdict{}, errors.New("duplicate or invalid verdict field")
+		}
+		seen[key] = true
+		var target any
+		switch key {
+		case "is_english":
+			target = &raw.IsEnglish
+		case "confidence":
+			target = &raw.Confidence
+		case "reason":
+			target = &raw.Reason
+		default:
+			return LLMVerdict{}, errors.New("unknown verdict field")
+		}
+		if err := decoder.Decode(target); err != nil {
+			return LLMVerdict{}, err
+		}
+	}
+	if closing, err := decoder.Token(); err != nil || closing != json.Delim('}') {
+		return LLMVerdict{}, errors.New("unterminated verdict object")
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
@@ -618,8 +650,8 @@ func parseLLMVerdict(text string) (LLMVerdict, error) {
 		return LLMVerdict{}, errors.New("confidence must be finite and in [0,1]")
 	}
 	reason := strings.TrimSpace(*raw.Reason)
-	if reason == "" || len(reason) > 64 {
-		return LLMVerdict{}, errors.New("reason must be 1-64 bytes")
+	if reason == "" || len(reason) > 64 || strings.ContainsAny(reason, "\x00\r\n") {
+		return LLMVerdict{}, errors.New("reason must be 1-64 bytes without control separators")
 	}
 	return LLMVerdict{
 		IsEnglish:  *raw.IsEnglish,

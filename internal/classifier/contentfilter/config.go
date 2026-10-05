@@ -7,8 +7,8 @@ package contentfilter
 // Default `Enabled=false` is the operationally-safe starting point:
 // the filter compiles and is wired into the pipeline but every
 // torrent passes through unchanged. Operator flips Enabled+Enforce
-// in two stages once the shadow-mode metrics confirm the drop
-// counts are sane.
+// in two stages once independently reviewed shadow decisions are acceptable.
+// LLMEnforce can then select a separate enforcement mode for model decisions.
 type Config struct {
 	// Enabled — turn the filter on. When false, Decide() returns
 	// Allow for every torrent without inspecting it; no metrics
@@ -16,12 +16,20 @@ type Config struct {
 	// no-op until the operator opts in.
 	Enabled bool `yaml:"enabled"`
 
-	// Enforce — flip from shadow to live. With Enforce=false but
-	// Enabled=true, the filter still examines every torrent and
-	// emits `bitagent_contentfilter_would_drop_total{reason}` so
-	// the operator can see the counterfactual; nothing is actually
-	// dropped. With Enforce=true, drops take effect.
+	// Enforce applies deterministic drops when Enabled=true. For legacy
+	// configurations it also applies LLM drops/deferral when LLMEnforce is
+	// unset or "inherit". Set LLMEnforce explicitly to isolate model actions.
 	Enforce bool `yaml:"enforce"`
+
+	// LLMEnforce selects model enforcement independently of deterministic
+	// enforcement: "false" observes, "true" applies model drops and optional
+	// unavailable-endpoint deferral, and "inherit" (or unset) follows Enforce
+	// for compatibility. Enabled and LLMEnabled are still required. The
+	// default inherited mode is off because Enforce defaults false. New
+	// deployments should set "false" explicitly until independently labeled
+	// evaluation qualifies the exact model, prompt and provider contract.
+	// YAML values must be quoted strings; env: CONTENT_FILTER_LLM_ENFORCE.
+	LLMEnforce string `yaml:"llm_enforce" validate:"omitempty,oneof=inherit true false"`
 
 	// RequireEnglishLanguage — when true, torrents whose
 	// classifier-set language tag is anything other than `en` (or
@@ -185,11 +193,11 @@ type Config struct {
 	LLMCacheMaxEntries int    `yaml:"llm_cache_max_entries"`
 	LLMCacheTTL        string `yaml:"llm_cache_ttl"`
 
-	// LLMMinConfidenceForDrop — only drop a torrent when the LLM
-	// reports IsEnglish=false AND confidence >= this threshold.
-	// Default 0.85 — conservative; we'd rather keep an ambiguous
-	// title than wrongly drop one. Below this confidence, the
-	// torrent is kept regardless of the LLM's verdict.
+	// LLMMinConfidenceForDrop is a policy cutoff for an eligible residual
+	// verdict, not an accuracy guarantee. Reports below it keep regardless
+	// of the verdict. Above it, IsEnglish=false is only actionable when the
+	// selected LLM enforcement mode is live. Independent labeled evaluation
+	// must qualify the exact model contract before that opt-in.
 	LLMMinConfidenceForDrop float64 `yaml:"llm_min_confidence_for_drop"`
 
 	// LLMRuleMinerThreshold — number of LLM verdicts with the
@@ -240,8 +248,9 @@ type Config struct {
 // dropped). The defaults match the operator's 2026-04-25 spec.
 func NewDefaultConfig() Config {
 	return Config{
-		Enabled: false,
-		Enforce: false,
+		Enabled:    false,
+		Enforce:    false,
+		LLMEnforce: "inherit",
 
 		RequireEnglishLanguage: true,
 		DropNonLatinScript:     true,
@@ -278,6 +287,21 @@ func NewDefaultConfig() Config {
 		LLMMinConfidenceForDrop: 0.85,
 		LLMRuleMinerThreshold:   100,
 		LLMRuleMinerWindow:      "168h", // 7 days
+	}
+}
+
+// LLMEnforcementEnabled resolves the model application gate. It does not
+// enable the filter or provider calls; Enabled and LLMEnabled remain separate
+// opt-ins. An invalid mode fails open for direct constructors; config validation
+// rejects it during application startup.
+func (c Config) LLMEnforcementEnabled() bool {
+	switch c.LLMEnforce {
+	case "true":
+		return true
+	case "", "inherit":
+		return c.Enforce
+	default:
+		return false
 	}
 }
 

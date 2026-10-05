@@ -38,11 +38,13 @@
 //
 // Output:
 //
-//  - `Decision{Allow bool, Reason DropReason}` returned from
-//    `Filter.Decide(...)`.
-//  - `bitagent_contentfilter_*` metrics: drop_total{reason},
-//    keep_total, examined_total. In shadow mode (`Enforce=false`),
-//    `would_drop_total{reason}` lights up while every torrent is
-//    still kept — same counterfactual measurement primitive used
-//    by retention and peerrep.
+//   - `Decision{Allow bool, Reason DropReason}` returned from
+//     `Filter.Decide(...)`.
+//   - `bitagent_contentfilter_*` metrics: drop_total{reason},
+//     keep_total, examined_total. Each tier has a separate enforcement mode:
+//     Enforce for deterministic checks and LLMEnforce for model decisions.
+//     LLMEnforce defaults to inheriting Enforce for compatibility. In shadow,
+//     `would_drop_total{reason}` lights up while every torrent is
+//     still kept — same counterfactual measurement primitive used
+//     by retention and peerrep.
 package contentfilter
