@@ -8,6 +8,13 @@ import (
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
 )
 
+// EvaluationDecodeEmbeddingVectors applies the runtime vector decoder to a
+// retained response. It checks the wire contract and normalizes vectors; it
+// does not establish source privacy, model quality or attachment authority.
+func EvaluationDecodeEmbeddingVectors(raw []byte, expected int, cfg EmbeddingConfig) ([][]float64, error) {
+	return decodeEmbeddingVectors(raw, expected, cfg)
+}
+
 // ExtractPrompt returns the exact stage-1 policy used by production.
 // Evaluation tooling calls this accessor instead of carrying a prompt copy
 // that can silently drift from the live matcher.

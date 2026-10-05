@@ -1,0 +1,51 @@
+# Bounded model application
+
+Start with a small, observable scope and keep existing privacy, audit and durable
+request allowances. Successful runtime tests establish execution behavior.
+Independent reference labels and prospective observations establish model
+quality. Record these separately when operating a canary.
+
+For type fallback, enable `CLASSIFIER_LLM_ENABLED` and
+`CLASSIFIER_LLM_ENABLE_LIVE`, and set
+`CLASSIFIER_LLM_LIVE_ALLOWED_TYPES=movie,tv` when those are retained by the existing
+content policy. Other model categories remain unknown and record `policy_declined`.
+Keep ordinary content exclusions in place. Review applied types against later
+canonical references before expanding the allowed list.
+
+For language review, enable `CONTENT_FILTER_LLM_ENABLED`, set
+`CONTENT_FILTER_LLM_ENFORCE=true` and `CONTENT_FILTER_LLM_ACTION=review`.
+Audited non-English predictions add the model-attributed `llm_language_review`
+tag through the normal persistence transaction. The torrent remains searchable.
+English-inclusive releases retain their existing model protection. Deterministic
+filtering still follows `CONTENT_FILTER_ENFORCE`. Review tags are evidence for an
+operator review queue; inspect the source before treating them as language truth.
+
+For junk handling, `JUNKPURGE_ENABLE_PURGE=true` enables restorable quarantine.
+Automatic expiry retains the snapshot indefinitely. A small initial window can
+use `JUNKPURGE_BATCH_SIZE=10`, `JUNKPURGE_INTERVAL=24h` and
+`JUNKPURGE_MIN_AGE=720h`, while preserving the current junk-rate circuit breaker
+and provider allowance. Inspect every initial quarantine and exercise restore,
+including reclassification and search visibility. The manual delete endpoint
+destroys the snapshot and blacklists the hash; keep that operator decision
+separate from model judgment.
+
+For candidate shortlisting, explicitly configure
+`CLASSIFIER_LLM_MATCH_EMBEDDINGS_ENABLED=true`, the `/embeddings` endpoint, model
+and credential. An OpenAI-compatible example uses `text-embedding-3-small` with
+256 dimensions. The shared matcher allowance bounds all embedding and chat
+requests. Full original candidates retain their identity and ambiguity checks;
+the final chat result supplies attachment confidence. Inspect embedding captures,
+shortlist provenance and final attachment receipts together. The legacy formal
+capture exporter rejects the new task and rerank-v3 contract; retain those records
+for an adapter preserving the full policy candidate set and embedding receipt.
+
+Before applying new settings, qualify the exact released image, preserve a
+compatible database backup and verify the deployment's effective content policy.
+After deployment, check source/image identity, startup time, health, audit failures,
+budget usage and actual application counters. A configured stage with no applied
+effects needs investigation.
+
+Disable type live application, language enforcement, junk quarantine or embedding
+shortlisting to stop each new action independently. Existing language review tags
+remain visible for review, and quarantined entries retain their restore snapshots.
+Keep the previous qualified image and the matching database recovery procedure.
