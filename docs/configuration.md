@@ -122,6 +122,58 @@ Validate the chosen server and model independently before enabling live
 decisions. Request compatibility and a parsed response do not establish model
 accuracy, calibrated confidence, provider billing or production acceptance.
 
+## Optional embedding shortlist
+
+The matcher can optionally use an OpenAI-compatible embeddings endpoint to
+shortlist candidates before its existing chat rerank. This feature defaults
+off and requires an explicitly configured route and enabled evaluation capture.
+The embedding route has its own model and credentials; it does not inherit the
+chat model, API key or OpenAI data-sharing setting.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_ENABLED` | `false` | Enable optional shortlisting when there are more candidates than the shortlist size. Matcher `ENABLED` and `ENABLE_LIVE` remain independent. |
+| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_ENDPOINT` | empty | Full embeddings URL. HTTPS required except for loopback; redirects are refused. |
+| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_MODEL` | empty | Explicit embedding model. |
+| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_API_KEY_FILE` | empty | Secret file for the embedding route's key. Plain `API_KEY` is also supported. |
+| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_OPENROUTER_PROVIDER` | empty | Explicit provider pin required for OpenRouter. |
+| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_TIMEOUT` | `15s` | Per-request timeout. |
+| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_MAX_REQUEST_BYTES` | `8192` | Serialized embedding request bound. |
+| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_DIMENSIONS` | `256` | Requested vector length. `0` omits the optional parameter for models that do not support it. |
+| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_MAX_DIMENSIONS` | `4096` | Maximum accepted vector length. |
+| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_SHORTLIST_SIZE` | `3` | Number of candidates shown to chat, in `2..100`. |
+| `LLM_EVALUATION_CAPTURE_ENABLED` | `false` | Must be enabled for the embedding route's request, first response and final chat decision evidence. |
+
+For direct OpenAI, use `https://api.openai.com/v1/embeddings` and a model such
+as `text-embedding-3-small`. OpenAI supports the `dimensions` parameter on
+`text-embedding-3` models; use `0` to omit it for other models. The request
+sends an array containing the release/extraction query and candidate texts,
+with `encoding_format: "float"`. See the
+[OpenAI embeddings guide](https://developers.openai.com/api/docs/guides/embeddings).
+
+OpenRouter requires `https://openrouter.ai/api/v1/embeddings` and an explicit
+provider pin. Requests set `order` and `only` to that provider, disable
+fallback providers, require supported parameters, deny data collection and
+require ZDR. These fields are documented in the
+[embeddings API reference](https://openrouter.ai/docs/api/api-reference/embeddings/submit-an-embedding-request)
+and [provider preferences](https://openrouter.ai/docs/client-sdks/python/components/providerpreferences).
+
+Every embedding attempt consumes the same persisted daily/monthly allowance
+as extraction and chat reranking. Native/private-source checks and a final
+database admission recheck run before embedding egress. The exact request and
+bounded first HTTP response are stored as the separate `matcher_embedding`
+task. The chat capture links that response, records the shortlist and retains
+the complete original candidate set as policy evidence. Response bodies are
+limited to 128 KiB; oversized, zero, inconsistent, nonfinite or ambiguous
+vectors fall back to the original chat candidate list, as do provider outages.
+Privacy and audit failures stop follow-on calls.
+
+Cosine similarity controls order and shortlisting only. The ordinary chat
+confidence threshold, source title, candidate identity/ambiguity/year guards
+and parsed TV episode tuple still control the final match. Shadow remains
+immutable. Evaluate shortlist recall and final match precision on independently
+reviewed cases before enabling this optional path in production.
+
 ## Crawler
 
 A single multiplicative knob covers DHT worker concurrency. Higher values mean more peers, more memory, more CPU.

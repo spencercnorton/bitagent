@@ -40,6 +40,7 @@ type Client struct {
 	// deadline with batch size via a request context, which a fixed
 	// client Timeout would override.
 	httpLong           *http.Client
+	httpEmbedding      *http.Client
 	capture            llmcapture.Capturer
 	budget             CallBudget
 	slots              chan struct{}
@@ -74,9 +75,11 @@ func NewClientWithBudget(cfg Config, privacy PrivacyStore, metrics *Metrics,
 		logger:   logger.Named("llmmatch"),
 		http:     &http.Client{Timeout: cfg.Timeout},
 		httpLong: &http.Client{},
-		capture:  capture,
-		budget:   budget,
-		slots:    make(chan struct{}, max(1, cfg.MaxConcurrentCalls)),
+		httpEmbedding: &http.Client{Timeout: cfg.Embeddings.Timeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		capture: capture,
+		budget:  budget,
+		slots:   make(chan struct{}, max(1, cfg.MaxConcurrentCalls)),
 	}
 }
 
@@ -288,6 +291,11 @@ func (c *Client) RerankForMediaType(
 	if c.nativePrivateBlocked(t) {
 		return 0, 0, nil
 	}
+	if c.cfg.Embeddings.Enabled {
+		if err := c.embeddingReady(); err != nil {
+			return 0, 0, err
+		}
+	}
 	name := t.Name
 	// Cache evidence may be replayed after a failed final-decision write. Bind
 	// it to the complete source/policy context, never just name and candidate IDs.
@@ -303,6 +311,9 @@ func (c *Client) RerankForMediaType(
 	}
 	if c.cfg.OpenaiDataSharing {
 		keyContext["openai_data_sharing"] = true
+	}
+	if c.cfg.Embeddings.Enabled {
+		keyContext["embedding_shortlist"] = c.cfg.Embeddings.cacheContext()
 	}
 	keyInput, err := json.Marshal(keyContext)
 	if err != nil {
@@ -330,8 +341,12 @@ func (c *Client) RerankForMediaType(
 		return 0, 0, ErrCallBudget
 	}
 
+	shortlist, embeddingAudit, err := c.embeddingShortlist(ctx, t, ext, cands, source)
+	if err != nil {
+		return 0, 0, err
+	}
 	id, conf, err := c.callRerank(
-		ctx, t, ext, parsedTitle, isTV, cands, source,
+		ctx, t, ext, parsedTitle, isTV, shortlist, cands, source, embeddingAudit,
 	)
 	if err != nil {
 		if errors.Is(err, llmcapture.ErrPrivacyBlocked) {
@@ -553,7 +568,9 @@ func (c *Client) callRerank(
 	parsedTitle string,
 	isTV bool,
 	cands []Candidate,
+	policyCandidates []Candidate,
 	source llmcapture.CandidateSource,
+	embeddingAudit *embeddingShortlistAudit,
 ) (int64, float64, error) {
 	user := RerankInput(t.Name, ext, cands)
 	ctx = withPendingCapture(ctx)
@@ -561,12 +578,25 @@ func (c *Client) callRerank(
 	if isTV {
 		effectiveMediaType = "tv"
 	}
+	taskInput := map[string]any{
+		"release_name": t.Name, "parsed_title": parsedTitle,
+		"extraction": ext, "effective_media_type": effectiveMediaType,
+		"candidates": rerankCaptureCandidates(cands),
+	}
+	contract := "llmmatch-chat-rerank-v2"
+	if embeddingAudit != nil {
+		// Full catalogue evidence still owns every identity and ambiguity
+		// check. The provider sees only the shortlist, never audit-only aliases.
+		taskInput["policy_candidates"] = rerankCaptureCandidates(policyCandidates)
+		taskInput["embedding_shortlist"] = embeddingAudit
+		contract = "llmmatch-chat-rerank-v3-embedding-shortlist"
+	}
 	if err := c.captureRequest(
 		ctx,
 		t,
 		llmcapture.TaskMatcherRerank,
 		source,
-		matcherContractID(c.cfg, "llmmatch-chat-rerank-v2"),
+		matcherContractID(c.cfg, contract),
 		[]byte(fmt.Sprintf(
 			"%s\x00%s\x00%d",
 			effectiveMediaType,
@@ -576,13 +606,7 @@ func (c *Client) callRerank(
 		RerankPrompt(),
 		user,
 		60,
-		map[string]any{
-			"release_name":         t.Name,
-			"parsed_title":         parsedTitle,
-			"extraction":           ext,
-			"effective_media_type": effectiveMediaType,
-			"candidates":           rerankCaptureCandidates(cands),
-		},
+		taskInput,
 	); err != nil {
 		return 0, 0, err
 	}
@@ -800,6 +824,10 @@ func (c *Client) captureRequest(
 		BuildIdentity:   llmcapture.CurrentBuildIdentity(),
 		ContractID:      contractID,
 	}
+	return c.captureEnvelope(ctx, req)
+}
+
+func (c *Client) captureEnvelope(ctx context.Context, req llmcapture.Request) error {
 	outcome, err := c.capture.Capture(ctx, req)
 	if err != nil {
 		if errors.Is(err, llmcapture.ErrPrivacyBlocked) ||
@@ -825,7 +853,8 @@ func (c *Client) captureRequest(
 		if keyErr != nil {
 			return fmt.Errorf("%w: capture result identity: %v", llmcapture.ErrCaptureUnavailable, keyErr)
 		}
-		pending.key, pending.task, pending.source = key, task, source
+		pending.key, pending.task, pending.source = key, req.Task, req.CandidateSource
+		pending.outcome = outcome
 	}
 	return nil
 }

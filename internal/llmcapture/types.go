@@ -13,11 +13,12 @@ const CaptureSchemaVersion = 1
 type Task string
 
 const (
-	TaskMatcherExtract Task = "matcher_extract"
-	TaskMatcherRerank  Task = "matcher_rerank"
-	TaskContentFilter  Task = "contentfilter"
-	TaskJunkPurge      Task = "junkpurge"
-	TaskClassifierType Task = "classifier_type"
+	TaskMatcherExtract   Task = "matcher_extract"
+	TaskMatcherRerank    Task = "matcher_rerank"
+	TaskMatcherEmbedding Task = "matcher_embedding"
+	TaskContentFilter    Task = "contentfilter"
+	TaskJunkPurge        Task = "junkpurge"
+	TaskClassifierType   Task = "classifier_type"
 )
 
 type CandidateSource string
@@ -152,7 +153,7 @@ func validateTaskSource(task Task, source CandidateSource) error {
 				source,
 			)
 		}
-	case TaskMatcherRerank:
+	case TaskMatcherRerank, TaskMatcherEmbedding:
 		if source != CandidateSourceLocal && source != CandidateSourceAPI {
 			return fmt.Errorf(
 				"%w: rerank candidate source must be local or api",

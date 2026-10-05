@@ -21,31 +21,33 @@ type Metrics struct {
 	candidatesTotal *prometheus.CounterVec
 	// animeTotal: anime observed, by english track (dub|sub|none|unknown)
 	// and outcome (kept|rejected on the English gate).
-	animeTotal     *prometheus.CounterVec
-	cacheHits      prometheus.Counter
-	cacheMisses    prometheus.Counter
-	callErrors     *prometheus.CounterVec // stage=extract|rerank, class=timeout|http_status|decode
-	callDuration   *prometheus.HistogramVec
-	calls          *prometheus.CounterVec
-	tokens         *prometheus.CounterVec
-	usageMissing   *prometheus.CounterVec
-	budgetSkips    *prometheus.CounterVec
-	config         *prometheus.GaugeVec
-	info           *prometheus.GaugeVec
-	auditResults   *prometheus.CounterVec
-	auditDecisions *prometheus.CounterVec
+	animeTotal          *prometheus.CounterVec
+	cacheHits           prometheus.Counter
+	cacheMisses         prometheus.Counter
+	callErrors          *prometheus.CounterVec // stage=extract|rerank, class=timeout|http_status|decode
+	callDuration        *prometheus.HistogramVec
+	calls               *prometheus.CounterVec
+	tokens              *prometheus.CounterVec
+	usageMissing        *prometheus.CounterVec
+	budgetSkips         *prometheus.CounterVec
+	config              *prometheus.GaugeVec
+	info                *prometheus.GaugeVec
+	auditResults        *prometheus.CounterVec
+	auditDecisions      *prometheus.CounterVec
+	embeddingShortlists *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
 	return &Metrics{
-		auditResults:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_audit_results_total", Help: "First provider response capture outcomes, by stage. Cache hits are outside this cohort."}, []string{"stage", "outcome"}),
-		auditDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_audit_decisions_total", Help: "Final policy decision recording outcomes. No-provider and duplicate paths are not new cohort observations."}, []string{"outcome"}),
-		info:           prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "bitagent_classifier_llm_match_info", Help: "Configured matcher model and prompt version; present even before any call."}, []string{"model", "prompt_version"}),
-		calls:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_calls_total", Help: "Outbound matcher requests admitted by the durable allowance, by model and stage."}, []string{"model", "stage"}),
-		tokens:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_tokens_total", Help: "Provider-reported matcher tokens. cached_input is a subset of input; reasoning is a subset of output."}, []string{"model", "stage", "kind"}),
-		usageMissing:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_usage_missing_total", Help: "Matcher HTTP responses without valid provider usage; spend estimates are incomplete."}, []string{"model", "stage"}),
-		budgetSkips:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_budget_skips_total", Help: "Calls withheld because the durable request allowance is exhausted or unavailable."}, []string{"reason"}),
-		config:         prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "bitagent_classifier_llm_match_config", Help: "Resolved matcher configuration, emitted even before the first call. live means enabled and enable_live."}, []string{"setting"}),
+		embeddingShortlists: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_embedding_shortlists_total", Help: "Optional embedding shortlists or provider/vector fallbacks. Similarity never authorizes attachment."}, []string{"outcome"}),
+		auditResults:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_audit_results_total", Help: "First provider response capture outcomes, by stage. Cache hits are outside this cohort."}, []string{"stage", "outcome"}),
+		auditDecisions:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_audit_decisions_total", Help: "Final policy decision recording outcomes. No-provider and duplicate paths are not new cohort observations."}, []string{"outcome"}),
+		info:                prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "bitagent_classifier_llm_match_info", Help: "Configured matcher model and prompt version; present even before any call."}, []string{"model", "prompt_version"}),
+		calls:               prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_calls_total", Help: "Outbound matcher requests admitted by the durable allowance, by model and stage."}, []string{"model", "stage"}),
+		tokens:              prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_tokens_total", Help: "Provider-reported matcher tokens. cached_input is a subset of input; reasoning is a subset of output."}, []string{"model", "stage", "kind"}),
+		usageMissing:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_usage_missing_total", Help: "Matcher HTTP responses without valid provider usage; spend estimates are incomplete."}, []string{"model", "stage"}),
+		budgetSkips:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_budget_skips_total", Help: "Calls withheld because the durable request allowance is exhausted or unavailable."}, []string{"reason"}),
+		config:              prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "bitagent_classifier_llm_match_config", Help: "Resolved matcher configuration, emitted even before the first call. live means enabled and enable_live."}, []string{"setting"}),
 		extractTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "bitagent_classifier_llm_match_extract_total",
 			Help: "LLM matcher stage-1 (extract) calls by result.",
@@ -95,7 +97,7 @@ func (m *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		m.extractTotal, m.rerankTotal, m.matchesTotal, m.gateRejects, m.candidatesTotal, m.animeTotal,
 		m.cacheHits, m.cacheMisses, m.callErrors, m.callDuration,
-		m.calls, m.tokens, m.usageMissing, m.budgetSkips, m.config, m.info, m.auditResults, m.auditDecisions,
+		m.calls, m.tokens, m.usageMissing, m.budgetSkips, m.config, m.info, m.auditResults, m.auditDecisions, m.embeddingShortlists,
 	}
 }
 
@@ -112,8 +114,10 @@ func (m *Metrics) configure(c Config) {
 		"require_source_title": flag(c.RequireSourceTitle),
 		"daily_call_limit":     float64(c.DailyCallLimit), "monthly_call_limit": float64(c.MonthlyCallLimit),
 		"max_request_bytes": float64(c.MaxRequestBytes), "max_concurrent_calls": float64(c.MaxConcurrentCalls),
-		"max_output_tokens": float64(c.MaxOutputTokens),
-		"min_confidence":    c.MinConfidence,
+		"max_output_tokens":        float64(c.MaxOutputTokens),
+		"min_confidence":           c.MinConfidence,
+		"embeddings_enabled":       flag(c.Enabled && c.Embeddings.Enabled),
+		"embedding_shortlist_size": float64(c.Embeddings.ShortlistSize),
 	} {
 		m.config.WithLabelValues(setting).Set(value)
 	}
