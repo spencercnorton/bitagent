@@ -32,6 +32,7 @@ func TestEvaluationCaptureUsesExactResolvedRequestShape(t *testing.T) {
 			"title":"A Public Title 2026",
 			"min_confidence":0.85,
 			"live":false,
+			"llm_action":"drop",
 			"eligibility_input":{
 				"private":false,
 				"primary_extension":"",

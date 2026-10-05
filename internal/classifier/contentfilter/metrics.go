@@ -31,10 +31,12 @@ import (
 // stable and lets the operator flip the LLM tier on without a
 // dashboard update.
 type Metrics struct {
-	examined  *dualemit.Counter
-	kept      *dualemit.Counter
-	dropped   *dualemit.CounterVec
-	wouldDrop *dualemit.CounterVec
+	examined    *dualemit.Counter
+	kept        *dualemit.Counter
+	dropped     *dualemit.CounterVec
+	wouldDrop   *dualemit.CounterVec
+	reviewed    *dualemit.Counter
+	wouldReview *dualemit.Counter
 
 	// blocked_ext_total{ext="..."} — sub-breakdown of drop_total where
 	// reason="blocked_extension". Additive to drop_total; lets the
@@ -95,6 +97,14 @@ func NewMetrics() *Metrics {
 			Name:      "would_drop_total",
 			Help:      "Counterfactual drops while the matching tier is shadow. Per-reason; requires Enabled=true.",
 		}, []string{cfLabel}),
+		reviewed: dualemit.NewCounter(prometheus.CounterOpts{
+			Namespace: cfNamespace, Subsystem: cfSubsystem, Name: "llm_review_total",
+			Help: "Kept torrents selected for a model-attributed language review tag after a live audited decision.",
+		}),
+		wouldReview: dualemit.NewCounter(prometheus.CounterOpts{
+			Namespace: cfNamespace, Subsystem: cfSubsystem, Name: "llm_would_review_total",
+			Help: "Kept torrents that would receive a model-attributed language review tag in live review mode.",
+		}),
 
 		blockedExt: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: cfNamespace,
@@ -181,7 +191,7 @@ func NewMetrics() *Metrics {
 // Collectors returns every collector for fx-group registration.
 func (m *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		m.examined, m.kept, m.dropped, m.wouldDrop, m.blockedExt,
+		m.examined, m.kept, m.dropped, m.wouldDrop, m.reviewed, m.wouldReview, m.blockedExt,
 		m.llmCacheHits, m.llmCacheMisses, m.llmCalls, m.llmTokens, m.llmUsageMissing,
 		m.llmGateRejects, m.llmAudit,
 		m.llmCallDuration, m.llmBudgetExhausted, m.llmRuleCandidate,
@@ -200,6 +210,13 @@ func (m *Metrics) Observe(d Decision) {
 		return
 	}
 	switch {
+	case d.Allow && d.WouldReview && !d.WouldDrop:
+		if d.Review {
+			m.reviewed.Inc()
+		} else {
+			m.wouldReview.Inc()
+		}
+		m.kept.Inc()
 	case d.WouldDrop && !d.Allow:
 		// Live drop: increment the dropped counter for the reason.
 		m.dropped.With(prometheus.Labels{cfLabel: d.Reason.String()}).Inc()

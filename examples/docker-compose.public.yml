@@ -66,6 +66,7 @@ services:
       CONTENT_FILTER_ENFORCE: "${CONTENT_FILTER_ENFORCE:-false}"
       CONTENT_FILTER_LLM_ENABLED: "${CONTENT_FILTER_LLM_ENABLED:-false}"
       CONTENT_FILTER_LLM_ENFORCE: "${CONTENT_FILTER_LLM_ENFORCE:-false}"
+      CONTENT_FILTER_LLM_ACTION: "${CONTENT_FILTER_LLM_ACTION:-drop}"
 
       # --- Retention (deletion of stale torrents) ---
       # OFF by default. Flip RETENTION_ENABLED first; let

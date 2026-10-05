@@ -143,3 +143,12 @@ func TestProvideFilterRejectsInvalidEnforcementModeEvenWithoutProvider(t *testin
 		t.Fatalf("invalid enforcement mode must fail startup, got %v", err)
 	}
 }
+
+func TestProvideFilterRejectsInvalidDispositionEvenWithoutProvider(t *testing.T) {
+	cfg := contentfilter.NewDefaultConfig()
+	cfg.LLMAction = "tag_and_delete"
+	_, err := provideFilter(filterParams{Config: cfg, Logger: zap.NewNop().Sugar()})
+	if err == nil || !strings.Contains(err.Error(), "llm_action") {
+		t.Fatalf("invalid disposition must fail startup, got %v", err)
+	}
+}

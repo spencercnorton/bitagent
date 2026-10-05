@@ -58,9 +58,48 @@ func TestValidContentFilterDecisionOutcomes(t *testing.T) {
 		{Outcome: "low_confidence", Confidence: .5, Reason: "ambiguous", MinConfidence: .85},
 		{Outcome: "invalid_response", MinConfidence: .85},
 		{Outcome: "audit_incomplete", MinConfidence: .85},
+		{Outcome: "non_english", Confidence: .9, Reason: "spanish-article", MinConfidence: .85, LLMAction: "review", WouldReview: true},
 	} {
 		require.True(t, validContentFilterDecision(decision), "%+v", decision)
 	}
+}
+
+func TestContentFilterReviewDecisionCannotAuthorizeDrop(t *testing.T) {
+	for _, d := range []ContentFilterDecision{
+		{Outcome: "non_english", Confidence: .9, Reason: "spanish-article", MinConfidence: .85, LLMAction: "review", WouldDrop: true},
+		{Outcome: "non_english", Confidence: .9, Reason: "spanish-article", MinConfidence: .85, LLMAction: "drop", WouldReview: true},
+		{Outcome: "non_english", Confidence: .9, Reason: "spanish-article", MinConfidence: .85, LLMAction: "review", WouldDrop: true, WouldReview: true},
+		{Outcome: "english", IsEnglish: true, Confidence: .9, Reason: "english-clear", MinConfidence: .85, LLMAction: "review", WouldReview: true},
+		{Outcome: "invalid_response", MinConfidence: .85, LLMAction: "review", WouldReview: true},
+		{Outcome: "audit_incomplete", MinConfidence: .85, LLMAction: "review", WouldReview: true},
+		{Outcome: "non_english", Confidence: .9, Reason: "spanish-article", MinConfidence: .85, LLMAction: "tag_and_delete", WouldReview: true},
+	} {
+		require.False(t, validContentFilterDecision(d), "%+v", d)
+	}
+}
+
+func TestPostgresContentFilterReviewDispositionBinding(t *testing.T) {
+	r, pool := typeResultPostgresFixture(t)
+	ctx := context.Background()
+	req := validRequest()
+	req.Task, req.ContractID = TaskContentFilter, "contentfilter-chat-model-input-v1"
+	req.TaskInputJSON = json.RawMessage(`{"title":"Pelicula","min_confidence":0.85,"live":true,"llm_action":"review","eligibility_input":{}}`)
+	_, err := pool.Exec(ctx, "INSERT INTO torrents VALUES ($1,false)", req.InfoHash)
+	require.NoError(t, err)
+	_, err = r.Capture(ctx, req)
+	require.NoError(t, err)
+	key, err := KeyForRequest(req)
+	require.NoError(t, err)
+	receipt, err := r.RecordHTTPResult(ctx, key, HTTPResult{Body: []byte(`{"choices":[]}`), StatusCode: 200, ErrorClass: "none"})
+	require.NoError(t, err)
+	d := ContentFilterDecision{Outcome: "non_english", Confidence: .93, Reason: "spanish-article", MinConfidence: .85, Live: true, LLMAction: "review", WouldReview: true}
+	wrong := d
+	wrong.LLMAction, wrong.WouldReview, wrong.WouldDrop = "", false, true
+	require.ErrorIs(t, r.RecordContentFilterDecision(ctx, receipt, req.InfoHash, wrong), ErrCaptureUnavailable, "legacy drop cannot be attached to a captured review task")
+	require.NoError(t, r.RecordContentFilterDecision(ctx, receipt, req.InfoHash, d))
+	replay, err := r.FindContentFilterReplay(ctx, key, req.InfoHash)
+	require.NoError(t, err)
+	require.Equal(t, d, *replay.Decision)
 }
 
 func TestPostgresContentFilterResultDecisionPrivacyAndPolicyBinding(t *testing.T) {

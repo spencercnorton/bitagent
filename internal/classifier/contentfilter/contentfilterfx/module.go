@@ -154,7 +154,8 @@ func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 		"deterministic_enforce", cfg.Enabled && cfg.Enforce,
 		"llm_enforce", cfg.Enabled && cfg.LLMEnforcementEnabled(),
 		"llm_enforce_mode", cfg.LLMEnforce,
-		"defer_on_unavailable", cfg.LLMDeferOnUnavailable,
+		"llm_action", cfg.EffectiveLLMAction(),
+		"defer_on_unavailable", cfg.LLMDeferOnUnavailable && cfg.EffectiveLLMAction() == contentfilter.LLMActionDrop,
 		"min_confidence_for_drop", cfg.LLMMinConfidenceForDrop,
 		"prompt_version", cfg.LLMPromptVersion,
 	)
@@ -167,10 +168,13 @@ func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 func validateEnforcementMode(cfg contentfilter.Config) error {
 	switch cfg.LLMEnforce {
 	case "", "inherit", "true", "false":
-		return nil
 	default:
 		return fmt.Errorf("content_filter.llm_enforce must be inherit, true or false")
 	}
+	if cfg.EffectiveLLMAction() == "" {
+		return fmt.Errorf("content_filter.llm_action must be drop or review")
+	}
+	return nil
 }
 
 func validateProductionLLMConfig(cfg contentfilter.Config) error {
