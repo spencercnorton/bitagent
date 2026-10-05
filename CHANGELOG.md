@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Bound type fallback application with an audited category allowlist. A
+  disallowed prediction remains unknown without triggering that category's
+  deletion policy; changed policy invalidates cached application.
+- Add an audited language review action that persists a model-attributed tag
+  while retaining the torrent and ordinary deterministic filtering behavior.
+- Document bounded application, actual-effect checks and independent rollback
+  controls for optional model stages.
+
 - Run optional type inference inside the classification workflow's exclusion
   policy. Deterministic outcomes remain authoritative; custom workflows without
   the policy boundary cannot apply a live prediction.

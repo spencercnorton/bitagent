@@ -14,7 +14,7 @@ canonical references before expanding the allowed list.
 
 For language review, enable `CONTENT_FILTER_LLM_ENABLED`, set
 `CONTENT_FILTER_LLM_ENFORCE=true` and `CONTENT_FILTER_LLM_ACTION=review`.
-Audited non-English predictions add the model-attributed `llm_language_review`
+Audited non-English predictions add the model-attributed `llm-language-review`
 tag through the normal persistence transaction. The torrent remains searchable.
 English-inclusive releases retain their existing model protection. Deterministic
 filtering still follows `CONTENT_FILTER_ENFORCE`. Review tags are evidence for an
