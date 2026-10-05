@@ -104,6 +104,9 @@ type filterParams struct {
 func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 	cfg, m, logger := p.Config, p.Metrics, p.Logger
 	cfg = applyDropLossyAudioOnlyBackCompat(cfg, logger)
+	if err := validateEnforcementMode(cfg); err != nil {
+		return nil, err
+	}
 
 	if !cfg.LLMEnabled {
 		return contentfilter.New(cfg), nil
@@ -135,6 +138,11 @@ func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 	if apiStyle == "" {
 		apiStyle = "auto"
 	}
+	if cfg.Enabled && cfg.LLMEnforcementEnabled() && (cfg.LLMEnforce == "" || cfg.LLMEnforce == "inherit") {
+		logger.Named("contentfilter").Warnw(
+			"LLM enforcement inherits CONTENT_FILTER_ENFORCE; set CONTENT_FILTER_LLM_ENFORCE explicitly to select model application",
+		)
+	}
 	logger.Named("contentfilter").Infow(
 		"LLM tier active",
 		"model", cfg.LLMModel,
@@ -143,6 +151,9 @@ func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 		"daily_budget", cfg.LLMDailyBudget,
 		"monthly_budget", cfg.LLMMonthlyBudget,
 		"max_concurrent_calls", cfg.LLMMaxConcurrentCalls,
+		"deterministic_enforce", cfg.Enabled && cfg.Enforce,
+		"llm_enforce", cfg.Enabled && cfg.LLMEnforcementEnabled(),
+		"llm_enforce_mode", cfg.LLMEnforce,
 		"defer_on_unavailable", cfg.LLMDeferOnUnavailable,
 		"min_confidence_for_drop", cfg.LLMMinConfidenceForDrop,
 		"prompt_version", cfg.LLMPromptVersion,
@@ -151,6 +162,15 @@ func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 		Budget:  llmmatch.NewPostgresContentFilterCallBudget(p.Pool),
 		Capture: p.Capture,
 	}), nil
+}
+
+func validateEnforcementMode(cfg contentfilter.Config) error {
+	switch cfg.LLMEnforce {
+	case "", "inherit", "true", "false":
+		return nil
+	default:
+		return fmt.Errorf("content_filter.llm_enforce must be inherit, true or false")
+	}
 }
 
 func validateProductionLLMConfig(cfg contentfilter.Config) error {

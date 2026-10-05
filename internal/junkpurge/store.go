@@ -82,7 +82,7 @@ func RestoreQuarantined(ctx context.Context, pool *pgxpool.Pool, daoQ *dao.Query
 
 	var torrentSnap, filesSnap []byte
 	if err := tx.QueryRow(ctx,
-		`SELECT torrent_snapshot, files_snapshot FROM junkpurge_quarantine WHERE info_hash = $1`,
+		`SELECT torrent_snapshot, files_snapshot FROM junkpurge_quarantine WHERE info_hash = $1 FOR UPDATE`,
 		ihBytes).Scan(&torrentSnap, &filesSnap); err != nil {
 		return fmt.Errorf("quarantine entry not found: %w", err)
 	}
@@ -148,13 +148,27 @@ func DeleteQuarantinedNow(ctx context.Context, pool *pgxpool.Pool, vstore *verdi
 		return fmt.Errorf("invalid info_hash %q: %w", infoHashHex, err)
 	}
 	ihBytes := ih[:]
-	if _, err := pool.Exec(ctx, `
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Review actions are bound to an existing snapshot and serialize with a
+	// concurrent restore. A missing entry is not authority to blacklist a hash.
+	var present bool
+	if err = tx.QueryRow(ctx, `SELECT true FROM junkpurge_quarantine WHERE info_hash=$1 FOR UPDATE`, ihBytes).Scan(&present); err != nil {
+		return fmt.Errorf("quarantine entry not found: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
 INSERT INTO torrent_liveness (info_hash, status, last_observed_at, blacklisted_at)
 VALUES ($1, 'dead', now(), now())
 ON CONFLICT (info_hash) DO UPDATE SET status = 'dead', blacklisted_at = now(), updated_at = now()`, ihBytes); err != nil {
 		return err
 	}
-	if _, err = pool.Exec(ctx, `DELETE FROM junkpurge_quarantine WHERE info_hash = $1`, ihBytes); err != nil {
+	if _, err = tx.Exec(ctx, `DELETE FROM junkpurge_quarantine WHERE info_hash = $1`, ihBytes); err != nil {
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
 	// Best-effort ledger record (log-and-continue): the delete has already

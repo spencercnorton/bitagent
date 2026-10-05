@@ -14,7 +14,7 @@ FROM llm_evaluation_captures c
 JOIN llm_evaluation_capture_admissions a USING (capture_key)
 JOIN torrents t ON t.info_hash = a.info_hash
 WHERE c.capture_key = $1
-  AND c.task IN ('matcher_extract', 'matcher_rerank', 'classifier_type', 'contentfilter')
+  AND c.task IN ('matcher_extract', 'matcher_rerank', 'matcher_embedding', 'classifier_type', 'contentfilter')
   AND c.expires_at > transaction_timestamp()
   AND a.expires_at = c.expires_at
   AND t.private = false

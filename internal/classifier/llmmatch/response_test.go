@@ -36,9 +36,21 @@ func TestReadMatcherChatResponseMatchesLiveBoundary(t *testing.T) {
 			wantErr: ErrMatcherChatHTTPStatus,
 		},
 		{
-			name:        "refusal is ignored when content exists",
+			name:    "refusal vetoes existing content",
+			status:  http.StatusOK,
+			body:    `{"choices":[{"message":{"content":"{}","refusal":"policy"}}]}`,
+			wantErr: ErrMatcherChatEnvelope,
+		},
+		{
+			name:        "empty refusal is compatible no-refusal metadata",
 			status:      http.StatusOK,
-			body:        `{"choices":[{"message":{"content":"{}","refusal":"policy"}}]}`,
+			body:        `{"choices":[{"message":{"content":"{}","refusal":""}}]}`,
+			wantContent: `{}`,
+		},
+		{
+			name:        "explicit complete output with null refusal and error",
+			status:      http.StatusOK,
+			body:        `{"error":null,"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{}","refusal":null}}]}`,
 			wantContent: `{}`,
 		},
 		{

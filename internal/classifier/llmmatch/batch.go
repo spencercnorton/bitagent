@@ -176,8 +176,9 @@ func (c *Client) storeExtraction(name string, ext Extraction, st *BatchStats) {
 }
 
 // callBatchExtract issues one batched stage-1 prompt and returns extractions
-// keyed by the echoed input id. Items with invented or duplicate ids are
-// dropped (the caller treats their lines as missing).
+// keyed by the echoed input id. Invented ids are dropped. Every item for a
+// repeated known id is dropped so an ambiguous answer cannot choose which
+// title to attach; the caller retries those missing lines as single requests.
 func (c *Client) callBatchExtract(ctx context.Context, chunk []model.Torrent) (map[int]Extraction, error) {
 	var sb strings.Builder
 	sb.WriteString("release_names:\n")
@@ -192,6 +193,11 @@ func (c *Client) callBatchExtract(ctx context.Context, chunk []model.Torrent) (m
 	if err != nil {
 		return nil, err
 	}
+	raw, err = requireJSONObject(raw)
+	if err != nil {
+		c.metrics.callErrors.WithLabelValues("batch_extract", "decode").Inc()
+		return nil, fmt.Errorf("decode batch extract: %w", err)
+	}
 
 	var env struct {
 		Items []json.RawMessage `json:"items"`
@@ -202,6 +208,7 @@ func (c *Client) callBatchExtract(ctx context.Context, chunk []model.Torrent) (m
 	}
 
 	out := make(map[int]Extraction, len(env.Items))
+	seenIDs := make(map[int]bool, len(env.Items))
 	for _, rawItem := range env.Items {
 		var header struct {
 			ID int `json:"id"`
@@ -210,9 +217,11 @@ func (c *Client) callBatchExtract(ctx context.Context, chunk []model.Torrent) (m
 			header.ID < 1 || header.ID > len(chunk) {
 			continue
 		}
-		if _, dup := out[header.ID]; dup {
+		if seenIDs[header.ID] {
+			delete(out, header.ID)
 			continue
 		}
+		seenIDs[header.ID] = true
 		extraction, err := decodeExtraction(rawItem)
 		if err != nil {
 			// Treat an individual contract violation like a dropped row. The

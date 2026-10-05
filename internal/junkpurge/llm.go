@@ -10,7 +10,10 @@ import (
 	"math"
 	"net/http"
 	"strings"
+	"time"
+	"unicode"
 
+	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
 )
 
@@ -138,9 +141,8 @@ type CallBudget interface {
 // The "0/12" above is IN-SAMPLE: the prompt was tuned against those very
 // examples until it scored zero. It is evidence that the reframe fixed the
 // specific regressions it was written for, and nothing more. It must never be
-// cited as this prompt's false-junk rate. The measured realised false-junk on
-// actioned deletions is >=0.43% [0.25%, 0.74%] (13/3,000; see
-// docs/design/gold-corpus-rescope.md §6), and that is itself a floor.
+// cited as this prompt's false-junk rate. Independent labels on a frozen,
+// representative cohort are required to measure false-junk harm.
 //
 // These instructions are the ACTUAL deployed policy artifact for the junk-purge
 // pool. ops/llm-eval/junk-disposition-policy-v1.json anchors the gold label
@@ -187,6 +189,10 @@ type ollamaJudge struct {
 	budget            CallBudget
 	dailyCallLimit    int
 	monthlyCallLimit  int
+	capture           llmcapture.Capturer
+	auditRequired     bool
+	minConfidence     float64
+	enablePurge       bool
 }
 
 // NewJudge builds the LLM judge from config. It defaults to the self-hosted
@@ -211,10 +217,22 @@ func NewJudgeWithBudget(cfg Config, metrics *Metrics, budget CallBudget) Judge {
 		budget:            budget,
 		dailyCallLimit:    cfg.LLMDailyCallLimit,
 		monthlyCallLimit:  cfg.LLMMonthlyCallLimit,
+		minConfidence:     cfg.MinConfidence,
+		enablePurge:       cfg.EnablePurge,
 	}
 }
 
+// NewAuditedJudge retains the exact hosted request, HTTP response and model
+// decision. Paid production wiring requires this recorder even in dry-run mode.
+func NewAuditedJudge(cfg Config, metrics *Metrics, budget CallBudget, capture llmcapture.Capturer) Judge {
+	j := NewJudgeWithBudget(cfg, metrics, budget).(*ollamaJudge)
+	j.capture = capture
+	j.auditRequired = cfg.LLMApiStyle == "chat"
+	return j
+}
+
 func (j *ollamaJudge) Judge(ctx context.Context, torrentName string) (Judgment, error) {
+	ctx = withJunkCall(ctx)
 	switch j.apiStyle {
 	case "ollama":
 		return j.judgeOllama(ctx, torrentName)
@@ -278,6 +296,7 @@ func (j *ollamaJudge) JudgeBatch(ctx context.Context, names []string) ([]Judgmen
 		}
 		return []Judgment{jm}, nil
 	}
+	ctx = withJunkCall(ctx)
 	system := judgeInstructions + batchFormatInstructions(len(names))
 	user := batchUserContent(names)
 	var (
@@ -294,13 +313,24 @@ func (j *ollamaJudge) JudgeBatch(ctx context.Context, names []string) ([]Judgmen
 		return nil, fmt.Errorf("junkpurge llm: unsupported api_style %q", j.apiStyle)
 	}
 	if err != nil {
+		if auditErr := j.finishJunkAudit(ctx, nil); auditErr != nil && !errors.Is(err, ErrLLMUnavailable) {
+			err = junkAuditFailure(auditErr)
+		}
 		j.observeFailure("grouped", usage, err)
 		return nil, err
 	}
 	judgments, perr := parseBatchJudgments(content, len(names))
 	if perr != nil {
+		if auditErr := j.finishJunkAudit(ctx, nil); auditErr != nil {
+			perr = junkAuditFailure(auditErr)
+		}
 		j.observeFailure("grouped", usage, perr)
 		return nil, perr
+	}
+	if auditErr := j.finishJunkAudit(ctx, judgments); auditErr != nil {
+		err := junkAuditFailure(auditErr)
+		j.observeFailure("grouped", usage, err)
+		return nil, err
 	}
 	j.observeRequest("grouped", "ok", usage)
 	return judgments, nil
@@ -396,11 +426,22 @@ func (j *ollamaJudge) judgeChat(ctx context.Context, name string) (Judgment, err
 		j.model, name, j.openAIDataSharing,
 	))
 	if err != nil {
+		if auditErr := j.finishJunkAudit(ctx, nil); auditErr != nil && !errors.Is(err, ErrLLMUnavailable) {
+			err = junkAuditFailure(auditErr)
+		}
 		j.observeFailure("standard", tokenUsage{}, err)
 		return Judgment{}, err
 	}
 	judgment, usage, err := parseChatJudgment(raw)
 	if err != nil {
+		if auditErr := j.finishJunkAudit(ctx, nil); auditErr != nil {
+			err = junkAuditFailure(auditErr)
+		}
+		j.observeFailure("standard", usage, err)
+		return Judgment{}, err
+	}
+	if auditErr := j.finishJunkAudit(ctx, []Judgment{judgment}); auditErr != nil {
+		err := junkAuditFailure(auditErr)
 		j.observeFailure("standard", usage, err)
 		return Judgment{}, err
 	}
@@ -473,13 +514,20 @@ func parseChatJudgment(raw []byte) (Judgment, tokenUsage, error) {
 	return judgment, usage, err
 }
 
-// decodeChatReply extracts the first choice's content and the token usage
+// decodeChatReply extracts one qualified choice's content and the token usage
 // from an OpenAI-compatible /chat/completions reply.
 func decodeChatReply(raw []byte) (string, tokenUsage, error) {
+	if err := rejectDuplicateJunkJSON(raw); err != nil {
+		return "", tokenUsage{}, fmt.Errorf("junkpurge llm: ambiguous envelope: %w", err)
+	}
 	var cr struct {
+		Error   json.RawMessage `json:"error"`
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content string `json:"content"`
+				Role    string `json:"role"`
+				Refusal string `json:"refusal"`
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
@@ -504,10 +552,19 @@ func decodeChatReply(raw []byte) (string, tokenUsage, error) {
 		Output:     cr.Usage.CompletionTokens,
 		Reasoning:  cr.Usage.CompletionDetails.ReasoningTokens,
 	}
-	if len(cr.Choices) == 0 {
-		return "", usage, fmt.Errorf("junkpurge llm: chat: empty choices; body=%s", truncate(string(raw), 200))
+	if len(cr.Error) > 0 && !bytes.Equal(bytes.TrimSpace(cr.Error), []byte("null")) {
+		return "", usage, errors.New("junkpurge llm: provider error envelope")
 	}
-	return cr.Choices[0].Message.Content, usage, nil
+	if len(cr.Choices) != 1 {
+		return "", usage, errors.New("junkpurge llm: chat requires exactly one choice")
+	}
+	choice := cr.Choices[0]
+	if choice.FinishReason != "" && choice.FinishReason != "stop" ||
+		choice.Message.Role != "" && choice.Message.Role != "assistant" ||
+		choice.Message.Refusal != "" {
+		return "", usage, errors.New("junkpurge llm: incomplete, refused or non-assistant response")
+	}
+	return choice.Message.Content, usage, nil
 }
 
 func (j *ollamaJudge) observeRequest(processing, outcome string, usage tokenUsage) {
@@ -580,8 +637,22 @@ func (j *ollamaJudge) doJSON(ctx context.Context, url string, body any) ([]byte,
 			}
 		}
 	}
+	if j.apiStyle == "chat" {
+		if err := j.beginJunkAudit(ctx, url, bodyBytes); err != nil {
+			return nil, junkAuditFailure(err)
+		}
+	}
 	resp, err := j.http.Do(req)
 	if err != nil {
+		auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		auditErr := recordJunkResponse(auditCtx, nil, 0, "transport")
+		if auditErr == nil {
+			auditErr = j.finishJunkAudit(auditCtx, nil)
+		}
+		cancel()
+		if auditErr != nil {
+			return nil, junkAuditFailure(auditErr)
+		}
 		reason := llmFailureTransport
 		switch {
 		case errors.Is(err, context.Canceled):
@@ -596,7 +667,26 @@ func (j *ollamaJudge) doJSON(ctx context.Context, url string, body any) ([]byte,
 		}
 	}
 	defer func() { _ = resp.Body.Close() }()
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, llmcapture.MaxResultBodyBytes+1))
+	if len(raw) > llmcapture.MaxResultBodyBytes {
+		raw = raw[:llmcapture.MaxResultBodyBytes]
+		err = fmt.Errorf("junk response exceeds bounded body limit")
+	}
+	class := "none"
+	if err != nil {
+		class = "read"
+	} else if resp.StatusCode != http.StatusOK {
+		class = "http_status"
+	}
+	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	auditErr := recordJunkResponse(auditCtx, raw, resp.StatusCode, class)
+	if auditErr == nil && class != "none" {
+		auditErr = j.finishJunkAudit(auditCtx, nil)
+	}
+	cancel()
+	if auditErr != nil {
+		return nil, junkAuditFailure(auditErr)
+	}
 	if err != nil {
 		return nil, &llmRequestError{
 			reason:      llmFailureResponseRead,
@@ -604,7 +694,7 @@ func (j *ollamaJudge) doJSON(ctx context.Context, url string, body any) ([]byte,
 			cause:       err,
 		}
 	}
-	if resp.StatusCode/100 != 2 {
+	if resp.StatusCode != http.StatusOK {
 		detail := fmt.Sprintf("http %d: %s", resp.StatusCode, truncate(string(raw), 200))
 		if resp.StatusCode == http.StatusTooManyRequests {
 			return nil, &llmRequestError{
@@ -637,6 +727,9 @@ func parseJudgment(text string) (Judgment, error) {
 	s := stripReplyWrapping(text)
 	if s == "" {
 		return Judgment{}, errors.New("junkpurge llm: empty content")
+	}
+	if err := rejectDuplicateJunkJSON([]byte(s)); err != nil {
+		return Judgment{}, fmt.Errorf("junkpurge llm: ambiguous verdict: %w", err)
 	}
 	var raw struct {
 		Verdict    *string  `json:"verdict"`
@@ -730,6 +823,9 @@ func parseBatchJudgments(text string, n int) ([]Judgment, error) {
 	if s == "" {
 		return nil, errors.New("junkpurge llm: empty content")
 	}
+	if err := rejectDuplicateJunkJSON([]byte(s)); err != nil {
+		return nil, fmt.Errorf("junkpurge llm: ambiguous grouped verdict: %w", err)
+	}
 	var raw []struct {
 		I          *int     `json:"i"`
 		Verdict    *string  `json:"verdict"`
@@ -769,6 +865,75 @@ func parseBatchJudgments(text string, n int) ([]Judgment, error) {
 		out[*item.I-1] = jm
 	}
 	return out, nil
+}
+
+// encoding/json otherwise silently accepts a later duplicate field, including
+// case variants of a struct field. On a quarantine decision that could turn an
+// ambiguous keep into a confident junk.
+func rejectDuplicateJunkJSON(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var walk func(int) error
+	walk = func(depth int) error {
+		if depth > 64 {
+			return fmt.Errorf("JSON nesting exceeds limit")
+		}
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := map[string]bool{}
+			for decoder.More() {
+				key, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				name, ok := key.(string)
+				folded := junkJSONFieldIdentity(name)
+				if !ok || seen[folded] {
+					return fmt.Errorf("duplicate or invalid JSON field")
+				}
+				seen[folded] = true
+				if err = walk(depth + 1); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for decoder.More() {
+				if err = walk(depth + 1); err != nil {
+					return err
+				}
+			}
+		default:
+			return fmt.Errorf("unexpected JSON delimiter")
+		}
+		_, err = decoder.Token()
+		return err
+	}
+	if err := walk(0); err != nil {
+		return err
+	}
+	return requireEOF(decoder)
+}
+
+// Match encoding/json's case-insensitive struct fields, including Unicode
+// aliases such as the long s in "choiceſ". Lowercasing alone misses those.
+func junkJSONFieldIdentity(name string) string {
+	return strings.Map(func(r rune) rune {
+		least := r
+		for folded := unicode.SimpleFold(r); folded != r; folded = unicode.SimpleFold(folded) {
+			if folded < least {
+				least = folded
+			}
+		}
+		return least
+	}, name)
 }
 
 func truncate(s string, n int) string {

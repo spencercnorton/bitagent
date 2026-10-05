@@ -30,6 +30,7 @@ const (
 	cycleOutcomeNoCandidates       = "no_candidates"
 	cycleOutcomeCanceled           = "canceled"
 	cycleOutcomeCaptureUnavailable = "capture_unavailable"
+	cycleOutcomeInvalidResponse    = "invalid_response"
 	cycleOutcomeCaptureOnly        = "capture_only"
 	cycleOutcomeLLMUnavailable     = "llm_unavailable"
 	cycleOutcomeJunkRateAnomaly    = "junk_rate_anomaly"
@@ -300,7 +301,11 @@ func judgeGroupWithFallback(
 		if ctx.Err() != nil {
 			return judgments, itemErrs, i, ctx.Err()
 		}
-		jm, err := judge.Judge(ctx, name)
+		itemCtx := ctx
+		if sources, ok := ctx.Value(junkSourcesKey{}).([]candidate); ok && len(sources) == len(names) {
+			itemCtx = withJunkSources(ctx, sources[i:i+1])
+		}
+		jm, err := judge.Judge(itemCtx, name)
 		if errors.Is(err, ErrLLMUnavailable) {
 			return judgments, itemErrs, i, err
 		}
@@ -318,6 +323,7 @@ type unavailableGroup struct {
 
 type syncJudgingSummary struct {
 	hadUnavailable    bool
+	hadRejected       bool
 	unavailableGroups []unavailableGroup
 	deferred          int
 	halted            bool
@@ -361,8 +367,13 @@ func evaluateCandidateGroups(
 			names[i] = item.name
 		}
 		judgments, itemErrs, processed, unavailableErr := judgeGroupWithFallback(
-			ctx, judge, names, metrics,
+			withJunkSources(ctx, group), judge, names, metrics,
 		)
+		for _, err := range itemErrs {
+			if err != nil {
+				summary.hadRejected = true
+			}
+		}
 		consumeProcessed := func(consumeCtx context.Context) {
 			for i := 0; i < processed; i++ {
 				consume(consumeCtx, group[i], judgments[i], itemErrs[i])
@@ -497,7 +508,7 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 	// destructive worker.
 	captureOnly := allowCaptureOnly(w.cfg, w.capture)
 
-	// Expire quarantine entries past the review window: blacklist + hard-delete.
+	// Tombstone entries past the review window; snapshots remain restorable.
 	// Gated on EnablePurge (T3 phase 0) and the absence of capture-only mode:
 	// both dry-run and prospective-capture modes must be observation-only.
 	// Before this gate a dry-run evaluation still permanently deleted
@@ -563,7 +574,8 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 
 	captured := 0
 	captureUnavailable := false
-	// Phase 1: claim + capture. Judging is deferred to phase 2 so names can
+	// Phase 1: claim, and optionally collect no-provider prospective captures.
+	// Paid-request capture belongs to the actual phase-2 HTTP dispatch so names can
 	// be grouped into shared LLM calls (LLMNamesPerCall). Claims are held for
 	// the whole cycle either way (claimTTL >> cycle); an item claimed here
 	// but never judged (breaker trip mid-phase-2) is released at settle,
@@ -585,7 +597,13 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 			continue
 		}
 		claimed = append(claimed, c.infoHash)
-		if captureErr := w.captureSyncCandidate(ctx, c); captureErr != nil {
+		// Paid dispatch captures the actual envelope in the judge. Prospective
+		// capture-only mode retains its explicitly no-provider request contract.
+		var captureErr error
+		if captureOnly {
+			captureErr = w.captureSyncCandidate(ctx, c)
+		}
+		if captureErr != nil {
 			if errors.Is(captureErr, llmcapture.ErrPrivacyBlocked) {
 				continue
 			}
@@ -610,6 +628,7 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 		return
 	}
 
+	recordingUnavailable := false
 	// Phase 2: judge in groups. A transient provider failure blocks all
 	// destructive application for this cycle, but is isolated to its group so
 	// later successfully-evaluated groups still become durable evaluation data.
@@ -623,8 +642,8 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 		w.metrics,
 		func(recordCtx context.Context, c candidate, j Judgment, jerr error) {
 			if jerr != nil {
-				// Per-item failure (4xx / unparseable). Skip the item; do not
-				// trip the breaker — the endpoint is up, this one reply was bad.
+				// Retain useful evidence from other items, but an unresolved bad
+				// reply makes this cycle incomplete and blocks all quarantine.
 				//
 				// Log it. This counter was previously the ONLY trace of the
 				// failure, and a metric alone cannot say WHICH title or WHY: one
@@ -656,10 +675,12 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 				recordCtx, pool, c.infoHash, j, c.name, w.batchLeaseOwner, w.cfg,
 			)
 			if rerr != nil {
+				recordingUnavailable = true
 				w.metrics.cycleErrorsTotal.WithLabelValues("record").Inc()
 				return
 			}
 			if !recorded {
+				recordingUnavailable = true
 				return
 			}
 			judged++
@@ -682,6 +703,12 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 			outcomeCtx, pool, recordedClaims, cycleOutcomeCanceled,
 		)
 		cancel()
+		return
+	}
+	if recordingUnavailable {
+		cycleOutcome = cycleOutcomeCaptureUnavailable
+		w.metrics.circuitBreaks.WithLabelValues("capture_unavailable").Inc()
+		w.markSyncJudgmentOutcome(ctx, pool, recordedClaims, cycleOutcome)
 		return
 	}
 	for _, failure := range judging.unavailableGroups {
@@ -750,15 +777,21 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 	// Circuit breaker 1: one or more provider calls were unavailable. Valid
 	// judgments from other groups are already durable and explicitly marked as
 	// breaker evidence, but a partial/uncertain cycle can never delete.
-	if judging.hadUnavailable {
+	if judging.hadUnavailable || judging.hadRejected {
 		cycleOutcome = cycleOutcomeLLMUnavailable
+		reason := "llm_unavailable"
+		if !judging.hadUnavailable {
+			cycleOutcome = cycleOutcomeInvalidResponse
+			reason = "invalid_response"
+		}
 		w.metrics.llmDeferredTotal.Add(float64(judging.deferred))
-		w.metrics.circuitBreaks.WithLabelValues("llm_unavailable").Inc()
+		w.metrics.circuitBreaks.WithLabelValues(reason).Inc()
 		w.markSyncJudgmentOutcome(
-			ctx, pool, recordedClaims, cycleOutcomeLLMUnavailable,
+			ctx, pool, recordedClaims, cycleOutcome,
 		)
 		w.logger.Warnw(
-			"junkpurge: provider unavailable in cycle — preserved valid judgments, skipping deletion",
+			"junkpurge: incomplete cycle — preserved valid judgments, skipping deletion",
+			"reason", reason,
 			"judged", judged,
 			"confident_junk", len(junk),
 			"deferred", judging.deferred,
@@ -1242,9 +1275,8 @@ ON CONFLICT (info_hash) DO UPDATE SET
 RETURNING info_hash`
 
 // The quarantine expiry SQL lives in constants so TestQuarantineExpiryIsNotDestructive
-// can assert on it without a database. CI has no PostgreSQL service, so the
-// lifecycle integration test skips there and these assertions are the only thing
-// standing between a careless edit and a re-armed destructive path.
+// can assert on it without a database. The lifecycle integration test also
+// exercises tombstoning and restoration against a disposable PostgreSQL.
 const (
 	quarantineWouldExpireCountSQL = `
 SELECT count(*) FROM junkpurge_quarantine

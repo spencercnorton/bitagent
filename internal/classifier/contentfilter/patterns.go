@@ -5,6 +5,13 @@ import (
 	"strings"
 )
 
+// englishReleaseEvidencePattern makes model language filtering fail open for
+// release names advertising an English-inclusive track. It deliberately uses
+// a wide token boundary: an extra keep is preferable to a false content drop.
+// This is a veto on model inference, not proof of the work's original language
+// and not an override of separately configured deterministic policy.
+var englishReleaseEvidencePattern = regexp.MustCompile(`(?i)(?:^|[^a-z])(eng|english|en)(?:[^a-z]|$)`)
+
 // nsfwKeywords is the conservative-side list — false positives here
 // cost less than false negatives. Tokens are matched as whole words
 // (\b boundaries) on the lower-cased title to avoid matching
@@ -115,8 +122,8 @@ var nonMP3MusicExtensions = map[string]struct{}{
 	"ape":  {},
 	"opus": {},
 	"ogg":  {},
-	"wv":   {},   // WavPack
-	"dsf":  {},   // DSD
+	"wv":   {}, // WavPack
+	"dsf":  {}, // DSD
 }
 
 // hasNonMP3Audio reports true iff any extension in `exts` is in

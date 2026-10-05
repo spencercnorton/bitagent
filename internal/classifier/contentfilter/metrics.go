@@ -14,8 +14,8 @@ import (
 //
 //	examined_total           — every torrent the filter saw
 //	keep_total               — torrents that passed every check
-//	drop_total{reason}       — torrents the filter dropped (Enforce=true)
-//	would_drop_total{reason} — counterfactual: dropped under Enforce=false
+//	drop_total{reason}       — torrents the filter dropped (the matching tier is enforced)
+//	would_drop_total{reason} — counterfactual drops while the matching tier is shadow
 //
 // Phase 2 (LLM tier):
 //
@@ -87,13 +87,13 @@ func NewMetrics() *Metrics {
 			Namespace: cfNamespace,
 			Subsystem: cfSubsystem,
 			Name:      "drop_total",
-			Help:      "Torrents dropped by the content filter (Enforce=true). Per-reason.",
+			Help:      "Torrents dropped by the content filter (the matching tier is enforced). Per-reason.",
 		}, []string{cfLabel}),
 		wouldDrop: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: cfNamespace,
 			Subsystem: cfSubsystem,
 			Name:      "would_drop_total",
-			Help:      "Counterfactual: torrents the filter would drop under Enforce=true. Per-reason. Lights up in shadow mode (Enabled=true, Enforce=false).",
+			Help:      "Counterfactual drops while the matching tier is shadow. Per-reason; requires Enabled=true.",
 		}, []string{cfLabel}),
 
 		blockedExt: dualemit.NewCounterVec(prometheus.CounterOpts{
@@ -108,13 +108,13 @@ func NewMetrics() *Metrics {
 			Namespace: cfNamespace,
 			Subsystem: cfSubsystem,
 			Name:      "llm_cache_hits_total",
-			Help:      "LLM verdicts served from the sha256-keyed LRU cache.",
+			Help:      "LLM decisions served from exact-source durable replay or the direct-client LRU cache.",
 		}),
 		llmCacheMisses: dualemit.NewCounter(prometheus.CounterOpts{
 			Namespace: cfNamespace,
 			Subsystem: cfSubsystem,
 			Name:      "llm_cache_misses_total",
-			Help:      "LLM verdicts NOT in cache (a live LLM call follows, subject to budget).",
+			Help:      "LLM decisions absent from durable replay or the direct-client cache; provider dispatch remains gated.",
 		}),
 		llmCalls: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: cfNamespace,

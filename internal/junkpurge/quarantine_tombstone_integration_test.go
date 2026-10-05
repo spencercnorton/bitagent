@@ -2,6 +2,7 @@ package junkpurge
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -218,4 +219,25 @@ SELECT torrent_name, expired_at FROM junkpurge_quarantine WHERE info_hash = $1`,
 	require.NoError(t, err)
 	require.Equal(t, 1, total)
 	require.Len(t, items, 1)
+
+	// Operator confirmation is bound to the existing snapshot, and its two
+	// writes either both commit or both roll back.
+	require.Error(t, DeleteQuarantinedNow(ctx, pool, nil, nil, hex.EncodeToString([]byte("missing00000000000000"))))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM torrent_liveness`).Scan(&blacklisted))
+	require.Zero(t, blacklisted)
+	_, err = pool.Exec(ctx, `CREATE FUNCTION refuse_review_delete() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic delete failure'; END $$;
+CREATE TRIGGER refuse_review_delete BEFORE DELETE ON junkpurge_quarantine FOR EACH ROW EXECUTE FUNCTION refuse_review_delete();`)
+	require.NoError(t, err)
+	require.Error(t, DeleteQuarantinedNow(ctx, pool, nil, nil, hex.EncodeToString(hash)))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM torrent_liveness`).Scan(&blacklisted))
+	require.Zero(t, blacklisted, "failed snapshot deletion must roll back the blacklist")
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_quarantine`).Scan(&total))
+	require.Equal(t, 1, total, "snapshot remains restorable after failure")
+	_, err = pool.Exec(ctx, `DROP TRIGGER refuse_review_delete ON junkpurge_quarantine`)
+	require.NoError(t, err)
+	require.NoError(t, DeleteQuarantinedNow(ctx, pool, nil, nil, hex.EncodeToString(hash)))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM torrent_liveness`).Scan(&blacklisted))
+	require.Equal(t, 1, blacklisted)
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_quarantine`).Scan(&total))
+	require.Zero(t, total)
 }

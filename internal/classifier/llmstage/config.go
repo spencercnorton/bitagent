@@ -47,8 +47,9 @@ type Config struct {
 	// EnableLive switches the stage from shadow mode to live.
 	// Shadow mode: LLM runs, decision is logged as a metric, the
 	// inner CEL result is returned unchanged.
-	// Live mode: the LLM decision replaces inner on match, leaves
-	// inner on no-match.
+	// Live mode: a qualified type is supplied at the workflow's explicit
+	// type_fallback boundary, then subjected to its normal exclusion policy.
+	// A runner without that boundary cannot apply a type prediction.
 	EnableLive bool `yaml:"enable_live"`
 
 	// APIKey for OpenAI. Populated from Infisical at deploy.

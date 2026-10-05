@@ -20,8 +20,8 @@ type Decision struct {
 	// false → caller should drop it (in enforce mode).
 	Allow bool
 
-	// WouldDrop is true iff the deterministic checks said "drop"
-	// regardless of Enforce. In shadow mode (Enforce=false) Allow
+	// WouldDrop is true iff the applicable deterministic or LLM checks said
+	// "drop", regardless of that tier's enforcement mode. In shadow mode Allow
 	// stays true while WouldDrop is true; that's the
 	// counterfactual measurement primitive.
 	WouldDrop bool
@@ -330,18 +330,18 @@ func (f *Filter) decide(ctx context.Context, in Input, allowLLM bool, source *Au
 		if err != nil {
 			return Decision{}, err
 		}
-		if deferDecision && f.cfg.Enforce {
+		if deferDecision && f.cfg.LLMEnforcementEnabled() {
 			// LLM endpoint unreachable + operator opted into deferral
 			// + we're enforcing: signal the caller to re-queue rather
 			// than keep (which would leak foreign content) or drop
 			// (a false positive). Allow stays false. In shadow mode
-			// (Enforce=false) we never change persistence, so an
+			// for the LLM tier we never change persistence, so an
 			// unreachable LLM just falls through to keep below.
 			return Decision{Defer: true}, nil
 		}
 		if llmReason != ReasonNone {
 			return Decision{
-				Allow:     !f.cfg.Enforce,
+				Allow:     !f.cfg.LLMEnforcementEnabled(),
 				WouldDrop: true,
 				Reason:    llmReason,
 			}, nil
@@ -377,6 +377,12 @@ func (f *Filter) llmEligibleInput(in Input) bool {
 	if in.Private {
 		return false
 	}
+	// A model's guess about a title's language cannot override an advertised
+	// English track. The release may have a foreign work title and no TMDB
+	// language tag while remaining watchable in English.
+	if englishReleaseEvidencePattern.MatchString(in.Title) {
+		return false
+	}
 	// A recognised anime release is kept, not language-classified: the
 	// LLM English-detector reads a romaji title ("Sousou no Frieren") as
 	// non-English and drops it. Skipping the tier keeps the anime AND
@@ -408,6 +414,10 @@ func (f *Filter) llmEligibleInput(in Input) bool {
 // exhausted, non-availability error, low confidence, IsEnglish=true)
 // returns (ReasonNone, false) → keep.
 func (f *Filter) consultLLM(ctx context.Context, in Input, source *AuditSource) (DropReason, bool, error) {
+	if source == nil && (f.admission.Budget != nil || f.admission.Capture != nil) {
+		f.observeGateReject("audit_unavailable")
+		return ReasonNone, false, llmcapture.ErrCaptureUnavailable
+	}
 	norm := normalizeTitle(in.Title)
 	if norm == "" {
 		return ReasonNone, false, nil
@@ -421,22 +431,23 @@ func (f *Filter) consultLLM(ctx context.Context, in Input, source *AuditSource) 
 	key := llmCacheKey(model, pv, norm)
 
 	// Cache hit path.
-	if v, ok := f.cache.Get(key); ok {
-		if f.llmCb.OnCacheHit != nil {
-			f.llmCb.OnCacheHit()
+	// Audited production calls require a durable decision for this exact
+	// source and current privacy predicates. A title-family cache entry from
+	// another infohash cannot authorize application or bypass those gates.
+	if source == nil {
+		if v, ok := f.cache.Get(key); ok {
+			if f.llmCb.OnCacheHit != nil {
+				f.llmCb.OnCacheHit()
+			}
+			return f.verdictToReason(v), false, nil
 		}
-		return f.verdictToReason(v), false, nil
-	}
-	if f.llmCb.OnCacheMiss != nil {
-		f.llmCb.OnCacheMiss()
+		if f.llmCb.OnCacheMiss != nil {
+			f.llmCb.OnCacheMiss()
+		}
 	}
 
 	// Budget gate.
 	if source == nil {
-		if f.admission.Budget != nil || f.admission.Capture != nil {
-			f.observeGateReject("audit_unavailable")
-			return ReasonNone, false, llmcapture.ErrCaptureUnavailable
-		}
 		if !f.budget.TryConsume(time.Now()) {
 			if f.llmCb.OnBudgetExhausted != nil {
 				f.llmCb.OnBudgetExhausted()
@@ -445,7 +456,7 @@ func (f *Filter) consultLLM(ctx context.Context, in Input, source *AuditSource) 
 		}
 		return f.consultDirect(ctx, in, key)
 	}
-	return f.consultAudited(ctx, in, key, *source)
+	return f.consultAudited(ctx, in, *source)
 }
 
 func (f *Filter) consultDirect(ctx context.Context, in Input, key string) (DropReason, bool, error) {
@@ -462,7 +473,7 @@ func (f *Filter) consultDirect(ctx context.Context, in Input, key string) (DropR
 	t0 := time.Now()
 	verdict, err := f.llm.Classify(ctx, in.Title)
 	f.observeLLMCall(verdict, err, time.Since(t0))
-	if err != nil {
+	if err != nil || !validLLMVerdict(verdict) {
 		if f.cfg.LLMDeferOnUnavailable && errors.Is(err, ErrLLMUnavailable) {
 			return ReasonNone, true, nil
 		}
@@ -476,7 +487,6 @@ func (f *Filter) consultDirect(ctx context.Context, in Input, key string) (DropR
 func (f *Filter) consultAudited(
 	ctx context.Context,
 	in Input,
-	cacheKey string,
 	source AuditSource,
 ) (DropReason, bool, error) {
 	recorder, ok := f.admission.Capture.(llmcapture.ContentFilterResultRecorder)
@@ -527,6 +537,9 @@ func (f *Filter) consultAudited(
 		return ReasonNone, false, llmcapture.ErrCaptureUnavailable
 	}
 	if replay.Found {
+		if f.llmCb.OnCacheHit != nil {
+			f.llmCb.OnCacheHit()
+		}
 		f.observeGateReject("already_captured")
 		if replay.Decision == nil {
 			replay, err = f.completeIncompleteContentFilterAudit(ctx, recorder, captureKey, source.InfoHash, replay)
@@ -536,14 +549,10 @@ func (f *Filter) consultAudited(
 			}
 		}
 		f.observeAudit("decision_replayed")
-		verdict := LLMVerdict{
-			IsEnglish:  replay.Decision.IsEnglish,
-			Confidence: replay.Decision.Confidence,
-			Reason:     replay.Decision.Reason,
-			Model:      f.cfg.LLMModel,
-		}
-		f.cache.Put(cacheKey, verdict)
-		return f.verdictToReason(verdict), false, nil
+		return f.replayToReason(replay.Decision), false, nil
+	}
+	if f.llmCb.OnCacheMiss != nil {
+		f.llmCb.OnCacheMiss()
 	}
 	reserved, err := f.admission.Budget.Reserve(ctx, f.cfg.LLMDailyBudget, f.cfg.LLMMonthlyBudget)
 	if err != nil {
@@ -577,12 +586,7 @@ func (f *Filter) consultAudited(
 				return ReasonNone, false, llmcapture.ErrCaptureUnavailable
 			}
 		}
-		verdict := LLMVerdict{
-			IsEnglish: replay.Decision.IsEnglish, Confidence: replay.Decision.Confidence,
-			Reason: replay.Decision.Reason, Model: f.cfg.LLMModel,
-		}
-		f.cache.Put(cacheKey, verdict)
-		return f.verdictToReason(verdict), false, nil
+		return f.replayToReason(replay.Decision), false, nil
 	}
 	if err := recorder.RecheckContentFilterRequest(ctx, captureKey, source.InfoHash); err != nil {
 		f.observeGateReject("privacy")
@@ -599,8 +603,9 @@ func (f *Filter) consultAudited(
 		return ReasonNone, false, llmcapture.ErrCaptureUnavailable
 	}
 	f.observeAudit("result_recorded")
-	invalid := callErr != nil || result.StatusCode != http.StatusOK || result.ErrorClass != "none"
-	policy := contentFilterAuditDecision(verdict, f.cfg.LLMMinConfidenceForDrop, f.cfg.Enforce, invalid)
+	invalid := callErr != nil || result.StatusCode != http.StatusOK || result.ErrorClass != "none" ||
+		!validLLMVerdict(verdict)
+	policy := contentFilterAuditDecision(verdict, f.cfg.LLMMinConfidenceForDrop, f.cfg.LLMEnforcementEnabled(), invalid)
 	auditCtx, auditCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	recordErr = recorder.RecordContentFilterDecision(auditCtx, receipt, source.InfoHash, policy)
 	auditCancel()
@@ -609,13 +614,12 @@ func (f *Filter) consultAudited(
 		return ReasonNone, false, llmcapture.ErrCaptureUnavailable
 	}
 	f.observeAudit("decision_recorded")
-	if callErr != nil {
+	if invalid {
 		if f.cfg.LLMDeferOnUnavailable && errors.Is(callErr, ErrLLMUnavailable) {
 			return ReasonNone, true, nil
 		}
 		return ReasonNone, false, nil
 	}
-	f.cache.Put(cacheKey, verdict)
 	f.miner.Record(verdict)
 	return f.verdictToReason(verdict), false, nil
 }
@@ -667,7 +671,7 @@ func (f *Filter) completeIncompleteContentFilterAudit(
 	}
 	decision := llmcapture.ContentFilterDecision{
 		Outcome: outcome, MinConfidence: f.cfg.LLMMinConfidenceForDrop,
-		Live: f.cfg.Enforce,
+		Live: f.cfg.LLMEnforcementEnabled(),
 	}
 	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	err := recorder.RecordContentFilterDecision(auditCtx, *receipt, infoHash, decision)
@@ -712,7 +716,7 @@ func contentFilterAuditDecision(v LLMVerdict, minConfidence float64, live, inval
 		MinConfidence: minConfidence, Live: live,
 	}
 	switch {
-	case invalid:
+	case invalid || !validLLMVerdict(v) || !validDropThreshold(minConfidence):
 		d.Outcome, d.IsEnglish, d.Confidence, d.Reason = "invalid_response", false, 0, ""
 	case v.IsEnglish:
 		d.Outcome = "english"
@@ -731,12 +735,7 @@ func (f *Filter) verdictToReason(v LLMVerdict) DropReason {
 	if v.IsEnglish {
 		return ReasonNone
 	}
-	if math.IsNaN(v.Confidence) || math.IsInf(v.Confidence, 0) ||
-		v.Confidence < 0 || v.Confidence > 1 ||
-		math.IsNaN(f.cfg.LLMMinConfidenceForDrop) ||
-		math.IsInf(f.cfg.LLMMinConfidenceForDrop, 0) ||
-		f.cfg.LLMMinConfidenceForDrop <= 0 ||
-		f.cfg.LLMMinConfidenceForDrop > 1 {
+	if !validLLMVerdict(v) || !validDropThreshold(f.cfg.LLMMinConfidenceForDrop) {
 		// An invalid model/config score must fail open. Comparisons against
 		// NaN are always false, so relying on the threshold check below would
 		// turn every non-English verdict into an actionable drop.
@@ -749,6 +748,30 @@ func (f *Filter) verdictToReason(v LLMVerdict) DropReason {
 		return ReasonNone
 	}
 	return ReasonLLMNonEnglish
+}
+
+// replayToReason accepts only successful durable verdict outcomes. Invalid or
+// incomplete terminal decisions must remain keeps even if their other fields
+// resemble a model drop.
+func (f *Filter) replayToReason(d *llmcapture.ContentFilterDecision) DropReason {
+	if d == nil || d.Outcome != "non_english" || !d.WouldDrop ||
+		d.Live != f.cfg.LLMEnforcementEnabled() || d.MinConfidence != f.cfg.LLMMinConfidenceForDrop {
+		return ReasonNone
+	}
+	return f.verdictToReason(LLMVerdict{
+		IsEnglish: d.IsEnglish, Confidence: d.Confidence, Reason: d.Reason,
+	})
+}
+
+func validLLMVerdict(v LLMVerdict) bool {
+	return !math.IsNaN(v.Confidence) && !math.IsInf(v.Confidence, 0) &&
+		v.Confidence >= 0 && v.Confidence <= 1 &&
+		strings.TrimSpace(v.Reason) != "" && len(v.Reason) <= 64 &&
+		!strings.ContainsAny(v.Reason, "\x00\r\n")
+}
+
+func validDropThreshold(threshold float64) bool {
+	return !math.IsNaN(threshold) && !math.IsInf(threshold, 0) && threshold > 0 && threshold <= 1
 }
 
 // evaluate runs the check ladder and returns the first matching

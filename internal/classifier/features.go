@@ -45,5 +45,6 @@ var defaultFeatures = newFeatures(
 		parseVideoContentAction{},
 		runWorkflowAction{},
 		setContentTypeAction{},
+		typeFallbackAction{},
 	),
 )

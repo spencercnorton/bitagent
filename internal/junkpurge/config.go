@@ -196,7 +196,7 @@ func NewDefaultConfig() Config {
 		BatchSize:       500,
 		RejudgeInterval: 90 * 24 * time.Hour, // re-judge a kept item at most every 90d
 		MaxJunkRate:     0.5,
-		QuarantineDays:  30, // review window before permanent delete + blacklist
+		QuarantineDays:  30, // review window before restorable tombstone
 		// Conservative local reference for an explicitly enabled development
 		// deployment. Production routes are separate operational inventory;
 		// never infer them from this disabled code default. The native

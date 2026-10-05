@@ -1,0 +1,17 @@
+# Optional configuration overlay. Both switches remain off until reviewed.
+# Configure the chat matcher separately; embeddings do not inherit its key.
+# Supply the embedding key through CLASSIFIER_LLM_MATCH_EMBEDDINGS_API_KEY_FILE.
+classifier_llm_match:
+  enabled: false
+  enable_live: false
+  embeddings:
+    enabled: false
+    endpoint: https://api.openai.com/v1/embeddings
+    model: text-embedding-3-small
+    dimensions: 256
+    max_dimensions: 4096
+    shortlist_size: 3
+    timeout: 15s
+    max_request_bytes: 8192
+llm_evaluation_capture:
+  enabled: false

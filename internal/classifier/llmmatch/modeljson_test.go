@@ -92,24 +92,53 @@ func TestDecodeExtractionRejectsPartialActionContract(t *testing.T) {
 			t.Fatalf("partial/action-unsafe extraction must fail: %s", raw)
 		}
 	}
-	// No title is a clean abstention even when the model answered with the
-	// wrong schema; no action can flow from this object.
-	if ext, err := decodeExtraction([]byte(`{"tmdb_id":1}`)); err != nil || ext != (Extraction{}) {
-		t.Fatalf("wrong-schema decline = (%+v, %v), want zero extraction", ext, err)
+	// A no-title answer using the actual extraction fields is a clean decline.
+	if ext, err := decodeExtraction([]byte(`{"title":""}`)); err != nil || ext != (Extraction{}) {
+		t.Fatalf("empty-title decline = (%+v, %v), want zero extraction", ext, err)
 	}
 }
 
-// gemma-3-12b answers a stage-1 call with the stage-2 schema. That must not be
-// a hard error — it is a well-formed reply to the wrong question, and the
-// matcher already has a representation for "the model declined": OK=false.
-func TestDecodeExtractionTreatsWrongSchemaAsDeclined(t *testing.T) {
-	ext, err := decodeExtraction([]byte(`{"tmdb_id":184683,"confidence":0.95}`))
-	if err != nil {
-		t.Fatalf("wrong-schema reply must not error: %v", err)
+// A reply to the wrong task is a contract failure, not a successful decline.
+func TestDecodeExtractionRejectsWrongSchema(t *testing.T) {
+	if ext, err := decodeExtraction([]byte(`{"tmdb_id":184683,"confidence":0.95}`)); err == nil || ext != (Extraction{}) {
+		t.Fatalf("wrong-schema extraction = (%+v, %v), want error and zero extraction", ext, err)
 	}
-	normalizeExtraction(&ext)
-	if ext.OK {
-		t.Fatalf("expected OK=false for a reply carrying no title, got %+v", ext)
+}
+
+func TestModelAnswersRejectDuplicatesAliasesAndExtraActionFields(t *testing.T) {
+	validExtraction := `{"title":"Glass Acacia","year":2031,"type":"movie","is_anime":false,"is_pack":false,"is_adult":false}`
+	validRerank := `{"tmdb_id":7300101,"confidence":0.95}`
+	for _, tc := range []struct {
+		name, raw string
+		extract   bool
+	}{
+		{"duplicate title", `{"title":"Other Acacia",` + validExtraction[1:], true},
+		{"escaped duplicate title", `{"\u0074itle":"Other Acacia",` + validExtraction[1:], true},
+		{"case duplicate title", `{"Title":"Other Acacia",` + validExtraction[1:], true},
+		{"unknown extraction field", `{"override":true,` + validExtraction[1:], true},
+		{"nested extraction scalar", `{"title":{"title":"Glass Acacia"}}`, true},
+		{"multiple extraction objects", "Answer: " + validExtraction + " Revised: " + validExtraction, true},
+		{"array extraction object", `[` + validExtraction + `]`, true},
+		{"duplicate id", `{"tmdb_id":7300102,` + validRerank[1:], false},
+		{"escaped duplicate id", `{"\u0074mdb_id":7300102,` + validRerank[1:], false},
+		{"case duplicate id", `{"TMDB_ID":7300102,` + validRerank[1:], false},
+		{"duplicate confidence", `{"confidence":0.01,` + validRerank[1:], false},
+		{"unknown rerank field", `{"reason":"choose this",` + validRerank[1:], false},
+		{"alias without duplicate", `{"TMDB_ID":7300101,"confidence":0.95}`, false},
+		{"nested rerank scalar", `{"tmdb_id":{"id":7300101},"confidence":0.95}`, false},
+		{"multiple rerank objects", "Answer: " + validRerank + " Revised: " + validRerank, false},
+		{"multiple rerank fences", "```json\n" + validRerank + "\n```\n```text\nDone\n```", false},
+		{"array rerank object", `[` + validRerank + `]`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.extract {
+				if ext, err := EvaluationDecodeExtraction([]byte(tc.raw)); err == nil || ext != (Extraction{}) {
+					t.Fatalf("unsafe extraction = (%+v, %v), want error and zero extraction", ext, err)
+				}
+			} else if id, confidence, err := EvaluationDecodeRerank([]byte(tc.raw), []Candidate{{ID: 7300101}}); err == nil || id != 0 || confidence != 0 {
+				t.Fatalf("unsafe rerank = (%d, %v, %v), want error and zero choice", id, confidence, err)
+			}
+		})
 	}
 }
 

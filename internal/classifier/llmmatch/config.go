@@ -39,6 +39,9 @@ type Config struct {
 	Enabled bool `yaml:"enabled"`
 	// EnableLive promotes shadow -> live (the chosen match is attached).
 	EnableLive bool `yaml:"enable_live"`
+	// Embeddings optionally reduces the chat rerank's candidate list. It has
+	// its own route and credentials, but consumes the same durable call budget.
+	Embeddings EmbeddingConfig `yaml:"embeddings"`
 
 	// APIKey / Model / Endpoint for the OpenAI-compatible chat API.
 	// Default endpoint is the on-net qwen; APIKey may be empty for a
@@ -103,6 +106,7 @@ func NewDefaultConfig() Config {
 		ChatBackend:         llmprovider.ChatBackendOpenAI,
 		Enabled:             false,
 		EnableLive:          false,
+		Embeddings:          NewDefaultEmbeddingConfig(),
 		Model:               "qwen3.6:35b",
 		Endpoint:            "http://127.0.0.1:11434/v1/chat/completions",
 		PromptVersion:       "v4-2026-07-19-dual-audio-english",
@@ -160,5 +164,5 @@ func (c Config) Validate() error {
 		c.MinConfidence <= 0 || c.MinConfidence > 1 {
 		return fmt.Errorf("min_confidence must be finite and in (0,1]")
 	}
-	return nil
+	return c.Embeddings.validate()
 }

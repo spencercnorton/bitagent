@@ -37,12 +37,16 @@ func (f *auditedFakeLLM) ClassifyWithResult(context.Context, string) (LLMVerdict
 }
 
 type auditCaptureProbe struct {
-	mu       sync.Mutex
-	request  llmcapture.Request
-	result   llmcapture.HTTPResult
-	decision llmcapture.ContentFilterDecision
-	replay   llmcapture.ContentFilterReplay
-	outcome  llmcapture.Outcome
+	mu          sync.Mutex
+	request     llmcapture.Request
+	result      llmcapture.HTTPResult
+	decision    llmcapture.ContentFilterDecision
+	replay      llmcapture.ContentFilterReplay
+	outcome     llmcapture.Outcome
+	captures    int
+	recheckErr  error
+	resultErr   error
+	decisionErr error
 }
 
 func (*auditCaptureProbe) Enabled() bool { return true }
@@ -50,6 +54,7 @@ func (p *auditCaptureProbe) Capture(_ context.Context, req llmcapture.Request) (
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.request = req
+	p.captures++
 	if p.outcome != "" {
 		return p.outcome, nil
 	}
@@ -58,13 +63,16 @@ func (p *auditCaptureProbe) Capture(_ context.Context, req llmcapture.Request) (
 func (p *auditCaptureProbe) FindContentFilterReplay(context.Context, []byte, []byte) (llmcapture.ContentFilterReplay, error) {
 	return p.replay, nil
 }
-func (*auditCaptureProbe) RecheckContentFilterRequest(context.Context, []byte, []byte) error {
-	return nil
+func (p *auditCaptureProbe) RecheckContentFilterRequest(context.Context, []byte, []byte) error {
+	return p.recheckErr
 }
 func (p *auditCaptureProbe) RecordHTTPResult(_ context.Context, key []byte, result llmcapture.HTTPResult) (llmcapture.ResultReceipt, error) {
 	p.mu.Lock()
 	p.result = result
 	p.mu.Unlock()
+	if p.resultErr != nil {
+		return llmcapture.ResultReceipt{}, p.resultErr
+	}
 	digest := sha256.Sum256(result.Body)
 	return llmcapture.ResultReceipt{
 		CaptureKey: append([]byte(nil), key...), ResponseSHA256: digest[:],
@@ -75,7 +83,7 @@ func (p *auditCaptureProbe) RecordContentFilterDecision(_ context.Context, _ llm
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.decision = decision
-	return nil
+	return p.decisionErr
 }
 
 func TestDecideAuditedRetainsExactOpenRouterCallAndShadowDecision(t *testing.T) {

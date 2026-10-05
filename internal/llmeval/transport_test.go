@@ -535,14 +535,10 @@ func TestHostedClientMatcherProductionResponseBoundary(t *testing.T) {
 			wantErr: "http_status",
 		},
 		{
-			name:           "refusal with content follows live content path",
-			status:         http.StatusOK,
-			body:           chatResponse(validContent, "policy"),
-			wantText:       validContent,
-			wantModel:      "gpt-5.4-nano-2026-07-15",
-			wantProof:      RouteProofDirectResponseModel,
-			checkRequestID: true,
-			wantRequestID:  "chat-prod",
+			name:    "refusal with content fails the live boundary",
+			status:  http.StatusOK,
+			body:    chatResponse(validContent, "policy"),
+			wantErr: "decode_envelope",
 		},
 		{
 			name:           "empty content reaches model decoder",

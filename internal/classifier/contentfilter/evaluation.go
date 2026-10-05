@@ -191,7 +191,7 @@ func (f *Filter) EvaluationCapture(
 	taskInputObject := map[string]any{
 		"title":          in.Title,
 		"min_confidence": f.cfg.LLMMinConfidenceForDrop,
-		"live":           f.cfg.Enforce,
+		"live":           f.cfg.LLMEnforcementEnabled(),
 		"eligibility_input": map[string]any{
 			"private":           in.Private,
 			"primary_extension": in.PrimaryExtension,

@@ -4,15 +4,19 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	migrationssql "github.com/spencercnorton/bitagent/migrations"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -125,6 +129,85 @@ CREATE TABLE junkpurge_quarantine (
 	releasesUp := strings.SplitN(string(releasesMigration), "-- +goose Down", 2)[0]
 	_, err = pool.Exec(ctx, releasesUp)
 	require.NoError(t, err)
+
+	t.Run("audited unqualified envelopes never reach quarantine", func(t *testing.T) {
+		migration, err := migrationssql.FS.ReadFile("00051_llm_capture_results.sql")
+		require.NoError(t, err)
+		_, err = pool.Exec(ctx, strings.SplitN(string(migration), "-- +goose Down", 2)[0])
+		require.NoError(t, err)
+		// Capture parameters include typed JSON and arrays, so use the
+		// production prepared-statement mode rather than this fixture's mode
+		// for its unrelated multi-statement setup and Batch SQL checks.
+		capturePoolCfg := pool.Config().Copy()
+		capturePoolCfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+		capturePool, err := pgxpool.NewWithConfig(ctx, capturePoolCfg)
+		require.NoError(t, err)
+		defer capturePool.Close()
+		captureLazy := lazy.New(func() (*pgxpool.Pool, error) { return capturePool, nil })
+		nextHash := byte(200)
+		for name, raw := range invalidJunkHTTPEnvelopes() {
+			t.Run(name, func(t *testing.T) {
+				hash := bytes20(nextHash)
+				nextHash++
+				insertCandidate(t, pool, hash, "Synthetic unsafe reply "+name)
+				var calls atomic.Int32
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					calls.Add(1)
+					_, _ = w.Write(raw)
+				}))
+				defer srv.Close()
+				captureCfg := llmcapture.NewDefaultConfig()
+				captureCfg.Enabled = true
+				lazyPool := lazy.New(func() (*pgxpool.Pool, error) { return pool, nil })
+				recorder, err := llmcapture.NewRecorder(captureCfg, publicJunkAuditPrivacy{}, llmcapture.NewPostgresStore(captureLazy))
+				require.NoError(t, err)
+				cfg := NewDefaultConfig()
+				cfg.Enabled, cfg.EnablePurge, cfg.LLMAllowPaidSync = true, true, true
+				cfg.LLMApiStyle, cfg.LLMBaseURL, cfg.LLMModel = "chat", srv.URL, "synthetic-model"
+				cfg.BatchSize, cfg.LLMNamesPerCall = 1, 1
+				w := &purgeWorker{cfg: cfg, pool: lazyPool, capture: recorder,
+					judge:   NewAuditedJudge(cfg, NewMetrics(), &stubCallBudget{remaining: 20}, recorder),
+					metrics: NewMetrics(), logger: zap.NewNop().Sugar(), batchLeaseOwner: "synthetic-envelope-cycle"}
+				w.runCycle(ctx)
+				require.EqualValues(t, 1, calls.Load(), "a captured first failure cannot be rebought by fallback")
+				var remaining, quarantined, judged, invalid int
+				require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM torrents WHERE info_hash=$1`, hash).Scan(&remaining))
+				require.Equal(t, 1, remaining)
+				require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_quarantine WHERE info_hash=$1`, hash).Scan(&quarantined))
+				require.Zero(t, quarantined)
+				require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_judgments WHERE info_hash=$1`, hash).Scan(&judged))
+				require.Zero(t, judged)
+				require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM llm_evaluation_capture_results r JOIN llm_evaluation_capture_admissions a USING(capture_key)
+WHERE a.info_hash=$1 AND r.decision->>'outcome'='invalid_response' AND r.decision->'would_quarantine'='false'::jsonb`, hash).Scan(&invalid))
+				require.Equal(t, 1, invalid, "the real first-response ledger retains a non-actionable terminal decision")
+				_, err = pool.Exec(ctx, `DELETE FROM torrents WHERE info_hash=$1`, hash)
+				require.NoError(t, err)
+			})
+		}
+	})
+
+	t.Run("unresolved malformed reply keeps entire cycle out of quarantine", func(t *testing.T) {
+		hashes := [][]byte{bytes20(81), bytes20(82), bytes20(83)}
+		for i, h := range hashes {
+			insertCandidate(t, pool, h, []string{"synthetic invalid reply", "synthetic junk item", "synthetic real film"}[i])
+		}
+		cfg := NewDefaultConfig()
+		cfg.Enabled = true
+		cfg.EnablePurge = true
+		cfg.BatchSize = 3
+		cfg.LLMNamesPerCall = 1
+		w := &purgeWorker{cfg: cfg, pool: lazy.New(func() (*pgxpool.Pool, error) { return pool, nil }), judge: malformedCycleJudge{}, metrics: NewMetrics(), logger: zap.NewNop().Sugar(), batchLeaseOwner: "synthetic-malformed-cycle"}
+		w.runCycle(ctx)
+		var n int
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM torrents WHERE info_hash=ANY($1)`, hashes).Scan(&n))
+		require.Equal(t, 3, n)
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_quarantine WHERE info_hash=ANY($1)`, hashes).Scan(&n))
+		require.Zero(t, n)
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_judgments WHERE info_hash=ANY($1) AND reason='sync_cycle:invalid_response'`, hashes).Scan(&n))
+		require.Equal(t, 2, n, "valid evidence remains attributable to an incomplete cycle")
+		_, err := pool.Exec(ctx, `DELETE FROM junkpurge_judgments WHERE info_hash=ANY($1); DELETE FROM torrents WHERE info_hash=ANY($1)`, hashes)
+		require.NoError(t, err)
+	})
 
 	t.Run("isolated unavailable group preserves later evidence but blocks purge", func(t *testing.T) {
 		hashes := [][]byte{bytes20(51), bytes20(52), bytes20(53), bytes20(54)}

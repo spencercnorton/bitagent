@@ -7,6 +7,7 @@
 package llmmatchfx
 
 import (
+	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
@@ -48,6 +49,17 @@ type clientParams struct {
 func provideClient(p clientParams) (*llmmatch.Client, error) {
 	if err := p.Config.Validate(); err != nil {
 		return nil, err
+	}
+	if p.Config.Enabled && p.Config.Embeddings.Enabled {
+		if p.Capture == nil || !p.Capture.Enabled() {
+			return nil, fmt.Errorf("embeddings requires enabled evaluation capture")
+		}
+		if _, ok := p.Capture.(llmcapture.EmbeddingResultRecorder); !ok {
+			return nil, fmt.Errorf("embeddings requires source-bound admission rechecks")
+		}
+		if _, ok := p.Capture.(llmcapture.ResultRecorder); !ok {
+			return nil, fmt.Errorf("embeddings requires final match decision recording")
+		}
 	}
 	return llmmatch.NewClientWithBudget(
 		p.Config,

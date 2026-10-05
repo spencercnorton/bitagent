@@ -38,12 +38,11 @@ type Decision struct {
 	receipt    llmcapture.ResultReceipt
 }
 
-// Stage wraps an inner Runner. The wrapper only considers unknown, unattached
-// results after a successful workflow (shadow only) or an explicit ErrUnmatched.
-// The core workflow consumes unmatched actions internally, so an unresolved type is
-// normally returned with no error. Known types, attached identities, deletion
-// and other workflow errors remain authoritative. Shadow returns the exact
-// inner result and error after observing the audited decision.
+// Stage wraps an inner Runner and supplies optional type-only inference at its
+// explicit workflow policy boundary. Known types, attached identities and
+// deterministic exclusions remain authoritative. Shadow returns the exact inner
+// result and error; live predictions continue through the workflow's policy.
+// Runners without that boundary can only contribute shadow observations.
 type Stage struct {
 	cfg        Config
 	inner      classifier.Runner
@@ -113,21 +112,50 @@ func (s *Stage) EvalMatch(ctx context.Context, t model.Torrent, ct model.NullCon
 	return s.inner.EvalMatch(ctx, t, ct)
 }
 
-// Run implements classifier.Runner. The full inner workflow, including its
-// deletion policy, finishes before unknown-type fallback admission is evaluated.
+// Run installs a type-only callback at the workflow's explicit policy boundary.
+// The original workflow runs once, retaining its result, effective flags and
+// exclusion tail. Runners without that boundary remain shadow-only.
 func (s *Stage) Run(
 	ctx context.Context,
 	workflow string,
 	flags classifier.Flags,
 	t model.Torrent,
 ) (classification.Result, error) {
-	innerResult, innerErr := s.inner.Run(ctx, workflow, flags, t)
-
 	if enabled, ok := flags["llm_stage_enabled"].(bool); ok && !enabled {
 		s.metrics.gateRejectsTotal.WithLabelValues("runtime_flag").Inc()
-		return innerResult, innerErr
+		return s.inner.Run(ctx, workflow, flags, t)
 	}
 	if !s.cfg.Enabled {
+		return s.inner.Run(ctx, workflow, flags, t)
+	}
+
+	var reached, applied bool
+	var category evidence.MediaType
+	var inferred model.NullContentType
+	policyCtx := classifier.WithTypeFallback(ctx, func(ctx context.Context, result classification.Result) (classification.Result, error) {
+		// A nested/custom workflow may visit the boundary more than once. An
+		// inference is admitted only once per Run, including shadow and errors.
+		if reached {
+			return result, nil
+		}
+		reached = true
+		updated, changed := s.fallback(ctx, t, result)
+		applied = changed
+		if changed {
+			inferred = updated.ContentType
+			category = contentTypeToMediaType(updated.ContentType.ContentType)
+		}
+		return updated, nil
+	})
+	innerResult, innerErr := s.inner.Run(policyCtx, workflow, flags, t)
+	if reached {
+		if applied {
+			if innerErr == nil && innerResult.ContentType == inferred {
+				s.metrics.liveAppliedTotal.WithLabelValues(string(category)).Inc()
+			} else {
+				s.metrics.gateRejectsTotal.WithLabelValues("policy_rejected").Inc()
+			}
+		}
 		return innerResult, innerErr
 	}
 	if innerErr != nil && !onlyUnmatched(innerErr) {
@@ -136,15 +164,19 @@ func (s *Stage) Run(
 	if innerResult.ContentType.Valid || innerResult.Content != nil {
 		return innerResult, innerErr
 	}
-	// A successful core workflow has already applied its deletion/content
-	// policy to the unknown type. Retyping after that point could bypass it.
-	// Natural nil-error survivors are therefore shadow-only until a separately
-	// reviewed policy-aware application point exists, regardless of category.
-	if innerErr == nil && s.cfg.EnableLive {
+	if s.cfg.EnableLive {
+		// Custom/legacy runners without an explicit policy-aware boundary must
+		// not retype a result after their exclusion policy has completed.
 		s.metrics.gateRejectsTotal.WithLabelValues("policy_live_unavailable").Inc()
 		return innerResult, innerErr
 	}
+	s.fallback(ctx, t, innerResult)
+	return innerResult, innerErr
+}
 
+// fallback changes only the content type. The caller must continue through the
+// workflow's policy before counting an application or allowing persistence.
+func (s *Stage) fallback(ctx context.Context, t model.Torrent, innerResult classification.Result) (classification.Result, bool) {
 	s.metrics.invocationsTotal.WithLabelValues("unmatched").Inc()
 
 	// The metainfo private flag is authoritative and requires no evidence
@@ -153,17 +185,17 @@ func (s *Stage) Run(
 	// list to the external model. The deterministic inner result is preserved.
 	if t.Private {
 		s.metrics.gateRejectsTotal.WithLabelValues("privacy").Inc()
-		return innerResult, innerErr
+		return innerResult, false
 	}
 	if err := s.cfg.Validate(); err != nil {
 		s.metrics.gateRejectsTotal.WithLabelValues("config").Inc()
-		return innerResult, innerErr
+		return innerResult, false
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 
 	if !s.plausibleMedia(t) {
-		return innerResult, innerErr
+		return innerResult, false
 	}
 
 	// Privacy gate. If the store errors (DB down) we MUST fail
@@ -171,46 +203,45 @@ func (s *Stage) Run(
 	// leaking private-tracker content.
 	if s.privacy == nil {
 		s.metrics.gateRejectsTotal.WithLabelValues("privacy").Inc()
-		return innerResult, innerErr
+		return innerResult, false
 	} else {
 		isPriv, err := s.privacy.IsPrivateInfoHash(ctx, t.InfoHash.Bytes())
 		if err != nil {
 			s.metrics.gateRejectsTotal.WithLabelValues("privacy").Inc()
 			s.logger.Warnw("privacy gate errored; failing closed", "err", err)
-			return innerResult, innerErr
+			return innerResult, false
 		}
 		if isPriv {
 			s.metrics.gateRejectsTotal.WithLabelValues("privacy").Inc()
-			return innerResult, innerErr
+			return innerResult, false
 		}
 	}
 
 	decision, err := s.classify(ctx, t)
 	if err != nil {
-		return innerResult, innerErr
+		return innerResult, false
 	}
 	if err := s.recordDecision(ctx, t, decision, false); err != nil {
-		return innerResult, innerErr
+		return innerResult, false
 	}
 
 	s.metrics.decisionsTotal.WithLabelValues(string(decision.MediaType)).Inc()
 
 	if !s.cfg.EnableLive {
 		s.metrics.shadowSkippedTotal.Inc()
-		return innerResult, innerErr
+		return innerResult, false
 	}
 	if decision.Confidence < s.cfg.MinConfidence {
-		return innerResult, innerErr
+		return innerResult, false
 	}
 	contentType, ok := mediaTypeToContentType(decision.MediaType)
 	if !ok {
-		return innerResult, innerErr
+		return innerResult, false
 	}
 
-	s.metrics.liveAppliedTotal.WithLabelValues(string(decision.MediaType)).Inc()
 	result := innerResult
 	result.ContentType = model.NewNullContentType(contentType)
-	return result, nil
+	return result, true
 }
 
 // onlyUnmatched permits the sentinel and ordinary single-error wrappers such
@@ -334,10 +365,12 @@ type chatResponse struct {
 	Choices []struct {
 		FinishReason string `json:"finish_reason"`
 		Message      struct {
-			Content string `json:"content"`
-			Refusal string `json:"refusal"`
+			Content string          `json:"content"`
+			Refusal string          `json:"refusal"`
+			Role    json.RawMessage `json:"role"`
 		} `json:"message"`
 	} `json:"choices"`
+	Error json.RawMessage `json:"error"`
 }
 
 type chatUsageResponse struct {
@@ -420,6 +453,9 @@ func renderUserPrompt(promptVersion string, t model.Torrent) string {
 }
 
 func parseResponse(raw []byte) (Decision, error) {
+	if err := validateUniqueResponseJSON(raw); err != nil {
+		return Decision{}, fmt.Errorf("decode chat response: %w", err)
+	}
 	var outer chatResponse
 	if err := json.Unmarshal(raw, &outer); err != nil {
 		return Decision{}, fmt.Errorf("decode chat response: %w", err)
@@ -427,8 +463,30 @@ func parseResponse(raw []byte) (Decision, error) {
 	if len(outer.Choices) != 1 || outer.Choices[0].FinishReason != "stop" || outer.Choices[0].Message.Refusal != "" {
 		return Decision{}, errors.New("incomplete, refused or ambiguous chat response")
 	}
+	if len(outer.Error) != 0 && strings.TrimSpace(string(outer.Error)) != "null" {
+		return Decision{}, errors.New("chat response contains a provider error")
+	}
+	if rawRole := outer.Choices[0].Message.Role; len(rawRole) != 0 {
+		var role string
+		if json.Unmarshal(rawRole, &role) != nil || role != "assistant" {
+			return Decision{}, errors.New("chat response message is not assistant output")
+		}
+	}
 	var ans llmAnswer
-	decoder := json.NewDecoder(strings.NewReader(outer.Choices[0].Message.Content))
+	content := []byte(outer.Choices[0].Message.Content)
+	if err := validateUniqueResponseJSON(content); err != nil {
+		return Decision{}, fmt.Errorf("decode llm answer: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(content, &fields); err != nil || fields == nil {
+		return Decision{}, errors.New("llm answer must be an object")
+	}
+	for field := range fields {
+		if field != "category" && field != "confidence" {
+			return Decision{}, errors.New("unknown llm answer field")
+		}
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(content)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&ans); err != nil {
 		return Decision{}, fmt.Errorf("decode llm answer: %w", err)
@@ -444,6 +502,12 @@ func parseResponse(raw []byte) (Decision, error) {
 		return Decision{}, errors.New("missing or out-of-range confidence")
 	}
 	return Decision{MediaType: mt, Confidence: *ans.Confidence}, nil
+}
+
+// EvaluationParseResponse applies the runtime's exact first-response parser.
+// It is pure: no provider, budget, capture, cache or classification mutation.
+func EvaluationParseResponse(raw []byte) (Decision, error) {
+	return parseResponse(raw)
 }
 
 func normalizeMediaType(s string) evidence.MediaType {
@@ -536,4 +600,21 @@ func sizeBucket(n int64) int {
 		return 5
 	}
 	return 6
+}
+
+func contentTypeToMediaType(ct model.ContentType) evidence.MediaType {
+	switch ct {
+	case model.ContentTypeMovie:
+		return evidence.MediaTypeMovie
+	case model.ContentTypeTvShow:
+		return evidence.MediaTypeTV
+	case model.ContentTypeMusic:
+		return evidence.MediaTypeMusic
+	case model.ContentTypeAudiobook:
+		return evidence.MediaTypeAudiobook
+	case model.ContentTypeEbook:
+		return evidence.MediaTypeBook
+	default:
+		return evidence.MediaTypeUnknown
+	}
 }

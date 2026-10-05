@@ -341,16 +341,9 @@ func (c *openaiClient) classifyResponses(ctx context.Context, title string) (LLM
 			ReasoningTokens:   ru.Usage.OutputDetails.ReasoningTokens,
 		}
 	}
-	// Parse the OpenAI Responses envelope. Two shapes:
-	//   1. {"output_text": "..."}             (sometimes)
-	//   2. {"output":[{"content":[{"type":"output_text","text":"..."}]}]}
-	text, parseErr := extractOutputText(respBytes)
-	if parseErr != nil {
-		return verdict, result, fmt.Errorf("llm: extract: %w; body=%s", parseErr, truncate(string(respBytes), 200))
-	}
-	parsed, vErr := parseLLMVerdict(text)
+	parsed, vErr := EvaluationParseHTTPVerdict(respBytes, "contentfilter-responses-model-input-v1")
 	if vErr != nil {
-		return verdict, result, fmt.Errorf("llm: verdict: %w; text=%s", vErr, truncate(text, 200))
+		return verdict, result, fmt.Errorf("llm: verdict: %w", vErr)
 	}
 	parsed.Model, parsed.Usage = verdict.Model, verdict.Usage
 	verdict = parsed
@@ -401,12 +394,9 @@ func (c *openaiClient) classifyChat(ctx context.Context, title string) (LLMVerdi
 	if strings.TrimSpace(cr.Model) != "" {
 		verdict.Model = cr.Model
 	}
-	if len(cr.Choices) == 0 || strings.TrimSpace(cr.Choices[0].Message.Content) == "" {
-		return verdict, result, fmt.Errorf("llm: chat: empty content; body=%s", truncate(string(respBytes), 200))
-	}
-	parsed, vErr := parseLLMVerdict(cr.Choices[0].Message.Content)
+	parsed, vErr := EvaluationParseHTTPVerdict(respBytes, contentFilterContractID(apiStyleChat, c.openrouterProvider, c.openAIDataSharing))
 	if vErr != nil {
-		return verdict, result, fmt.Errorf("llm: verdict: %w; text=%s", vErr, truncate(cr.Choices[0].Message.Content, 200))
+		return verdict, result, fmt.Errorf("llm: verdict: %w", vErr)
 	}
 	parsed.Model, parsed.Usage = verdict.Model, verdict.Usage
 	verdict = parsed
@@ -444,12 +434,9 @@ func (c *openaiClient) classifyOllama(ctx context.Context, title string) (LLMVer
 	if strings.TrimSpace(or.Model) != "" {
 		verdict.Model = or.Model
 	}
-	if strings.TrimSpace(or.Message.Content) == "" {
-		return verdict, result, fmt.Errorf("llm: ollama: empty content; body=%s", truncate(string(respBytes), 200))
-	}
-	parsed, vErr := parseLLMVerdict(or.Message.Content)
+	parsed, vErr := EvaluationParseHTTPVerdict(respBytes, "contentfilter-ollama-model-input-v1")
 	if vErr != nil {
-		return verdict, result, fmt.Errorf("llm: verdict: %w; text=%s", vErr, truncate(or.Message.Content, 200))
+		return verdict, result, fmt.Errorf("llm: verdict: %w", vErr)
 	}
 	parsed.Model, parsed.Usage = verdict.Model, verdict.Usage
 	verdict = parsed
@@ -541,6 +528,8 @@ func extractOutputText(raw []byte) (string, error) {
 	var conv struct {
 		OutputText string `json:"output_text"`
 		Output     []struct {
+			Status  string `json:"status"`
+			Role    string `json:"role"`
 			Content []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -550,17 +539,28 @@ func extractOutputText(raw []byte) (string, error) {
 	if err := json.Unmarshal(raw, &conv); err != nil {
 		return "", err
 	}
+	text, count := "", 0
+	for _, item := range conv.Output {
+		if item.Status != "" && item.Status != "completed" || item.Role != "" && item.Role != "assistant" {
+			return "", errors.New("incomplete Responses output")
+		}
+		for _, c := range item.Content {
+			if c.Type == "refusal" {
+				return "", errors.New("refused Responses output")
+			}
+			if (c.Type == "output_text" || c.Type == "text") && c.Text != "" {
+				text, count = c.Text, count+1
+			}
+		}
+	}
+	if count > 1 || conv.OutputText != "" && text != "" && conv.OutputText != text {
+		return "", errors.New("ambiguous Responses output")
+	}
 	if conv.OutputText != "" {
 		return conv.OutputText, nil
 	}
-	for _, item := range conv.Output {
-		for _, c := range item.Content {
-			if c.Type == "output_text" || c.Type == "text" {
-				if c.Text != "" {
-					return c.Text, nil
-				}
-			}
-		}
+	if text != "" {
+		return text, nil
 	}
 	return "", errors.New("no output text in response")
 }
@@ -599,9 +599,41 @@ func parseLLMVerdict(text string) (LLMVerdict, error) {
 		Reason     *string  `json:"reason"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(s))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&raw); err != nil {
-		return LLMVerdict{}, err
+	// Read the flat object explicitly: encoding/json otherwise accepts
+	// duplicate keys with last-value-wins semantics, so a contradictory
+	// is_english field could silently become a destructive verdict.
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return LLMVerdict{}, errors.New("verdict must be a JSON object")
+	}
+	seen := make(map[string]bool, 3)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return LLMVerdict{}, err
+		}
+		key, ok := token.(string)
+		if !ok || seen[key] {
+			return LLMVerdict{}, errors.New("duplicate or invalid verdict field")
+		}
+		seen[key] = true
+		var target any
+		switch key {
+		case "is_english":
+			target = &raw.IsEnglish
+		case "confidence":
+			target = &raw.Confidence
+		case "reason":
+			target = &raw.Reason
+		default:
+			return LLMVerdict{}, errors.New("unknown verdict field")
+		}
+		if err := decoder.Decode(target); err != nil {
+			return LLMVerdict{}, err
+		}
+	}
+	if closing, err := decoder.Token(); err != nil || closing != json.Delim('}') {
+		return LLMVerdict{}, errors.New("unterminated verdict object")
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
@@ -618,8 +650,8 @@ func parseLLMVerdict(text string) (LLMVerdict, error) {
 		return LLMVerdict{}, errors.New("confidence must be finite and in [0,1]")
 	}
 	reason := strings.TrimSpace(*raw.Reason)
-	if reason == "" || len(reason) > 64 {
-		return LLMVerdict{}, errors.New("reason must be 1-64 bytes")
+	if reason == "" || len(reason) > 64 || strings.ContainsAny(reason, "\x00\r\n") {
+		return LLMVerdict{}, errors.New("reason must be 1-64 bytes without control separators")
 	}
 	return LLMVerdict{
 		IsEnglish:  *raw.IsEnglish,
