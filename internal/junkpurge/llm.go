@@ -514,16 +514,20 @@ func parseChatJudgment(raw []byte) (Judgment, tokenUsage, error) {
 	return judgment, usage, err
 }
 
-// decodeChatReply extracts the first choice's content and the token usage
+// decodeChatReply extracts one qualified choice's content and the token usage
 // from an OpenAI-compatible /chat/completions reply.
 func decodeChatReply(raw []byte) (string, tokenUsage, error) {
 	if err := rejectDuplicateJunkJSON(raw); err != nil {
 		return "", tokenUsage{}, fmt.Errorf("junkpurge llm: ambiguous envelope: %w", err)
 	}
 	var cr struct {
+		Error   json.RawMessage `json:"error"`
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content string `json:"content"`
+				Role    string `json:"role"`
+				Refusal string `json:"refusal"`
 			} `json:"message"`
 		} `json:"choices"`
 		Usage struct {
@@ -548,10 +552,19 @@ func decodeChatReply(raw []byte) (string, tokenUsage, error) {
 		Output:     cr.Usage.CompletionTokens,
 		Reasoning:  cr.Usage.CompletionDetails.ReasoningTokens,
 	}
-	if len(cr.Choices) == 0 {
-		return "", usage, fmt.Errorf("junkpurge llm: chat: empty choices; body=%s", truncate(string(raw), 200))
+	if len(cr.Error) > 0 && !bytes.Equal(bytes.TrimSpace(cr.Error), []byte("null")) {
+		return "", usage, errors.New("junkpurge llm: provider error envelope")
 	}
-	return cr.Choices[0].Message.Content, usage, nil
+	if len(cr.Choices) != 1 {
+		return "", usage, errors.New("junkpurge llm: chat requires exactly one choice")
+	}
+	choice := cr.Choices[0]
+	if choice.FinishReason != "" && choice.FinishReason != "stop" ||
+		choice.Message.Role != "" && choice.Message.Role != "assistant" ||
+		choice.Message.Refusal != "" {
+		return "", usage, errors.New("junkpurge llm: incomplete, refused or non-assistant response")
+	}
+	return choice.Message.Content, usage, nil
 }
 
 func (j *ollamaJudge) observeRequest(processing, outcome string, usage tokenUsage) {

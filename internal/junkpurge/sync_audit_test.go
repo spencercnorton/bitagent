@@ -22,6 +22,14 @@ type syncAuditFake struct {
 	captureErr, recheckErr, resultErr, decisionErr error
 }
 
+// Fixture sources are public. The real PostgreSQL capture store still repeats
+// native and evidence privacy admission at each write/outbound boundary.
+type publicJunkAuditPrivacy struct{}
+
+func (publicJunkAuditPrivacy) IsPrivateInfoHash(context.Context, []byte) (bool, error) {
+	return false, nil
+}
+
 func (*syncAuditFake) Enabled() bool { return true }
 func (*syncAuditFake) Capture(context.Context, llmcapture.Request) (llmcapture.Outcome, error) {
 	panic("single-source capture must not admit grouped text")
@@ -160,6 +168,60 @@ func TestAuditedJudgeRetainsMalformedNon200AndBoundedResponses(t *testing.T) {
 			require.Equal(t, "invalid_response", a.decisions[0][0].Outcome)
 			require.False(t, a.decisions[0][0].WouldQuarantine)
 		})
+	}
+}
+
+func invalidJunkHTTPEnvelopes() map[string][]byte {
+	answer := `{"verdict":"junk","confidence":0.99}`
+	choice := func(role, finish, refusal string) map[string]any {
+		return map[string]any{"finish_reason": finish, "message": map[string]string{
+			"role": role, "content": answer, "refusal": refusal,
+		}}
+	}
+	cases := map[string]map[string]any{
+		"provider_error": {"error": map[string]string{"message": "synthetic error"}, "choices": []any{choice("assistant", "stop", "")}},
+		"refusal":        {"choices": []any{choice("assistant", "stop", "synthetic refusal")}},
+		"non_assistant":  {"choices": []any{choice("user", "stop", "")}},
+		"incomplete":     {"choices": []any{choice("assistant", "length", "")}},
+		"filtered":       {"choices": []any{choice("assistant", "content_filter", "")}},
+		"multiple":       {"choices": []any{choice("assistant", "stop", ""), choice("assistant", "stop", "")}},
+		"empty":          {"choices": []any{}},
+	}
+	raw := make(map[string][]byte, len(cases))
+	for name, body := range cases {
+		raw[name], _ = json.Marshal(body)
+	}
+	return raw
+}
+
+func TestAuditedJudgeRejectsExplicitlyUnqualifiedHTTPEnvelopes(t *testing.T) {
+	for name, raw := range invalidJunkHTTPEnvelopes() {
+		t.Run(name, func(t *testing.T) {
+			_, err := EvaluationParseHTTPJudgments(raw, 1)
+			require.Error(t, err)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(raw) }))
+			defer srv.Close()
+			a := &syncAuditFake{}
+			sources := syntheticAuditSources()[:1]
+			jm, err := auditedTestJudge(srv.URL, a).Judge(withJunkSources(context.Background(), sources), sources[0].name)
+			require.Error(t, err)
+			require.Zero(t, jm)
+			require.Len(t, a.results, 1)
+			require.Equal(t, raw, a.results[0].Body)
+			require.Len(t, a.decisions, 1)
+			require.Equal(t, "invalid_response", a.decisions[0][0].Outcome)
+			require.False(t, a.decisions[0][0].WouldQuarantine)
+		})
+	}
+	// Old compatible endpoints may omit optional completion metadata. An
+	// explicit stop/assistant reply is also admitted; null error is no error.
+	for _, raw := range []string{
+		`{"choices":[{"message":{"content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
+		`{"error":null,"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"verdict\":\"junk\",\"confidence\":0.99}"}}]}`,
+	} {
+		js, err := EvaluationParseHTTPJudgments([]byte(raw), 1)
+		require.NoError(t, err)
+		require.Equal(t, []Judgment{{Verdict: verdictJunk, Confidence: .99}}, js)
 	}
 }
 
