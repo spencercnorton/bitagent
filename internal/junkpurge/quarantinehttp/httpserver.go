@@ -9,7 +9,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/httpserver"
 	"github.com/spencercnorton/bitagent/internal/junkpurge"
 	"github.com/spencercnorton/bitagent/internal/lazy"
@@ -18,13 +17,12 @@ import (
 )
 
 // New builds the Gin option. Provided into the http_server_options group.
-func New(pool lazy.Lazy[*pgxpool.Pool], daoQ lazy.Lazy[*dao.Query], cfg junkpurge.Config, vstore *verdicts.Store, logger *zap.SugaredLogger) httpserver.Option {
-	return builder{pool: pool, dao: daoQ, cfg: cfg, verdicts: vstore, logger: logger.Named("quarantinehttp")}
+func New(pool lazy.Lazy[*pgxpool.Pool], cfg junkpurge.Config, vstore *verdicts.Store, logger *zap.SugaredLogger) httpserver.Option {
+	return builder{pool: pool, cfg: cfg, verdicts: vstore, logger: logger.Named("quarantinehttp")}
 }
 
 type builder struct {
 	pool     lazy.Lazy[*pgxpool.Pool]
-	dao      lazy.Lazy[*dao.Query]
 	cfg      junkpurge.Config
 	verdicts *verdicts.Store
 	logger   *zap.SugaredLogger
@@ -33,7 +31,7 @@ type builder struct {
 func (builder) Key() string { return "junkpurge-quarantine" }
 
 func (b builder) Apply(e *gin.Engine) error {
-	h := &handler{pool: b.pool, dao: b.dao, cfg: b.cfg, verdicts: b.verdicts, logger: b.logger}
+	h := &handler{pool: b.pool, cfg: b.cfg, verdicts: b.verdicts, logger: b.logger}
 	g := e.Group("/api/quarantine")
 	g.GET("", h.list)
 	g.POST("/:hash/restore", h.restore)
@@ -43,7 +41,6 @@ func (b builder) Apply(e *gin.Engine) error {
 
 type handler struct {
 	pool     lazy.Lazy[*pgxpool.Pool]
-	dao      lazy.Lazy[*dao.Query]
 	cfg      junkpurge.Config
 	verdicts *verdicts.Store
 	logger   *zap.SugaredLogger
@@ -84,12 +81,7 @@ func (h *handler) restore(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
-	daoQ, err := h.dao.Get()
-	if err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-		return
-	}
-	if err := junkpurge.RestoreQuarantined(c.Request.Context(), pool, daoQ, h.verdicts, h.logger, c.Param("hash")); err != nil {
+	if err := junkpurge.RestoreQuarantined(c.Request.Context(), pool, h.verdicts, h.logger, c.Param("hash")); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

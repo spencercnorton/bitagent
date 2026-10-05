@@ -82,6 +82,23 @@ CREATE TABLE torrent_files (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE torrent_sources (
+  key text PRIMARY KEY,
+  name text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE torrents_torrent_sources (
+  source text NOT NULL REFERENCES torrent_sources(key),
+  info_hash bytea NOT NULL REFERENCES torrents(info_hash) ON DELETE CASCADE,
+  import_id text,
+  seeders integer,
+  leechers integer,
+  published_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (source, info_hash)
+);
 CREATE TABLE junkpurge_judgments (
   info_hash bytea PRIMARY KEY,
   verdict text NOT NULL,
@@ -103,6 +120,7 @@ CREATE TABLE torrent_liveness (
 	for _, name := range []string{
 		"00029_junkpurge_quarantine.sql",
 		"00047_junkpurge_quarantine_tombstone.sql",
+		"00055_quarantine_source_snapshots.sql",
 	} {
 		migration, readErr := migrationssql.FS.ReadFile(name)
 		require.NoError(t, readErr)
@@ -112,10 +130,18 @@ CREATE TABLE torrent_liveness (
 	}
 
 	hash := []byte("0123456789abcdefghij") // 20 bytes
+	_, err = pool.Exec(ctx, `INSERT INTO torrent_sources (key, name) VALUES ('synthetic', 'Synthetic fixture')`)
+	require.NoError(t, err)
 	seedTorrent := func(name string) {
 		_, execErr := pool.Exec(ctx, `
 INSERT INTO torrents (info_hash, name, size, files_count) VALUES ($1, $2, 4096, 1)`,
 			hash, name)
+		require.NoError(t, execErr)
+		_, execErr = pool.Exec(ctx, `
+INSERT INTO torrents_torrent_sources
+  (source, info_hash, import_id, seeders, leechers, published_at, created_at, updated_at)
+VALUES ('synthetic', $1, 'fixture-import', 2, NULL,
+  now() - interval '60 days', now() - interval '50 days', now() - interval '40 days')`, hash)
 		require.NoError(t, execErr)
 		_, execErr = pool.Exec(ctx, `
 INSERT INTO torrent_files (info_hash, "index", path, size) VALUES ($1, 0, $2, 4096)`,
@@ -161,8 +187,16 @@ UPDATE junkpurge_quarantine SET quarantined_at = now() - make_interval(days => $
 	// --- quarantine: the torrent leaves `torrents` here, not at expiry.
 	seedTorrent("Some.Junk.Release.2019")
 	upsertJudgment("Some.Junk.Release.2019")
+	var originalSource, originalMetadata string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT to_jsonb(ts)::text FROM torrents_torrent_sources ts WHERE info_hash=$1`, hash).Scan(&originalSource))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT to_jsonb(s)::text FROM torrent_sources s WHERE key='synthetic'`).Scan(&originalMetadata))
 	require.Len(t, quarantine(), 1)
 	require.Zero(t, countTorrents(), "quarantine must remove the torrent from search")
+	var retainedSource, retainedMetadata string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT ((sources_snapshot->0)-'source_metadata')::text,
+  (sources_snapshot->0->'source_metadata')::text FROM junkpurge_quarantine WHERE info_hash=$1`, hash).Scan(&retainedSource, &retainedMetadata))
+	require.Equal(t, originalSource, retainedSource, "the actual quarantine transaction must retain source relationships exactly")
+	require.Equal(t, originalMetadata, retainedMetadata, "the actual quarantine transaction must retain authentic source registry metadata")
 
 	// --- expire: tombstone, do not destroy.
 	backdate(40)

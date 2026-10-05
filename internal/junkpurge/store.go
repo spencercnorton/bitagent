@@ -6,12 +6,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/processor"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
 	"go.uber.org/zap"
-	"gorm.io/gorm/clause"
 )
 
 // QuarantineItem is one row in the review list.
@@ -62,17 +61,26 @@ LIMIT $2 OFFSET $3`, quarantineDays, limit, offset)
 	return out, total, rows.Err()
 }
 
-// RestoreQuarantined re-inserts the torrent + its file list from the snapshot,
-// removes the quarantine row, and enqueues a rematch reprocess so torrent_contents
-// (and the content match) regenerate — making the torrent searchable again.
+// RestoreQuarantined restores torrent, files and retained authentic sources,
+// records local restore provenance with unknown counts, and queues a rematch
+// atomically with removing the snapshot. Legacy snapshots without sources work
+// too. The restore record uses the normal unknown-freshness window; it does not
+// override authoritative tracker zero or liveness/ledger exclusions.
 // 'extension' is a generated column on both tables, so it is excluded from the
 // explicit column lists.
-func RestoreQuarantined(ctx context.Context, pool *pgxpool.Pool, daoQ *dao.Query, vstore *verdicts.Store, logger *zap.SugaredLogger, infoHashHex string) error {
+func RestoreQuarantined(ctx context.Context, pool *pgxpool.Pool, vstore *verdicts.Store, logger *zap.SugaredLogger, infoHashHex string) error {
 	ih, err := protocol.ParseID(infoHashHex)
 	if err != nil {
 		return fmt.Errorf("invalid info_hash %q: %w", infoHashHex, err)
 	}
 	ihBytes := ih[:]
+	job, err := processor.NewQueueJob(processor.MessageParams{
+		InfoHashes:   []protocol.ID{ih},
+		ClassifyMode: processor.ClassifyModeRematch,
+	})
+	if err != nil {
+		return fmt.Errorf("build restore reprocess job: %w", err)
+	}
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -80,10 +88,10 @@ func RestoreQuarantined(ctx context.Context, pool *pgxpool.Pool, daoQ *dao.Query
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var torrentSnap, filesSnap []byte
+	var torrentSnap, filesSnap, sourcesSnap []byte
 	if err := tx.QueryRow(ctx,
-		`SELECT torrent_snapshot, files_snapshot FROM junkpurge_quarantine WHERE info_hash = $1 FOR UPDATE`,
-		ihBytes).Scan(&torrentSnap, &filesSnap); err != nil {
+		`SELECT torrent_snapshot, files_snapshot, sources_snapshot FROM junkpurge_quarantine WHERE info_hash = $1 FOR UPDATE`,
+		ihBytes).Scan(&torrentSnap, &filesSnap, &sourcesSnap); err != nil {
 		return fmt.Errorf("quarantine entry not found: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -102,6 +110,53 @@ ON CONFLICT DO NOTHING`, filesSnap); err != nil {
 			return fmt.Errorf("restore torrent files: %w", err)
 		}
 	}
+	if len(sourcesSnap) > 0 {
+		// Restore registry entries if removed since quarantine, using only their
+		// authentic captured metadata. Existing definitions/observations win.
+		if _, err := tx.Exec(ctx, `
+INSERT INTO torrent_sources (key, name, created_at, updated_at)
+SELECT key, name, created_at, updated_at
+FROM jsonb_populate_recordset(null::torrent_sources,
+  (SELECT jsonb_agg(value->'source_metadata') FROM jsonb_array_elements($1::jsonb)))
+ON CONFLICT (key) DO NOTHING`, sourcesSnap); err != nil {
+			return fmt.Errorf("restore source registry: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO torrents_torrent_sources
+  (source, info_hash, import_id, seeders, leechers, published_at, created_at, updated_at)
+SELECT source, info_hash, import_id, seeders, leechers, published_at, created_at, updated_at
+FROM jsonb_populate_recordset(null::torrents_torrent_sources, $1::jsonb)
+WHERE info_hash = $2
+ON CONFLICT (source, info_hash) DO NOTHING`, sourcesSnap, ihBytes); err != nil {
+			return fmt.Errorf("restore torrent sources: %w", err)
+		}
+	}
+	// A local action is useful freshness provenance, but carries no seed/leech
+	// estimate, publish date, bloom data or claim that the swarm was observed.
+	if _, err := tx.Exec(ctx, `
+INSERT INTO torrent_sources (key, name, created_at, updated_at)
+VALUES ($1, 'Local quarantine restore', now(), now())
+ON CONFLICT (key) DO NOTHING`, model.SourceKeyQuarantineRestore); err != nil {
+		return fmt.Errorf("register local quarantine restore: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+INSERT INTO torrents_torrent_sources (source, info_hash, created_at, updated_at)
+VALUES ($1, $2, now(), now())
+ON CONFLICT (source, info_hash) DO UPDATE SET
+  import_id = NULL, seeders = NULL, leechers = NULL,
+  published_at = NULL, updated_at = now()`, model.SourceKeyQuarantineRestore, ihBytes); err != nil {
+		return fmt.Errorf("record local quarantine restore: %w", err)
+	}
+	// Queue failure must retain the original snapshot and roll back all restored
+	// rows. Notifications from the normal queue trigger publish only on commit.
+	if _, err := tx.Exec(ctx, `
+INSERT INTO queue_jobs
+  (fingerprint, queue, status, payload, retries, max_retries, run_after, archival_duration, created_at, priority)
+VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8::interval, clock_timestamp(), $9)
+ON CONFLICT (fingerprint) WHERE status IN ('pending', 'retry') DO NOTHING`, job.Fingerprint, job.Queue, string(job.Status), job.Payload,
+		job.Retries, job.MaxRetries, job.RunAfter, time.Duration(job.ArchivalDuration).String(), job.Priority); err != nil {
+		return fmt.Errorf("enqueue restore reprocess: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM junkpurge_quarantine WHERE info_hash = $1`, ihBytes); err != nil {
 		return err
 	}
@@ -110,9 +165,8 @@ ON CONFLICT DO NOTHING`, filesSnap); err != nil {
 	}
 	// T3: an operator restore is a gold label — record it. STRICTLY
 	// best-effort (log-and-continue): the restore tx has committed and the
-	// rematch enqueue below MUST run; returning an error here would leave
-	// the torrent restored-but-unsearchable with no retry path (the
-	// quarantine row is already gone) — the review-demonstrated P0.
+	// rematch has already committed atomically; this advisory record cannot
+	// turn a successful restore into a reported failure.
 	if vstore != nil {
 		if verr := vstore.Record(ctx, verdicts.Event{
 			InfoHash: ihBytes, Verdict: verdicts.VerdictRestored,
@@ -121,20 +175,6 @@ ON CONFLICT DO NOTHING`, filesSnap); err != nil {
 		}); verr != nil && logger != nil {
 			logger.Warnw("junkpurge restore: verdict record failed", "err", verr)
 		}
-	}
-
-	// Re-queue classification (rematch) so torrent_contents + the content match
-	// regenerate — without this the restored torrent has no content row and won't
-	// appear in search/Torznab.
-	job, err := processor.NewQueueJob(processor.MessageParams{
-		InfoHashes:   []protocol.ID{ih},
-		ClassifyMode: processor.ClassifyModeRematch,
-	})
-	if err != nil {
-		return fmt.Errorf("restored, but building reprocess job failed: %w", err)
-	}
-	if err := daoQ.QueueJob.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&job); err != nil {
-		return fmt.Errorf("restored, but enqueuing reprocess failed: %w", err)
 	}
 	return nil
 }

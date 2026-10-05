@@ -34,6 +34,12 @@ func (t *Torrent) AfterFind(_ *gorm.DB) error {
 // Never present for a never-scraped or tracker-unknown hash.
 const SourceKeyTracker = "tracker"
 
+// SourceKeyQuarantineRestore records an explicit local operator restore. Its
+// counts and PublishedAt are unknown: its timestamp describes the restore,
+// never a fresh swarm observation. It participates in the ordinary freshness
+// window without overriding authoritative tracker zero or liveness exclusion.
+const SourceKeyQuarantineRestore = "quarantine_restore"
+
 // Seeders returns the freshest-authoritative seeder count: the 'tracker'
 // source row wins outright when present — a tracker scrape is a validated
 // point-in-time reading (including an authoritative 0 for a dead swarm),

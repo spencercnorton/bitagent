@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Preserve authentic torrent source metadata in quarantine snapshots and restore
+  it without overwriting newer observations. Legacy snapshots remain usable.
+- Record explicit restores as local provenance with unknown swarm counts, so
+  the default Torznab freshness window can surface them without bypassing
+  tracker-zero, liveness or verdict exclusions.
+- Commit restore and rematch enqueue together. Queue failures retain the
+  recovery snapshot; migration 55 refuses to discard retained source snapshots.
+
 - Bound type fallback application with an audited category allowlist. A
   disallowed prediction remains unknown without triggering that category's
   deletion policy; changed policy invalidates cached application.
