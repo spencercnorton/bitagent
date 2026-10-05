@@ -12,7 +12,8 @@ content policy. Other model categories remain unknown and record `policy_decline
 Keep ordinary content exclusions in place. Review applied types against later
 canonical references before expanding the allowed list.
 
-For language review, enable `CONTENT_FILTER_LLM_ENABLED`, set
+For language review, enable `CONTENT_FILTER_ENABLED` and
+`CONTENT_FILTER_LLM_ENABLED`, set
 `CONTENT_FILTER_LLM_ENFORCE=true` and `CONTENT_FILTER_LLM_ACTION=review`.
 Audited non-English predictions add the model-attributed `llm-language-review`
 tag through the normal persistence transaction. The torrent remains searchable.
@@ -20,7 +21,8 @@ English-inclusive releases retain their existing model protection. Deterministic
 filtering still follows `CONTENT_FILTER_ENFORCE`. Review tags are evidence for an
 operator review queue; inspect the source before treating them as language truth.
 
-For junk handling, `JUNKPURGE_ENABLE_PURGE=true` enables restorable quarantine.
+For junk handling, enable `JUNKPURGE_ENABLED` and set
+`JUNKPURGE_ENABLE_PURGE=true` to enable restorable quarantine.
 Automatic expiry retains the snapshot indefinitely. A small initial window can
 use `JUNKPURGE_BATCH_SIZE=10`, `JUNKPURGE_INTERVAL=24h` and
 `JUNKPURGE_MIN_AGE=720h`, while preserving the current junk-rate circuit breaker
@@ -29,7 +31,8 @@ including reclassification and search visibility. The manual delete endpoint
 destroys the snapshot and blacklists the hash; keep that operator decision
 separate from model judgment.
 
-For candidate shortlisting, explicitly configure
+For candidate shortlisting, enable `CLASSIFIER_LLM_MATCH_ENABLED` and
+`CLASSIFIER_LLM_MATCH_ENABLE_LIVE`, then explicitly configure
 `CLASSIFIER_LLM_MATCH_EMBEDDINGS_ENABLED=true`, the `/embeddings` endpoint, model
 and credential. An OpenAI-compatible example uses `text-embedding-3-small` with
 256 dimensions. The shared matcher allowance bounds all embedding and chat
@@ -45,7 +48,8 @@ After deployment, check source/image identity, startup time, health, audit failu
 budget usage and actual application counters. A configured stage with no applied
 effects needs investigation.
 
-Disable type live application, language enforcement, junk quarantine or embedding
-shortlisting to stop each new action independently. Existing language review tags
+Set `CLASSIFIER_LLM_ENABLE_LIVE=false`, `CONTENT_FILTER_LLM_ENFORCE=false`,
+`JUNKPURGE_ENABLE_PURGE=false` or `CLASSIFIER_LLM_MATCH_EMBEDDINGS_ENABLED=false`
+to stop the corresponding new action independently. Existing language review tags
 remain visible for review, and quarantined entries retain their restore snapshots.
 Keep the previous qualified image and the matching database recovery procedure.
