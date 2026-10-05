@@ -20,16 +20,21 @@ type Decision struct {
 	// false → caller should drop it (in enforce mode).
 	Allow bool
 
-	// WouldDrop is true iff the applicable deterministic or LLM checks said
+	// WouldDrop is true iff the applicable deterministic or LLM drop checks said
 	// "drop", regardless of that tier's enforcement mode. In shadow mode Allow
 	// stays true while WouldDrop is true; that's the
 	// counterfactual measurement primitive.
 	WouldDrop bool
 
+	// WouldReview is the nondeleting counterfactual in LLM review mode.
+	// Review authorizes the model-attributed tag only after an audited live
+	// decision. Both are mutually exclusive with WouldDrop and Defer.
+	WouldReview bool
+	Review      bool
+
 	// Reason is the first matching DropReason. Stable per
 	// DropReason.String() for metric labels. Reason==ReasonNone
-	// when the torrent is genuinely allowed (not just
-	// shadow-mode-allowed).
+	// when no deterministic or model disposition was selected.
 	Reason DropReason
 
 	// BlockedExt is the primary file extension that triggered a
@@ -326,11 +331,16 @@ func (f *Filter) decide(ctx context.Context, in Input, allowLLM bool, source *Au
 	// LLM is configured. Skipped when the caller asked for
 	// deterministic-only.
 	if allowLLM && f.shouldConsultLLM(in) {
+		// Review tags require a durable source-bound production audit; direct
+		// clients and their title-only cache cannot authorize persistence.
+		if f.cfg.EffectiveLLMAction() == LLMActionReview && source == nil {
+			return Decision{Allow: true}, nil
+		}
 		llmReason, deferDecision, err := f.consultLLM(ctx, in, source)
 		if err != nil {
 			return Decision{}, err
 		}
-		if deferDecision && f.cfg.LLMEnforcementEnabled() {
+		if deferDecision && f.cfg.LLMEnforcementEnabled() && f.cfg.EffectiveLLMAction() == LLMActionDrop {
 			// LLM endpoint unreachable + operator opted into deferral
 			// + we're enforcing: signal the caller to re-queue rather
 			// than keep (which would leak foreign content) or drop
@@ -340,6 +350,12 @@ func (f *Filter) decide(ctx context.Context, in Input, allowLLM bool, source *Au
 			return Decision{Defer: true}, nil
 		}
 		if llmReason != ReasonNone {
+			if f.cfg.EffectiveLLMAction() == LLMActionReview {
+				return Decision{
+					Allow: true, WouldReview: true,
+					Review: f.cfg.LLMEnforcementEnabled(), Reason: llmReason,
+				}, nil
+			}
 			return Decision{
 				Allow:     !f.cfg.LLMEnforcementEnabled(),
 				WouldDrop: true,
@@ -355,7 +371,7 @@ func (f *Filter) decide(ctx context.Context, in Input, allowLLM bool, source *Au
 // (b) configured client, (c) the residual condition that the
 // deterministic ladder couldn't classify.
 func (f *Filter) shouldConsultLLM(in Input) bool {
-	if !f.cfg.LLMEnabled || f.llm == nil {
+	if !f.cfg.LLMEnabled || f.llm == nil || f.cfg.EffectiveLLMAction() == "" {
 		return false
 	}
 	return f.llmEligibleInput(in)
@@ -605,7 +621,7 @@ func (f *Filter) consultAudited(
 	f.observeAudit("result_recorded")
 	invalid := callErr != nil || result.StatusCode != http.StatusOK || result.ErrorClass != "none" ||
 		!validLLMVerdict(verdict)
-	policy := contentFilterAuditDecision(verdict, f.cfg.LLMMinConfidenceForDrop, f.cfg.LLMEnforcementEnabled(), invalid)
+	policy := contentFilterAuditDecisionForAction(verdict, f.cfg.LLMMinConfidenceForDrop, f.cfg.LLMEnforcementEnabled(), invalid, f.cfg.EffectiveLLMAction())
 	auditCtx, auditCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	recordErr = recorder.RecordContentFilterDecision(auditCtx, receipt, source.InfoHash, policy)
 	auditCancel()
@@ -671,7 +687,7 @@ func (f *Filter) completeIncompleteContentFilterAudit(
 	}
 	decision := llmcapture.ContentFilterDecision{
 		Outcome: outcome, MinConfidence: f.cfg.LLMMinConfidenceForDrop,
-		Live: f.cfg.LLMEnforcementEnabled(),
+		Live: f.cfg.LLMEnforcementEnabled(), LLMAction: f.cfg.EffectiveLLMAction(),
 	}
 	auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	err := recorder.RecordContentFilterDecision(auditCtx, *receipt, infoHash, decision)
@@ -711,9 +727,13 @@ func (f *Filter) observeLLMCall(verdict LLMVerdict, err error, elapsed time.Dura
 }
 
 func contentFilterAuditDecision(v LLMVerdict, minConfidence float64, live, invalid bool) llmcapture.ContentFilterDecision {
+	return contentFilterAuditDecisionForAction(v, minConfidence, live, invalid, LLMActionDrop)
+}
+
+func contentFilterAuditDecisionForAction(v LLMVerdict, minConfidence float64, live, invalid bool, action string) llmcapture.ContentFilterDecision {
 	d := llmcapture.ContentFilterDecision{
 		IsEnglish: v.IsEnglish, Confidence: v.Confidence, Reason: v.Reason,
-		MinConfidence: minConfidence, Live: live,
+		MinConfidence: minConfidence, Live: live, LLMAction: action,
 	}
 	switch {
 	case invalid || !validLLMVerdict(v) || !validDropThreshold(minConfidence):
@@ -723,7 +743,9 @@ func contentFilterAuditDecision(v LLMVerdict, minConfidence float64, live, inval
 	case v.Confidence < minConfidence:
 		d.Outcome = "low_confidence"
 	default:
-		d.Outcome, d.WouldDrop = "non_english", true
+		d.Outcome = "non_english"
+		d.WouldDrop = action == LLMActionDrop
+		d.WouldReview = action == LLMActionReview
 	}
 	return d
 }
@@ -754,7 +776,9 @@ func (f *Filter) verdictToReason(v LLMVerdict) DropReason {
 // incomplete terminal decisions must remain keeps even if their other fields
 // resemble a model drop.
 func (f *Filter) replayToReason(d *llmcapture.ContentFilterDecision) DropReason {
-	if d == nil || d.Outcome != "non_english" || !d.WouldDrop ||
+	if d == nil || d.Outcome != "non_english" || d.EffectiveLLMAction() != f.cfg.EffectiveLLMAction() ||
+		d.WouldDrop != (f.cfg.EffectiveLLMAction() == LLMActionDrop) ||
+		d.WouldReview != (f.cfg.EffectiveLLMAction() == LLMActionReview) ||
 		d.Live != f.cfg.LLMEnforcementEnabled() || d.MinConfidence != f.cfg.LLMMinConfidenceForDrop {
 		return ReasonNone
 	}

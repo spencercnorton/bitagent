@@ -75,6 +75,7 @@ automatically.
 |---|---|---|
 | `CLASSIFIER_LLM_MATCH_CHAT_BACKEND` | `openai` | Chat contract for the matcher's extraction and candidate reranking calls. |
 | `CLASSIFIER_LLM_CHAT_BACKEND` | `openai` | Chat contract for the type fallback classifier. |
+| `CLASSIFIER_LLM_LIVE_ALLOWED_TYPES` | unset | Comma-separated canonical `movie,tv,music,audiobook,book` values eligible for type-only application. Unset retains all supported types. For example, `movie,tv` keeps other predictions unknown without newly invoking their exclusion policy. The allowlist also bounds shadow `would_apply` evidence and is captured with each decision. |
 
 For an Ollama server reachable on the same host, configure its full
 OpenAI-compatible chat endpoint and an installed model explicitly:
@@ -212,8 +213,9 @@ before their decisions affect persistence.
 | `CONTENT_FILTER_ENABLED` | `false` | Examines inputs and emits counterfactual metrics. Required for either tier. |
 | `CONTENT_FILTER_ENFORCE` | `false` | Applies deterministic drops. Also controls the LLM tier when its mode is inherited. |
 | `CONTENT_FILTER_LLM_ENABLED` | `false` | Allows residual language inference after privacy, durable capture and budget admission. |
-| `CONTENT_FILTER_LLM_ENFORCE` | `inherit` | `false`: model decisions stay shadow; `true`: applies model drops and optional provider-unavailable deferral; `inherit` or unset: follows `CONTENT_FILTER_ENFORCE` for compatibility. |
-| `CONTENT_FILTER_LLM_DEFER_ON_UNAVAILABLE` | `false` | With model enforcement active, unavailable endpoints can defer an input for retry. Malformed responses, exhausted budgets and low-confidence verdicts keep it. |
+| `CONTENT_FILTER_LLM_ENFORCE` | `inherit` | `false`: model decisions stay shadow; `true`: applies the selected model disposition; `inherit` or unset: follows `CONTENT_FILTER_ENFORCE` for compatibility. |
+| `CONTENT_FILTER_LLM_ACTION` | `drop` | `drop`: legacy destructive disposition; `review`: keeps the torrent and applies the `llm-language-review` tag after a qualifying audited live model decision. Empty means legacy `drop`; invalid values fail startup. |
+| `CONTENT_FILTER_LLM_DEFER_ON_UNAVAILABLE` | `false` | With model enforcement active in `drop` mode, unavailable endpoints can defer an input for retry. Review mode keeps it. Malformed responses, exhausted budgets and low-confidence verdicts keep it. |
 
 Set the model mode explicitly in new configurations. For YAML, quote it:
 `llm_enforce: "false"`. Values are exactly `inherit`, `true` or `false`; invalid
@@ -239,7 +241,24 @@ policy unchanged. Existing configurations retain
 the inherited behavior on upgrade. Startup logs show effective modes and
 warn when an inherited model mode is live.
 
-Before model enforcement, independently label prospective shadow samples and
+For a nondeleting model stage, set `CONTENT_FILTER_LLM_ACTION=review` and
+`CONTENT_FILTER_LLM_ENFORCE=true` with both enable flags true. A qualifying
+audited non-English model response adds `llm-language-review` through the normal
+torrent-tag transaction; content remains searchable and is neither deleted,
+blocked nor deferred by that model decision. The tag records the model's
+concern, not verified audio language. Deterministic policy still runs first and
+uses its own enforcement flag. Use `CONTENT_FILTER_ENFORCE=false` when the
+desired rollout keeps deterministic matches too.
+
+Review is off by default. With model enforcement false it produces only a
+would-review observation. Request capture and terminal decisions bind the
+selected disposition, cutoff and live mode; a drop capture cannot authorize a
+review tag. Audit failures, private inputs, advertised English tracks, malformed
+results and low-confidence negatives never add the tag. Review does not make
+the model more accurate and cannot qualify destructive drops. Independent labels
+can measure review errors before accepting a later destructive disposition.
+
+Before destructive model enforcement, independently label prospective shadow samples and
 qualify the exact model, provider, prompt and request contract. Separate release
 families across evaluation splits and inspect English, anime, dual-audio and
 ambiguous-title false drops. A model's confidence and the number of shadow
@@ -258,7 +277,12 @@ unavailable-provider deferral loop. Track the `llm_non_english` reason in
 `bitagent_contentfilter_drop_total` and `bitagent_contentfilter_would_drop_total`
 separately from deterministic reasons. To roll back model application, set
 `CONTENT_FILTER_LLM_ENFORCE=false`; set `CONTENT_FILTER_LLM_ENABLED=false` to
-stop new model dispatches too.
+stop new model dispatches too. In review mode these flags stop new tags;
+previous review tags remain ordinary removable torrent tags and do not imply
+an active language exclusion. Review counters are
+`bitagent_contentfilter_llm_review_total` and
+`bitagent_contentfilter_llm_would_review_total`; review decisions never increase
+the model drop counters.
 
 ## Retention
 

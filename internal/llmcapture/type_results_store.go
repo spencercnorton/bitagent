@@ -42,6 +42,8 @@ func (s *PostgresStore) PersistTypeDecision(ctx context.Context, receipt ResultR
   AND a.info_hash = $3 AND c.task = 'classifier_type'
   AND c.task_input->'min_confidence' = $4::jsonb->'min_confidence'
   AND c.task_input->'live' = $4::jsonb->'live'
+  AND COALESCE(c.task_input->'live_allowed_types', '[]'::jsonb) =
+      COALESCE($4::jsonb->'live_allowed_types', '[]'::jsonb)
 )
 UPDATE llm_evaluation_capture_results r
 SET decision = COALESCE(r.decision, $4::jsonb), decided_at = COALESCE(r.decided_at, $5)

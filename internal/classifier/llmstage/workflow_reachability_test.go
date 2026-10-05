@@ -128,6 +128,7 @@ func TestDefaultWorkflowLiveTypePreservesAttributesAndTags(t *testing.T) {
 	require.True(t, baseline.VideoResolution.Valid)
 	cfg := NewDefaultConfig()
 	cfg.Enabled, cfg.EnableLive = true, true
+	cfg.LiveAllowedTypes = []string{"movie", "tv"}
 	s := newStageWithServer(t, cfg, inner, fakePrivacy{}, func(w http.ResponseWriter, _ *http.Request) {
 		respondWith(w, "movie", .98)
 	})

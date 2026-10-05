@@ -165,6 +165,8 @@ Active when `CONTENT_FILTER_ENABLED=true` (shadow) or `..._ENFORCE=true` (apply)
 |---|---|---|---|
 | `bitagent_contentfilter_examined_total` | counter | — | Torrents evaluated by the filter. |
 | `bitagent_contentfilter_drop_total` | counter | `reason` | Drops by reason (`non_english`, `non_latin`, `blocked_ext`, `nsfw_keyword`, etc.). |
+| `bitagent_contentfilter_llm_review_total` | counter | — | Kept torrents selected for a model-attributed review tag by an audited live decision. |
+| `bitagent_contentfilter_llm_would_review_total` | counter | — | Kept torrents selected for a counterfactual review tag while model enforcement is shadow. |
 
 ## Recommended dashboard panels
 

@@ -103,6 +103,8 @@ func (s *PostgresStore) PersistContentFilterDecision(
   AND a.info_hash = $3 AND c.task = 'contentfilter'
   AND c.task_input->'min_confidence' = $4::jsonb->'min_confidence'
   AND c.task_input->'live' = $4::jsonb->'live'
+  AND COALESCE(NULLIF(c.task_input->>'llm_action', ''), 'drop')
+      = COALESCE(NULLIF($4::jsonb->>'llm_action', ''), 'drop')
 )
 UPDATE llm_evaluation_capture_results r
 SET decision = COALESCE(r.decision, $4::jsonb), decided_at = COALESCE(r.decided_at, $5)

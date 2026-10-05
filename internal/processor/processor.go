@@ -310,6 +310,12 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 						}
 						return
 					}
+					if d.Review && d.WouldReview && !d.WouldDrop && d.Reason == contentfilter.ReasonLLMNonEnglish {
+						if cl.Tags == nil {
+							cl.Tags = make(map[string]struct{})
+						}
+						cl.Tags[contentfilter.LLMReviewTag] = struct{}{}
+					}
 				}
 
 				torrentContent := newTorrentContent(torrent, cl, llmsignal.English(runCtx))

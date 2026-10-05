@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -19,6 +20,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
 	"github.com/spencercnorton/bitagent/internal/classifier/llmstage"
 	"github.com/spencercnorton/bitagent/internal/junkpurge"
+	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmeval"
 )
 
@@ -103,10 +105,18 @@ type Metrics struct {
 	Ambiguous      int `json:"ambiguous"`
 	Scored         int `json:"scored"`
 	Unscorable     int `json:"unscorable"`
+	PolicyDeclined int `json:"policy_declined"`
 	Actions        int `json:"actions"`
 	PotentialHarms int `json:"potential_harms"`
 	HarmGroups     int `json:"harm_groups"`
 	ActionGroups   int `json:"action_groups"`
+	// Review tags keep content; their errors are measured independently and
+	// never enter the application/drop/quarantine action-risk denominator.
+	Reviews               int      `json:"reviews"`
+	PotentialReviewErrors int      `json:"potential_review_errors"`
+	ReviewGroups          int      `json:"review_groups"`
+	ReviewErrorGroups     int      `json:"review_error_groups"`
+	ReviewRiskUpper95     *float64 `json:"conditional_review_error_upper_95"`
 	// ConditionalActionRiskUpper95 measures potential error among action groups.
 	// It is not the population keepworthy-loss rate used by promotion gates.
 	HarmUpper95       *float64 `json:"conditional_action_risk_upper_95"`
@@ -397,35 +407,49 @@ func observation(r Record) (prediction string, confidence float64, action bool, 
 		return
 	}
 	var d struct {
-		Outcome         string   `json:"outcome"`
-		Category        string   `json:"category"`
-		Confidence      *float64 `json:"confidence"`
-		English         *bool    `json:"is_english"`
-		WouldApply      *bool    `json:"would_apply"`
-		WouldDrop       *bool    `json:"would_drop"`
-		Verdict         string   `json:"verdict"`
-		WouldQuarantine *bool    `json:"would_quarantine"`
-		MinConfidence   *float64 `json:"min_confidence"`
-		Live            *bool    `json:"live"`
-		Reason          string   `json:"reason"`
-		RequestIndex    *int     `json:"request_index"`
-		RequestSize     *int     `json:"request_size"`
+		Outcome          string   `json:"outcome"`
+		Category         string   `json:"category"`
+		Confidence       *float64 `json:"confidence"`
+		English          *bool    `json:"is_english"`
+		WouldApply       *bool    `json:"would_apply"`
+		WouldDrop        *bool    `json:"would_drop"`
+		Verdict          string   `json:"verdict"`
+		WouldQuarantine  *bool    `json:"would_quarantine"`
+		MinConfidence    *float64 `json:"min_confidence"`
+		Live             *bool    `json:"live"`
+		Reason           string   `json:"reason"`
+		RequestIndex     *int     `json:"request_index"`
+		RequestSize      *int     `json:"request_size"`
+		LiveAllowedTypes []string `json:"live_allowed_types,omitempty"`
+		WouldReview      *bool    `json:"would_review"`
+		LLMAction        string   `json:"llm_action"`
 	}
 	if DecodeStrict(r.Decision, &d) != nil || d.Confidence == nil || math.IsNaN(*d.Confidence) || math.IsInf(*d.Confidence, 0) || *d.Confidence < 0 || *d.Confidence > 1 || d.MinConfidence == nil || *d.MinConfidence <= 0 || *d.MinConfidence > 1 || d.Live == nil {
 		return
 	}
 	confidence = *d.Confidence
+	if r.Task != "contentfilter" && (d.LLMAction != "" || d.WouldReview != nil) {
+		return "", 0, false, false
+	}
 	var policy struct {
-		MinConfidence *float64 `json:"min_confidence"`
-		Live          *bool    `json:"live"`
-		RequestIndex  *int     `json:"request_index"`
-		RequestSize   *int     `json:"request_size"`
+		MinConfidence    *float64 `json:"min_confidence"`
+		Live             *bool    `json:"live"`
+		RequestIndex     *int     `json:"request_index"`
+		RequestSize      *int     `json:"request_size"`
+		LiveAllowedTypes []string `json:"live_allowed_types,omitempty"`
+		LLMAction        string   `json:"llm_action"`
 	}
 	if json.Unmarshal(r.TaskInput, &policy) != nil || policy.MinConfidence == nil || policy.Live == nil || *policy.MinConfidence != *d.MinConfidence || *policy.Live != *d.Live {
 		return "", 0, false, false
 	}
 	switch r.Task {
 	case "classifier_type":
+		if !validTypePolicyJSON(r.TaskInput, policy.LiveAllowedTypes) || !validTypePolicyJSON(r.Decision, d.LiveAllowedTypes) ||
+			!llmcapture.ValidTypeLiveAllowedTypes(policy.LiveAllowedTypes) ||
+			!llmcapture.ValidTypeLiveAllowedTypes(d.LiveAllowedTypes) ||
+			!slices.Equal(policy.LiveAllowedTypes, d.LiveAllowedTypes) {
+			return "", 0, false, false
+		}
 		raw, err := base64.StdEncoding.DecodeString(*r.ResponseBase64)
 		if err != nil {
 			return "", 0, false, false
@@ -437,15 +461,26 @@ func observation(r Record) (prediction string, confidence float64, action bool, 
 		if !allowed(r.Task, d.Category) || d.Category == "ambiguous" || d.WouldApply == nil {
 			return "", 0, false, false
 		}
-		if d.Outcome != "classified" && d.Outcome != "low_confidence" && d.Outcome != "unknown" {
+		if d.Outcome != "classified" && d.Outcome != "low_confidence" && d.Outcome != "unknown" && d.Outcome != "policy_declined" {
 			return "", 0, false, false
 		}
 		if *d.WouldApply != (d.Outcome == "classified") || *d.WouldApply && (confidence < *d.MinConfidence || d.Category == "unknown") {
 			return "", 0, false, false
 		}
+		allowedType := llmcapture.TypeLiveAllowed(d.Category, policy.LiveAllowedTypes)
+		if d.Outcome == "classified" && !allowedType ||
+			d.Outcome == "policy_declined" && (allowedType || confidence < *d.MinConfidence || d.Category == "unknown") ||
+			d.Outcome == "low_confidence" && (confidence >= *d.MinConfidence || d.Category == "unknown") ||
+			d.Outcome == "unknown" && d.Category != "unknown" {
+			return "", 0, false, false
+		}
 		prediction = d.Category
 		action = *d.WouldApply
 	case "contentfilter":
+		actionMode := (contentfilter.Config{LLMAction: d.LLMAction}).EffectiveLLMAction()
+		if actionMode == "" || actionMode != (contentfilter.Config{LLMAction: policy.LLMAction}).EffectiveLLMAction() {
+			return "", 0, false, false
+		}
 		raw, err := base64.StdEncoding.DecodeString(*r.ResponseBase64)
 		if err != nil {
 			return "", 0, false, false
@@ -457,7 +492,12 @@ func observation(r Record) (prediction string, confidence float64, action bool, 
 		if d.English == nil || d.WouldDrop == nil || d.Reason == "" || (d.Outcome != "english" && d.Outcome != "non_english" && d.Outcome != "low_confidence") {
 			return "", 0, false, false
 		}
-		if *d.WouldDrop != (d.Outcome == "non_english") || *d.English != (d.Outcome == "english") || *d.WouldDrop && confidence < *d.MinConfidence {
+		wouldReview := d.WouldReview != nil && *d.WouldReview
+		negative := d.Outcome == "non_english"
+		if *d.WouldDrop != (negative && actionMode == contentfilter.LLMActionDrop) ||
+			wouldReview != (negative && actionMode == contentfilter.LLMActionReview) ||
+			*d.English != (d.Outcome == "english") || negative && confidence < *d.MinConfidence ||
+			d.Outcome == "low_confidence" && confidence >= *d.MinConfidence {
 			return "", 0, false, false
 		}
 		prediction = "non_english"
@@ -505,6 +545,21 @@ func observation(r Record) (prediction string, confidence float64, action bool, 
 	return
 }
 
+// Match the capture store's JSON policy binding: only an absent legacy field
+// or an explicit array is valid. JSON null is not an absent SQL JSON key.
+func validTypePolicyJSON(raw json.RawMessage, decoded []string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return false
+	}
+	value, present := fields["live_allowed_types"]
+	if !present {
+		return len(decoded) == 0
+	}
+	value = bytes.TrimSpace(value)
+	return len(value) > 0 && value[0] == '['
+}
+
 // BinomialUpper95 is an exact one-sided Clopper-Pearson bound. Independent
 // release-family groups, not duplicate source rows, form its denominator.
 func BinomialUpper95(k, n int) *float64 {
@@ -550,7 +605,7 @@ func bucketKey(r Record) string {
 	delete(wire, "input")
 	// This includes routing/provider pins, output caps, dimensions and other
 	// non-source request parameters rather than pooling changed wire policies.
-	policyJSON, _ := json.Marshal(map[string]any{"min_confidence": policy["min_confidence"], "live": policy["live"], "openai_data_sharing": policy["openai_data_sharing"], "wire": wire})
+	policyJSON, _ := json.Marshal(map[string]any{"min_confidence": policy["min_confidence"], "live": policy["live"], "live_allowed_types": policy["live_allowed_types"], "llm_action": policy["llm_action"], "openai_data_sharing": policy["openai_data_sharing"], "wire": wire})
 	return r.Task + "|" + r.Model + "|" + r.Build + "|" + r.Contract + "|" + r.PromptVersion + "|" + r.ContractHash + "|" + hash(policyJSON)
 }
 
@@ -610,9 +665,10 @@ func Score(s Snapshot, h string, a, b Submission) (Report, error) {
 		confidence, correct float64
 	}
 	type acc struct {
-		m            Metrics
-		action, harm map[string]bool
-		cal          map[string]struct {
+		m                   Metrics
+		action, harm        map[string]bool
+		review, reviewError map[string]bool
+		cal                 map[string]struct {
 			confidence float64
 			correct    bool
 		}
@@ -626,7 +682,7 @@ func Score(s Snapshot, h string, a, b Submission) (Report, error) {
 		group := groups[r.CaptureKey]
 		v := by[key]
 		if v == nil {
-			v = &acc{action: map[string]bool{}, harm: map[string]bool{}, cal: map[string]struct {
+			v = &acc{action: map[string]bool{}, harm: map[string]bool{}, review: map[string]bool{}, reviewError: map[string]bool{}, cal: map[string]struct {
 				confidence float64
 				correct    bool
 			}{}}
@@ -649,11 +705,29 @@ func Score(s Snapshot, h string, a, b Submission) (Report, error) {
 			v.m.Unscorable++
 			continue
 		}
+		if r.Task == "classifier_type" {
+			var decision struct {
+				Outcome string `json:"outcome"`
+			}
+			_ = json.Unmarshal(r.Decision, &decision)
+			if decision.Outcome == "policy_declined" {
+				v.m.PolicyDeclined++
+			}
+		}
+		review := languageReviewObservation(r)
+		if review {
+			v.m.Reviews++
+			v.review[group] = true
+		}
 		if action {
 			v.m.Actions++
 			v.action[group] = true
 		}
 		if !agreed || ambiguous {
+			if review {
+				v.m.PotentialReviewErrors++
+				v.reviewError[group] = true
+			}
 			if action {
 				v.m.PotentialHarms++
 				v.harm[group] = true
@@ -674,6 +748,10 @@ func Score(s Snapshot, h string, a, b Submission) (Report, error) {
 			v.m.PotentialHarms++
 			v.harm[group] = true
 		}
+		if review && !correct {
+			v.m.PotentialReviewErrors++
+			v.reviewError[group] = true
+		}
 		// The worst confidence/error observation wins within a release family,
 		// preventing repeated easy titles from hiding a hard wrong decision.
 		old, exists := v.cal[group]
@@ -688,6 +766,9 @@ func Score(s Snapshot, h string, a, b Submission) (Report, error) {
 		v.m.ActionGroups = len(v.action)
 		v.m.HarmGroups = len(v.harm)
 		v.m.HarmUpper95 = BinomialUpper95(v.m.HarmGroups, v.m.ActionGroups)
+		v.m.ReviewGroups = len(v.review)
+		v.m.ReviewErrorGroups = len(v.reviewError)
+		v.m.ReviewRiskUpper95 = BinomialUpper95(v.m.ReviewErrorGroups, v.m.ReviewGroups)
 		for _, x := range v.cal {
 			correct := 0.0
 			if x.correct {
@@ -715,4 +796,17 @@ func Score(s Snapshot, h string, a, b Submission) (Report, error) {
 		report.Tasks[key] = v.m
 	}
 	return report, nil
+}
+
+// Called only after observation has validated the response, policy and action
+// binding. A review is a counterfactual tag decision whether live or shadow.
+func languageReviewObservation(r Record) bool {
+	if r.Task != "contentfilter" {
+		return false
+	}
+	var d struct {
+		WouldReview bool `json:"would_review"`
+	}
+	_ = json.Unmarshal(r.Decision, &d)
+	return d.WouldReview
 }

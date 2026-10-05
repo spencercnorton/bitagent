@@ -14,12 +14,13 @@ import (
 // was enabled, not proof that a downstream database write completed.
 // Provider/source text belongs solely to the linked admitted request/result.
 type TypeDecision struct {
-	Outcome       string  `json:"outcome"`
-	Category      string  `json:"category"`
-	Confidence    float64 `json:"confidence"`
-	MinConfidence float64 `json:"min_confidence"`
-	WouldApply    bool    `json:"would_apply"`
-	Live          bool    `json:"live"`
+	Outcome          string   `json:"outcome"`
+	Category         string   `json:"category"`
+	Confidence       float64  `json:"confidence"`
+	MinConfidence    float64  `json:"min_confidence"`
+	WouldApply       bool     `json:"would_apply"`
+	Live             bool     `json:"live"`
+	LiveAllowedTypes []string `json:"live_allowed_types,omitempty"`
 }
 
 // TypeResultRecorder is separate from ResultRecorder: adding a type-only
@@ -83,6 +84,9 @@ func (r *Recorder) RecordTypeDecision(ctx context.Context, receipt ResultReceipt
 }
 
 func validTypeDecision(d TypeDecision) bool {
+	if !ValidTypeLiveAllowedTypes(d.LiveAllowedTypes) {
+		return false
+	}
 	if math.IsNaN(d.Confidence) || math.IsInf(d.Confidence, 0) || d.Confidence < 0 || d.Confidence > 1 ||
 		math.IsNaN(d.MinConfidence) || math.IsInf(d.MinConfidence, 0) || d.MinConfidence <= 0 || d.MinConfidence > 1 {
 		return false
@@ -97,7 +101,9 @@ func validTypeDecision(d TypeDecision) bool {
 	}
 	switch d.Outcome {
 	case "classified":
-		return known && d.Confidence >= d.MinConfidence && d.WouldApply
+		return known && d.Confidence >= d.MinConfidence && d.WouldApply && TypeLiveAllowed(d.Category, d.LiveAllowedTypes)
+	case "policy_declined":
+		return known && d.Confidence >= d.MinConfidence && !d.WouldApply && !TypeLiveAllowed(d.Category, d.LiveAllowedTypes)
 	case "unknown":
 		return d.Category == "unknown" && !d.WouldApply
 	case "low_confidence":
@@ -107,4 +113,39 @@ func validTypeDecision(d TypeDecision) bool {
 	default:
 		return false
 	}
+}
+
+// ValidTypeLiveAllowedTypes validates explicit policy values without inferring
+// model quality or granting production authority. An empty list is the legacy
+// unrestricted supported-type policy.
+func ValidTypeLiveAllowedTypes(types []string) bool {
+	seen := make(map[string]bool, len(types))
+	for _, category := range types {
+		switch category {
+		case "movie", "tv", "music", "audiobook", "book":
+		default:
+			return false
+		}
+		if seen[category] {
+			return false
+		}
+		seen[category] = true
+	}
+	return true
+}
+
+// TypeLiveAllowed applies an already validated explicit type policy.
+func TypeLiveAllowed(category string, types []string) bool {
+	if !ValidTypeLiveAllowedTypes(types) {
+		return false
+	}
+	if len(types) == 0 {
+		return true
+	}
+	for _, allowed := range types {
+		if category == allowed {
+			return true
+		}
+	}
+	return false
 }

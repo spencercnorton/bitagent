@@ -2,8 +2,8 @@
 
 Runtime tests prove policy and audit behavior. They do not prove model quality.
 Use independent source labels, the task's formal evaluation workflow, held-out
-release families, safety strata and prospective shadow acceptance before enabling
-a model stage. Model confidence and agent-generated labels are diagnostics.
+release families, safety strata and prospective shadow acceptance before claiming
+qualification of a model stage. Model confidence and agent-generated labels are diagnostics.
 
 The optional offline command `go run ./tools/readiness` prepares blinded review
 packets from a local `bitagent-shadow-snapshot-v1` JSON export. It never queries a
@@ -57,6 +57,15 @@ and ambiguous actions count as potential harms. Legacy synthetic junk captures
 without the exact grouped request and first response are unscorable. Every report
 sets `grants_production_authority` to false and cannot replace formal gold closure,
 calibration, harm gates or prospective shadow acceptance.
+
+Language disposition is isolated in policy groups. `review` decisions keep
+content and use separate review counts, potential review errors and a
+conditional review-error bound. They do not enter drop/action counts or the
+action-risk denominator. Both shadow and live reports measure the captured
+counterfactual; an audit decision alone does not prove a tag transaction
+committed. Pre-disposition captures with no `llm_action` retain legacy `drop`
+semantics. Task and terminal disposition must agree with retained response
+bytes and policy or the observation is unscorable.
 
 Output directories must be new; files are created with owner-only permissions.
 Never publish real review packets, source titles or raw model responses.

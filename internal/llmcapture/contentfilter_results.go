@@ -19,7 +19,22 @@ type ContentFilterDecision struct {
 	Reason        string  `json:"reason"`
 	MinConfidence float64 `json:"min_confidence"`
 	WouldDrop     bool    `json:"would_drop"`
+	WouldReview   bool    `json:"would_review,omitempty"`
+	LLMAction     string  `json:"llm_action,omitempty"`
 	Live          bool    `json:"live"`
+}
+
+// EffectiveLLMAction interprets pre-disposition captures as legacy drops.
+// Unknown values cannot authorize a replay or a terminal decision.
+func (d ContentFilterDecision) EffectiveLLMAction() string {
+	switch d.LLMAction {
+	case "", "drop":
+		return "drop"
+	case "review":
+		return "review"
+	default:
+		return ""
+	}
 }
 
 // ContentFilterResultRecorder is intentionally separate from the matcher and
@@ -121,20 +136,22 @@ func (r *Recorder) RecordContentFilterDecision(
 func validContentFilterDecision(d ContentFilterDecision) bool {
 	if math.IsNaN(d.Confidence) || math.IsInf(d.Confidence, 0) || d.Confidence < 0 || d.Confidence > 1 ||
 		math.IsNaN(d.MinConfidence) || math.IsInf(d.MinConfidence, 0) || d.MinConfidence <= 0 || d.MinConfidence > 1 ||
-		len(d.Reason) > 64 || strings.ContainsAny(d.Reason, "\x00\r\n") {
+		len(d.Reason) > 64 || strings.ContainsAny(d.Reason, "\x00\r\n") || d.EffectiveLLMAction() == "" ||
+		d.WouldDrop && d.WouldReview || d.WouldDrop && d.EffectiveLLMAction() != "drop" ||
+		d.WouldReview && d.EffectiveLLMAction() != "review" {
 		return false
 	}
 	switch d.Outcome {
 	case "english":
-		return d.IsEnglish && d.Reason != "" && !d.WouldDrop
+		return d.IsEnglish && d.Reason != "" && !d.WouldDrop && !d.WouldReview
 	case "non_english":
-		return !d.IsEnglish && d.Reason != "" && d.Confidence >= d.MinConfidence && d.WouldDrop
+		return !d.IsEnglish && d.Reason != "" && d.Confidence >= d.MinConfidence && (d.WouldDrop || d.WouldReview)
 	case "low_confidence":
-		return !d.IsEnglish && d.Reason != "" && d.Confidence < d.MinConfidence && !d.WouldDrop
+		return !d.IsEnglish && d.Reason != "" && d.Confidence < d.MinConfidence && !d.WouldDrop && !d.WouldReview
 	case "invalid_response":
-		return !d.IsEnglish && d.Confidence == 0 && d.Reason == "" && !d.WouldDrop
+		return !d.IsEnglish && d.Confidence == 0 && d.Reason == "" && !d.WouldDrop && !d.WouldReview
 	case "audit_incomplete":
-		return !d.IsEnglish && d.Confidence == 0 && d.Reason == "" && !d.WouldDrop
+		return !d.IsEnglish && d.Confidence == 0 && d.Reason == "" && !d.WouldDrop && !d.WouldReview
 	default:
 		return false
 	}

@@ -22,14 +22,23 @@ type Config struct {
 	Enforce bool `yaml:"enforce"`
 
 	// LLMEnforce selects model enforcement independently of deterministic
-	// enforcement: "false" observes, "true" applies model drops and optional
-	// unavailable-endpoint deferral, and "inherit" (or unset) follows Enforce
+	// enforcement: "false" observes, "true" applies the selected LLMAction
+	// (with optional unavailable-endpoint deferral only for drops), and
+	// "inherit" (or unset) follows Enforce
 	// for compatibility. Enabled and LLMEnabled are still required. The
 	// default inherited mode is off because Enforce defaults false. New
-	// deployments should set "false" explicitly until independently labeled
-	// evaluation qualifies the exact model, prompt and provider contract.
+	// deployments should set the gate explicitly. Destructive drops require
+	// independently labeled evaluation of the model, prompt and contract.
 	// YAML values must be quoted strings; env: CONTENT_FILTER_LLM_ENFORCE.
 	LLMEnforce string `yaml:"llm_enforce" validate:"omitempty,oneof=inherit true false"`
+
+	// LLMAction selects the disposition of an audited residual non-English
+	// verdict: "drop" preserves legacy behavior; "review" keeps the torrent
+	// and, only when LLMEnforce is live, adds a model-attributed review tag.
+	// Review never deletes or defers. It requires the same durable request,
+	// response, decision, privacy and budget gates as production drops.
+	// Env: CONTENT_FILTER_LLM_ACTION. Empty means legacy "drop".
+	LLMAction string `yaml:"llm_action" validate:"omitempty,oneof=drop review"`
 
 	// RequireEnglishLanguage — when true, torrents whose
 	// classifier-set language tag is anything other than `en` (or
@@ -197,7 +206,7 @@ type Config struct {
 	// verdict, not an accuracy guarantee. Reports below it keep regardless
 	// of the verdict. Above it, IsEnglish=false is only actionable when the
 	// selected LLM enforcement mode is live. Independent labeled evaluation
-	// must qualify the exact model contract before that opt-in.
+	// must qualify the exact model contract before destructive application.
 	LLMMinConfidenceForDrop float64 `yaml:"llm_min_confidence_for_drop"`
 
 	// LLMRuleMinerThreshold — number of LLM verdicts with the
@@ -251,6 +260,7 @@ func NewDefaultConfig() Config {
 		Enabled:    false,
 		Enforce:    false,
 		LLMEnforce: "inherit",
+		LLMAction:  LLMActionDrop,
 
 		RequireEnglishLanguage: true,
 		DropNonLatinScript:     true,
@@ -302,6 +312,27 @@ func (c Config) LLMEnforcementEnabled() bool {
 		return c.Enforce
 	default:
 		return false
+	}
+}
+
+const (
+	LLMActionDrop   = "drop"
+	LLMActionReview = "review"
+	// LLMReviewTag describes a model concern, not an independently established
+	// language fact. It is persisted through the ordinary torrent-tag path.
+	LLMReviewTag = "llm-language-review"
+)
+
+// EffectiveLLMAction preserves the legacy disposition for an unset value.
+// Invalid values cannot authorize model actions in direct constructors.
+func (c Config) EffectiveLLMAction() string {
+	switch c.LLMAction {
+	case "", LLMActionDrop:
+		return LLMActionDrop
+	case LLMActionReview:
+		return LLMActionReview
+	default:
+		return ""
 	}
 }
 

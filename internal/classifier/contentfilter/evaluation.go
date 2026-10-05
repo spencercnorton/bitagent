@@ -192,6 +192,7 @@ func (f *Filter) EvaluationCapture(
 		"title":          in.Title,
 		"min_confidence": f.cfg.LLMMinConfidenceForDrop,
 		"live":           f.cfg.LLMEnforcementEnabled(),
+		"llm_action":     f.cfg.EffectiveLLMAction(),
 		"eligibility_input": map[string]any{
 			"private":           in.Private,
 			"primary_extension": in.PrimaryExtension,

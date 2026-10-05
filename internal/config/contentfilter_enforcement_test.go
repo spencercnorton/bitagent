@@ -52,3 +52,18 @@ func TestContentFilterModelEnforcementYAMLUsesQuotedStrings(t *testing.T) {
 		require.Equal(t, mode != "false", cfg.LLMEnforcementEnabled())
 	}
 }
+
+func TestEnvBindingContentFilterReviewDispositionDoesNotEnableEnforcement(t *testing.T) {
+	cfg := resolveSectionFromEnv(t, "content_filter", contentfilter.NewDefaultConfig(), map[string]string{
+		"CONTENT_FILTER_LLM_ACTION": "review",
+	}).(contentfilter.Config)
+	require.Equal(t, contentfilter.LLMActionReview, cfg.EffectiveLLMAction())
+	require.False(t, cfg.Enabled)
+	require.False(t, cfg.LLMEnabled)
+	require.False(t, cfg.Enforce)
+	require.False(t, cfg.LLMEnforcementEnabled())
+	_, err := resolveRootNode([]configresolver.Resolver{configresolver.NewEnv(map[string]string{
+		"CONTENT_FILTER_LLM_ACTION": "tag_and_delete",
+	})}, validator.New(), Spec{Key: "content_filter", DefaultValue: contentfilter.NewDefaultConfig()})
+	require.Error(t, err)
+}
