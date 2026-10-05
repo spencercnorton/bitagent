@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Run optional type inference inside the classification workflow's exclusion
+  policy. Deterministic outcomes remain authoritative; custom workflows without
+  the policy boundary cannot apply a live prediction.
+- Separate language-model enforcement from deterministic filtering with
+  `CONTENT_FILTER_LLM_ENFORCE`, retaining legacy inheritance when unset. Keep
+  explicitly advertised English releases and fail open on incomplete audit or
+  model evidence.
+- Retain the actual grouped junk request, first response and position-bound
+  decisions. Incomplete cycles cannot quarantine; manual deletion and blacklist
+  updates commit atomically against an existing quarantine snapshot.
+- Add an optional embedding shortlist before the chat matcher. It uses an
+  explicit independent route, bounded vectors and the shared durable allowance.
+  Full candidate identity checks and chat confidence still govern attachment.
+- Reject contradictory, duplicate, incomplete and refused model responses in
+  runtime and evaluation. Ambiguous batch IDs abstain instead of choosing a row.
+- Add private offline blinded review packets and diagnostic scoring. These
+  artifacts never grant production authority or replace independent gold,
+  calibration and prospective acceptance. New live modes remain off by default.
+
 - Make the public backend independently buildable and deployable without a UI.
   Remove the Python site and its Go worker, browser GraphQL playground and
   site-only documentation. Keep DHT processing, matching, classification,
