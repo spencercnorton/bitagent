@@ -10,6 +10,12 @@ packets from a local `bitagent-shadow-snapshot-v1` JSON export. It never queries
 database, calls a provider, changes runtime configuration or grants promotion.
 Keep real source exports and generated artifacts outside the source repository.
 
+The utility supports `classifier_type`, `contentfilter` and `junkpurge` evidence.
+It does not qualify catalogue matching or embeddings. The legacy formal capture
+exporter rejects `matcher_embedding` and the embedding-shortlist rerank-v3
+contract. Its successor must preserve the full `policy_candidates` set and the
+embedding receipt before formal evaluation of that route.
+
 ```sh
 go run ./tools/readiness freeze -snapshot snapshot.json -out review-packets \
   -reviewer-a reviewer-one -reviewer-b reviewer-two

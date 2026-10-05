@@ -6,9 +6,9 @@
   policy. Deterministic outcomes remain authoritative; custom workflows without
   the policy boundary cannot apply a live prediction.
 - Separate language-model enforcement from deterministic filtering with
-  `CONTENT_FILTER_LLM_ENFORCE`, retaining legacy inheritance when unset. Keep
-  explicitly advertised English releases and fail open on incomplete audit or
-  model evidence.
+  `CONTENT_FILTER_LLM_ENFORCE`, retaining legacy inheritance when unset. Skip
+  model language inference for advertised English-inclusive releases and block
+  model application when audit or model evidence is incomplete.
 - Retain the actual grouped junk request, first response and position-bound
   decisions. Incomplete cycles cannot quarantine; manual deletion and blacklist
   updates commit atomically against an existing quarantine snapshot.
