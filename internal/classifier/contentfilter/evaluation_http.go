@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 )
@@ -90,8 +91,9 @@ func presentJSONValue(raw json.RawMessage) bool {
 }
 
 // Provider envelopes have extensible metadata, so unknown outer fields remain
-// allowed. Duplicate fields and trailing documents have no unambiguous meaning
-// and must be rejected before encoding/json's last-key-wins decoding.
+// allowed. Duplicate fields (including encoding/json's case-folded aliases) and
+// trailing documents have no unambiguous meaning and must be rejected before
+// encoding/json's last-key-wins decoding.
 func validateHTTPJSON(raw []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
@@ -117,7 +119,11 @@ func validateHTTPJSON(raw []byte) error {
 					return errors.New("invalid contentfilter envelope object")
 				}
 				name, ok := key.(string)
-				if !ok || seen[name] {
+				if !ok {
+					return errors.New("invalid contentfilter envelope field")
+				}
+				name = foldedEnvelopeFieldName(name)
+				if seen[name] {
 					return errors.New("duplicate contentfilter envelope field")
 				}
 				seen[name] = true
@@ -147,4 +153,19 @@ func validateHTTPJSON(raw []byte) error {
 		return fmt.Errorf("trailing contentfilter envelope data")
 	}
 	return nil
+}
+
+// encoding/json matches struct field names using Unicode simple folding. Fold
+// each key to the smallest rune in that cycle so aliases cannot overwrite one
+// another even when they differ by non-ASCII case (for example, s and long s).
+func foldedEnvelopeFieldName(name string) string {
+	return strings.Map(func(r rune) rune {
+		folded := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			if next < folded {
+				folded = next
+			}
+		}
+		return folded
+	}, name)
 }

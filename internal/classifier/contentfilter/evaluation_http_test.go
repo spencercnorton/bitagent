@@ -64,6 +64,13 @@ func TestEvaluationHTTPVerdictRejectsAmbiguousIncompleteOrRefusedEnvelopes(t *te
 		body                  []byte
 	}{
 		{"duplicate outer field", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(`{"choices":[],` + string(chat)[1:])},
+		{"case-variant choices", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(`{"Choices":[],` + string(chat)[1:])},
+		{"Unicode folded choices", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(`{"choice\u017f":[],` + string(chat)[1:])},
+		{"escaped duplicate choices", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(`{"\u0063hoices":[],` + string(chat)[1:])},
+		{"case-variant content", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(strings.Replace(string(chat), `"content":`, `"Content":"","content":`, 1))},
+		{"escaped duplicate content", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(strings.Replace(string(chat), `"content":`, `"\u0063ontent":"","content":`, 1))},
+		{"case-variant finish reason", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(strings.Replace(string(chat), `"finish_reason":"stop"`, `"Finish_Reason":"length","finish_reason":"stop"`, 1))},
+		{"escaped duplicate finish reason", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(strings.Replace(string(chat), `"finish_reason":"stop"`, `"\u0066inish_reason":"length","finish_reason":"stop"`, 1))},
 		{"duplicate verdict field", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(mustJSON(t, map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": `{"is_english":true,"is_english":false,"confidence":0.93,"reason":"synthetic-foreign"}`}}}}))},
 		{"multiple choices", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(mustJSON(t, map[string]any{"choices": []any{valid["choices"].([]any)[0], valid["choices"].([]any)[0]}}))},
 		{"truncated chat", "contentfilter-chat-model-input-v1", apiStyleChat, []byte(strings.Replace(string(chat), `"stop"`, `"length"`, 1))},
