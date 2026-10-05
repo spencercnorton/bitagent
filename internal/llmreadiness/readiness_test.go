@@ -75,13 +75,13 @@ func TestGroupedRequestsJoinConnectedReleaseFamilies(t *testing.T) {
 	r := s.Records[0]
 	r.Task = "junkpurge"
 	r.Group = hash([]byte("family-a"))
-	r.ModelInput = json.RawMessage(`{"names":["A","B"]}`)
+	r.ModelInput = json.RawMessage(`{"model":"fixture-model","messages":[{"role":"user","content":"A and B"}]}`)
 	s.Records = []Record{r}
 	r.CaptureKey = hash([]byte("grouped-b"))
 	r.Group = hash([]byte("family-b"))
 	s.Records = append(s.Records, r)
 	r.CaptureKey = hash([]byte("bridge-b"))
-	r.ModelInput = json.RawMessage(`{"names":["B","C"]}`)
+	r.ModelInput = json.RawMessage(`{"model":"fixture-model","messages":[{"role":"user","content":"B and C"}]}`)
 	s.Records = append(s.Records, r)
 	r.CaptureKey = hash([]byte("grouped-c"))
 	r.Group = hash([]byte("family-c"))

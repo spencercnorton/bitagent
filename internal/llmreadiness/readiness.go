@@ -544,7 +544,13 @@ func bucketKey(r Record) string {
 	// task policy too, because those values may change under one contract ID.
 	var policy map[string]json.RawMessage
 	_ = json.Unmarshal(r.TaskInput, &policy)
-	policyJSON, _ := json.Marshal(map[string]json.RawMessage{"min_confidence": policy["min_confidence"], "live": policy["live"], "openai_data_sharing": policy["openai_data_sharing"]})
+	var wire map[string]json.RawMessage
+	_ = json.Unmarshal(r.ModelInput, &wire)
+	delete(wire, "messages")
+	delete(wire, "input")
+	// This includes routing/provider pins, output caps, dimensions and other
+	// non-source request parameters rather than pooling changed wire policies.
+	policyJSON, _ := json.Marshal(map[string]any{"min_confidence": policy["min_confidence"], "live": policy["live"], "openai_data_sharing": policy["openai_data_sharing"], "wire": wire})
 	return r.Task + "|" + r.Model + "|" + r.Build + "|" + r.Contract + "|" + r.PromptVersion + "|" + r.ContractHash + "|" + hash(policyJSON)
 }
 
