@@ -181,6 +181,14 @@ workflows:
           find_match:
             - attach_tmdb_content_by_llm_search
             - unmatched
+    # Preserve deterministic exclusions before any optional provider call.
+    - run_workflow: [content_type_policy]
+    # The optional type-only callback runs in the existing workflow, after
+    # deterministic authority and before the same policy is reapplied. No
+    # catalogue attachment or llm-matched tag is created by a type prediction.
+    - type_fallback
+    - run_workflow: [content_type_policy]
+  content_type_policy:
     # delete specific content types based on the configured flags:
     - if_else:
         condition:

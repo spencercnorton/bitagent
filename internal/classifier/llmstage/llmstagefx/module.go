@@ -6,8 +6,9 @@
 //	canonical preempt -> LLM stage -> CEL runner
 //
 // In shadow mode the LLM runs and emits metrics but returns the CEL
-// result unchanged. In live mode the LLM replaces the CEL result
-// when confidence >= MinConfidence. Both flags default false so
+// result unchanged. In live mode a type-only callback runs at the workflow's
+// explicit policy boundary; accepted types continue through the exclusion tail.
+// Runners without that boundary remain shadow-only. Both flags default false so
 // including the module is safe; see llmstage.Config for operator
 // activation.
 package llmstagefx

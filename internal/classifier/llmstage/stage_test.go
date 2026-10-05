@@ -22,7 +22,19 @@ type fakeInner struct {
 	err error
 }
 
-func (r fakeInner) Run(_ context.Context, _ string, _ classifier.Flags, _ model.Torrent) (classification.Result, error) {
+func (r fakeInner) Run(ctx context.Context, _ string, _ classifier.Flags, _ model.Torrent) (classification.Result, error) {
+	// The unit-test runner explicitly offers a type-policy boundary. The real
+	// workflow regressions verify its surrounding exclusion rules separately.
+	if r.err == classification.ErrUnmatched {
+		result, err := classifier.RunTypeFallback(ctx, r.res)
+		if err != nil {
+			return classification.Result{}, err
+		}
+		if result.ContentType.Valid && !r.res.ContentType.Valid {
+			return result, nil
+		}
+		return result, r.err
+	}
 	return r.res, r.err
 }
 

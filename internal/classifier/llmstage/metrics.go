@@ -56,7 +56,7 @@ func NewMetrics() *Metrics {
 		}, []string{"reason"}),
 		gateRejectsTotal: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "gate_rejects_total",
-			Help: "Invocations rejected by a gate before any LLM call. reason=privacy | plausibility | size | files | config.",
+			Help: "Type fallback gate rejections; policy_rejected means the workflow did not accept a proposed live type, other reasons are admission or eligibility failures.",
 		}, []string{"reason"}),
 		cacheHitsTotal: dualemit.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "cache_hits_total",
@@ -81,7 +81,7 @@ func NewMetrics() *Metrics {
 		}, []string{"media_type"}),
 		liveAppliedTotal: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "live_applied_total",
-			Help: "LLM decisions that replaced inner result in live mode, labelled by media_type.",
+			Help: "Live type predictions returned successfully through the workflow's policy, labelled by media_type; this is not database persistence proof.",
 		}, []string{"media_type"}),
 		shadowSkippedTotal: dualemit.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace, Subsystem: subsystem, Name: "shadow_skipped_total",
@@ -91,7 +91,7 @@ func NewMetrics() *Metrics {
 	// Zero-valued series distinguish an installed but unreachable stage from
 	// missing instrumentation. Labels are a fixed finite vocabulary.
 	m.invocationsTotal.WithLabelValues("unmatched")
-	for _, reason := range []string{"runtime_flag", "privacy", "plausibility", "size", "files", "config", "request_size", "concurrency", "budget_cooldown", "budget_exhausted", "budget_unavailable", "audit_unavailable", "already_captured", "policy_live_unavailable"} {
+	for _, reason := range []string{"runtime_flag", "privacy", "plausibility", "size", "files", "config", "request_size", "concurrency", "budget_cooldown", "budget_exhausted", "budget_unavailable", "audit_unavailable", "already_captured", "policy_live_unavailable", "policy_rejected"} {
 		m.gateRejectsTotal.WithLabelValues(reason)
 	}
 	for _, outcome := range []string{"result_error", "result_recorded", "decision_error", "decision_recorded"} {

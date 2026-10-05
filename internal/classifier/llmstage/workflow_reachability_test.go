@@ -41,6 +41,20 @@ func coreWorkflowForTypeStage(t *testing.T) classifier.Runner {
 		map[string]any{"run_workflow": "default"},
 		map[string]any{"add_tag": "retained-workflow-tag"},
 	}
+	source.Workflows["policy_error"] = []any{
+		map[string]any{"run_workflow": "default"},
+		map[string]any{"if_else": map[string]any{
+			"condition": "torrent.files[999].size > 0",
+			"if_action": "delete",
+		}},
+	}
+	source.Workflows["repeated_default"] = []any{
+		map[string]any{"run_workflow": "default"},
+		map[string]any{"run_workflow": "default"},
+	}
+	source.Workflows["without_type_boundary"] = []any{
+		map[string]any{"add_tag": "retained-workflow-tag"},
+	}
 	factory := classifier.New(classifier.Params{
 		Config:     classifier.NewDefaultConfig(),
 		Search:     lazy.New(func() (search.Search, error) { return nil, nil }),
@@ -102,7 +116,7 @@ func TestDefaultWorkflowUnknownTypeReachesAuditedShadow(t *testing.T) {
 	require.False(t, audit.decisions[0].Live)
 }
 
-func TestExplicitUnmatchedLiveTypePreservesAttributesAndTags(t *testing.T) {
+func TestDefaultWorkflowLiveTypePreservesAttributesAndTags(t *testing.T) {
 	ctx := context.Background()
 	inner := coreWorkflowForTypeStage(t)
 	tor := unknownTypeWorkflowTorrent()
@@ -114,10 +128,7 @@ func TestExplicitUnmatchedLiveTypePreservesAttributesAndTags(t *testing.T) {
 	require.True(t, baseline.VideoResolution.Valid)
 	cfg := NewDefaultConfig()
 	cfg.Enabled, cfg.EnableLive = true, true
-	// The real default produces successful unknowns, now intentionally shadow-
-	// only. This synthetic legacy error path uses its non-empty attributes to
-	// verify compatibility without pretending the default workflow returns it.
-	s := newStageWithServer(t, cfg, fakeInner{res: baseline, err: classification.ErrUnmatched}, fakePrivacy{}, func(w http.ResponseWriter, _ *http.Request) {
+	s := newStageWithServer(t, cfg, inner, fakePrivacy{}, func(w http.ResponseWriter, _ *http.Request) {
 		respondWith(w, "movie", .98)
 	})
 	got, err := s.Run(ctx, "tagged_default", flags, tor)
@@ -125,19 +136,20 @@ func TestExplicitUnmatchedLiveTypePreservesAttributesAndTags(t *testing.T) {
 	baseline.ContentType = model.NewNullContentType(model.ContentTypeMovie)
 	require.Equal(t, baseline, got, "the type is the only field the fallback may change")
 	require.Nil(t, got.Content, "type-only output cannot invent a catalogue attachment")
+	require.NotContains(t, got.Tags, "llm-matched")
+	require.Equal(t, float64(1), typeAdmissionCounterValue(t,
+		s.metrics.liveAppliedTotal.WithLabelValues("movie"), "live_applied_total"))
 }
 
-// The default workflow's deletion tail has already completed on the unknown
-// input. There is no approved post-policy live application point, even for a
-// seemingly acceptable movie answer. Deny before calling or caching the model.
-func TestDefaultWorkflowLiveModeRejectsNaturalUnknownBeforeDispatch(t *testing.T) {
-	for _, category := range []string{"movie", "music"} {
+func TestDefaultWorkflowInferredTypesRespectExclusions(t *testing.T) {
+	for _, category := range []string{"movie", "music", "book", "audiobook"} {
 		t.Run(category, func(t *testing.T) {
 			ctx := context.Background()
 			inner := coreWorkflowForTypeStage(t)
 			tor := unknownTypeWorkflowTorrent()
 			flags := offlineTypeWorkflowFlags()
-			flags["delete_content_types"] = []any{"music"}
+			contentType := map[string]string{"movie": "movie", "music": "music", "book": "ebook", "audiobook": "audiobook"}[category]
+			flags["delete_content_types"] = []any{contentType}
 			baseline, err := inner.Run(ctx, "default", flags, tor)
 			require.NoError(t, err)
 			require.False(t, baseline.ContentType.Valid)
@@ -149,15 +161,149 @@ func TestDefaultWorkflowLiveModeRejectsNaturalUnknownBeforeDispatch(t *testing.T
 				respondWith(w, category, .98)
 			})
 			got, err := s.Run(ctx, "default", flags, tor)
-			require.NoError(t, err)
-			require.Equal(t, baseline, got)
-			require.Zero(t, calls.Load())
-			require.Zero(t, s.admission.Budget.(*testBudget).used.Load())
-			require.Empty(t, s.admission.Capture.(*testAudit).requests)
+			require.ErrorIs(t, err, classification.ErrDeleteTorrent)
+			require.Equal(t, classification.Result{}, got, "policy deletion cannot expose the candidate to persistence")
+			require.EqualValues(t, 1, calls.Load())
+			require.EqualValues(t, 1, s.admission.Budget.(*testBudget).used.Load())
+			require.Len(t, s.admission.Capture.(*testAudit).requests, 1)
+			require.Zero(t, typeAdmissionCounterValue(t,
+				s.metrics.liveAppliedTotal.WithLabelValues(category), "live_applied_total"))
 			require.Equal(t, float64(1), typeAdmissionCounterValue(t,
-				s.metrics.gateRejectsTotal.WithLabelValues("policy_live_unavailable"), "gate_rejects_total"))
+				s.metrics.gateRejectsTotal.WithLabelValues("policy_rejected"), "gate_rejects_total"))
 		})
 	}
+}
+
+func TestTypeFallbackWorkflowFailureCannotReturnOrCountApplication(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.Enabled, cfg.EnableLive = true, true
+	var calls atomic.Int32
+	s := newStageWithServer(t, cfg, coreWorkflowForTypeStage(t), fakePrivacy{}, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		respondWith(w, "movie", .99)
+	})
+	got, err := s.Run(context.Background(), "policy_error", offlineTypeWorkflowFlags(), unknownTypeWorkflowTorrent())
+	require.Error(t, err)
+	require.NotErrorIs(t, err, classification.ErrUnmatched)
+	require.Equal(t, classification.Result{}, got)
+	require.EqualValues(t, 1, calls.Load())
+	require.Zero(t, typeAdmissionCounterValue(t,
+		s.metrics.liveAppliedTotal.WithLabelValues("movie"), "live_applied_total"))
+	require.Equal(t, float64(1), typeAdmissionCounterValue(t,
+		s.metrics.gateRejectsTotal.WithLabelValues("policy_rejected"), "gate_rejects_total"))
+}
+
+func TestRepeatedWorkflowTypeBoundaryAdmitsOnlyOnce(t *testing.T) {
+	for _, live := range []bool{false, true} {
+		t.Run(fmt.Sprintf("live=%v", live), func(t *testing.T) {
+			inner := coreWorkflowForTypeStage(t)
+			flags := offlineTypeWorkflowFlags()
+			tor := unknownTypeWorkflowTorrent()
+			baseline, err := inner.Run(context.Background(), "repeated_default", flags, tor)
+			require.NoError(t, err)
+			cfg := NewDefaultConfig()
+			cfg.Enabled, cfg.EnableLive = true, live
+			var calls atomic.Int32
+			s := newStageWithServer(t, cfg, inner, fakePrivacy{}, func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				respondWith(w, "movie", .99)
+			})
+			got, err := s.Run(context.Background(), "repeated_default", flags, tor)
+			require.NoError(t, err)
+			if live {
+				require.Equal(t, model.NewNullContentType(model.ContentTypeMovie), got.ContentType)
+			} else {
+				require.Equal(t, baseline, got)
+			}
+			require.Nil(t, got.Content)
+			require.NotContains(t, got.Tags, "llm-matched")
+			require.EqualValues(t, 1, calls.Load())
+			require.EqualValues(t, 1, s.admission.Budget.(*testBudget).used.Load())
+			audit := s.admission.Capture.(*testAudit)
+			require.Len(t, audit.requests, 1)
+			require.Len(t, audit.results, 1)
+			require.Len(t, audit.decisions, 1)
+		})
+	}
+}
+
+func TestWorkflowWithoutTypePolicyBoundaryRemainsShadowOnly(t *testing.T) {
+	for _, live := range []bool{false, true} {
+		t.Run(fmt.Sprintf("live=%v", live), func(t *testing.T) {
+			inner := coreWorkflowForTypeStage(t)
+			flags := offlineTypeWorkflowFlags()
+			tor := unknownTypeWorkflowTorrent()
+			baseline, err := inner.Run(context.Background(), "without_type_boundary", flags, tor)
+			require.NoError(t, err)
+			cfg := NewDefaultConfig()
+			cfg.Enabled, cfg.EnableLive = true, live
+			var calls atomic.Int32
+			s := newStageWithServer(t, cfg, inner, fakePrivacy{}, func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				respondWith(w, "movie", .99)
+			})
+			got, err := s.Run(context.Background(), "without_type_boundary", flags, tor)
+			require.NoError(t, err)
+			require.Equal(t, baseline, got)
+			if live {
+				require.Zero(t, calls.Load())
+				require.Zero(t, s.admission.Budget.(*testBudget).used.Load())
+				require.Empty(t, s.admission.Capture.(*testAudit).requests)
+				require.Equal(t, float64(1), typeAdmissionCounterValue(t,
+					s.metrics.gateRejectsTotal.WithLabelValues("policy_live_unavailable"), "gate_rejects_total"))
+			} else {
+				require.EqualValues(t, 1, calls.Load())
+			}
+		})
+	}
+}
+
+func TestLiveTypeAuditFailureKeepsTheDeterministicResult(t *testing.T) {
+	inner := coreWorkflowForTypeStage(t)
+	flags := offlineTypeWorkflowFlags()
+	tor := unknownTypeWorkflowTorrent()
+	baseline, err := inner.Run(context.Background(), "tagged_default", flags, tor)
+	require.NoError(t, err)
+	cfg := NewDefaultConfig()
+	cfg.Enabled, cfg.EnableLive = true, true
+	var calls atomic.Int32
+	s := newStageWithServer(t, cfg, inner, fakePrivacy{}, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		respondWith(w, "movie", .99)
+	})
+	s.admission.Capture.(*testAudit).decisionErr = errFake
+	got, err := s.Run(context.Background(), "tagged_default", flags, tor)
+	require.NoError(t, err)
+	require.Equal(t, baseline, got)
+	require.EqualValues(t, 1, calls.Load())
+	require.Zero(t, typeAdmissionCounterValue(t,
+		s.metrics.liveAppliedTotal.WithLabelValues("movie"), "live_applied_total"))
+}
+
+func TestCachedTypePredictionStillRunsCurrentExclusionPolicy(t *testing.T) {
+	inner := coreWorkflowForTypeStage(t)
+	flags := offlineTypeWorkflowFlags()
+	flags["delete_content_types"] = []any{}
+	cfg := NewDefaultConfig()
+	cfg.Enabled, cfg.EnableLive = true, true
+	var calls atomic.Int32
+	s := newStageWithServer(t, cfg, inner, fakePrivacy{}, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		respondWith(w, "music", .99)
+	})
+	tor := unknownTypeWorkflowTorrent()
+	got, err := s.Run(context.Background(), "default", flags, tor)
+	require.NoError(t, err)
+	require.Equal(t, model.NewNullContentType(model.ContentTypeMusic), got.ContentType)
+	flags["delete_content_types"] = []any{"music"}
+	got, err = s.Run(context.Background(), "default", flags, tor)
+	require.ErrorIs(t, err, classification.ErrDeleteTorrent)
+	require.Equal(t, classification.Result{}, got)
+	require.EqualValues(t, 1, calls.Load(), "policy rechecking cannot dispatch the model twice")
+	require.EqualValues(t, 1, s.admission.Budget.(*testBudget).used.Load())
+	require.Equal(t, float64(1), typeAdmissionCounterValue(t,
+		s.metrics.liveAppliedTotal.WithLabelValues("music"), "live_applied_total"))
+	require.Len(t, s.admission.Capture.(*testAudit).decisions, 2, "cached inference still requires a current audit check")
 }
 
 type typeWorkflowCanonicalStore struct{ label *evidence.CanonicalLabel }
@@ -167,7 +313,7 @@ func (s typeWorkflowCanonicalStore) CanonicalForInfoHash(context.Context, []byte
 }
 
 func TestDefaultWorkflowAuthoritativeOutcomesNeverReachTypeProvider(t *testing.T) {
-	for _, kind := range []string{"known_type", "attached_identity", "canonical_type", "canonical_movie", "delete_unknown", "runtime_error", "native_private", "runtime_disabled"} {
+	for _, kind := range []string{"known_type", "attached_identity", "canonical_type", "canonical_movie", "delete_unknown", "banned", "runtime_error", "native_private", "runtime_disabled"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx := context.Background()
 			inner := coreWorkflowForTypeStage(t)
@@ -194,6 +340,8 @@ func TestDefaultWorkflowAuthoritativeOutcomesNeverReachTypeProvider(t *testing.T
 				}, classifier.NewPreemptMetrics())
 			case "delete_unknown":
 				flags["delete_content_types"] = []any{"unknown"}
+			case "banned":
+				tor.Name = "Blocked preteen example.mkv"
 			case "runtime_error":
 				flags["apis_enabled"] = "not-a-boolean"
 			case "native_private":
@@ -203,7 +351,7 @@ func TestDefaultWorkflowAuthoritativeOutcomesNeverReachTypeProvider(t *testing.T
 			}
 			baseline, baselineErr := inner.Run(ctx, "default", flags, tor)
 			switch kind {
-			case "delete_unknown":
+			case "delete_unknown", "banned":
 				require.ErrorIs(t, baselineErr, classification.ErrDeleteTorrent)
 			case "runtime_error":
 				require.Error(t, baselineErr)
@@ -218,7 +366,7 @@ func TestDefaultWorkflowAuthoritativeOutcomesNeverReachTypeProvider(t *testing.T
 				require.NotNil(t, baseline.Content)
 			}
 			cfg := NewDefaultConfig()
-			cfg.Enabled = true
+			cfg.Enabled, cfg.EnableLive = true, true
 			var calls atomic.Int32
 			s := newStageWithServer(t, cfg, inner, fakePrivacy{}, func(w http.ResponseWriter, _ *http.Request) {
 				calls.Add(1)
