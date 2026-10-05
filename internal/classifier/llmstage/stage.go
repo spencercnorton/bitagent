@@ -451,6 +451,9 @@ func renderUserPrompt(promptVersion string, t model.Torrent) string {
 }
 
 func parseResponse(raw []byte) (Decision, error) {
+	if err := validateUniqueResponseJSON(raw); err != nil {
+		return Decision{}, fmt.Errorf("decode chat response: %w", err)
+	}
 	var outer chatResponse
 	if err := json.Unmarshal(raw, &outer); err != nil {
 		return Decision{}, fmt.Errorf("decode chat response: %w", err)
@@ -459,7 +462,20 @@ func parseResponse(raw []byte) (Decision, error) {
 		return Decision{}, errors.New("incomplete, refused or ambiguous chat response")
 	}
 	var ans llmAnswer
-	decoder := json.NewDecoder(strings.NewReader(outer.Choices[0].Message.Content))
+	content := []byte(outer.Choices[0].Message.Content)
+	if err := validateUniqueResponseJSON(content); err != nil {
+		return Decision{}, fmt.Errorf("decode llm answer: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(content, &fields); err != nil || fields == nil {
+		return Decision{}, errors.New("llm answer must be an object")
+	}
+	for field := range fields {
+		if field != "category" && field != "confidence" {
+			return Decision{}, errors.New("unknown llm answer field")
+		}
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(content)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&ans); err != nil {
 		return Decision{}, fmt.Errorf("decode llm answer: %w", err)
@@ -475,6 +491,12 @@ func parseResponse(raw []byte) (Decision, error) {
 		return Decision{}, errors.New("missing or out-of-range confidence")
 	}
 	return Decision{MediaType: mt, Confidence: *ans.Confidence}, nil
+}
+
+// EvaluationParseResponse applies the runtime's exact first-response parser.
+// It is pure: no provider, budget, capture, cache or classification mutation.
+func EvaluationParseResponse(raw []byte) (Decision, error) {
+	return parseResponse(raw)
 }
 
 func normalizeMediaType(s string) evidence.MediaType {
