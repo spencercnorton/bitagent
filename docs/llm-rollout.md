@@ -31,6 +31,16 @@ including reclassification and search visibility. The manual delete endpoint
 destroys the snapshot and blacklists the hash; keep that operator decision
 separate from model judgment.
 
+Restore preserves authentic source relationships and counts when retained in the
+snapshot. Older snapshots remain usable. A separate `quarantine_restore` source
+records the actual local restore time with unknown seed/leech counts and no
+publish date. Under the default Torznab freshness policy, an unknown restored
+item can resurface for seven days; authoritative tracker zero and liveness or
+ledger exclusions still apply. Rematch is queued in the same transaction as
+restoration, so an enqueue failure retains the snapshot for retry. Source
+snapshots added by migration 55 cannot be discarded by a database downgrade
+while retained recovery records use them.
+
 For candidate shortlisting, enable `CLASSIFIER_LLM_MATCH_ENABLED` and
 `CLASSIFIER_LLM_MATCH_ENABLE_LIVE`, then explicitly configure
 `CLASSIFIER_LLM_MATCH_EMBEDDINGS_ENABLED=true`, the `/embeddings` endpoint, model

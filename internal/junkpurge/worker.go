@@ -1254,9 +1254,12 @@ func quarantineJunkTx(
 }
 
 const quarantineUpsertSQL = `
-INSERT INTO junkpurge_quarantine (info_hash, torrent_name, verdict, confidence, torrent_snapshot, files_snapshot)
+INSERT INTO junkpurge_quarantine (info_hash, torrent_name, verdict, confidence, torrent_snapshot, files_snapshot, sources_snapshot)
 SELECT t.info_hash, t.name, j.verdict, j.confidence, to_jsonb(t),
-       (SELECT jsonb_agg(to_jsonb(f)) FROM torrent_files f WHERE f.info_hash = t.info_hash)
+       (SELECT jsonb_agg(to_jsonb(f)) FROM torrent_files f WHERE f.info_hash = t.info_hash),
+       COALESCE((SELECT jsonb_agg(to_jsonb(ts) || jsonb_build_object('source_metadata', to_jsonb(s)))
+        FROM torrents_torrent_sources ts JOIN torrent_sources s ON s.key = ts.source
+        WHERE ts.info_hash = t.info_hash), '[]'::jsonb)
 FROM torrents t
 JOIN junkpurge_judgments j ON j.info_hash = t.info_hash
 WHERE t.info_hash = ANY($1)
@@ -1270,6 +1273,7 @@ ON CONFLICT (info_hash) DO UPDATE SET
   confidence       = excluded.confidence,
   torrent_snapshot = excluded.torrent_snapshot,
   files_snapshot   = excluded.files_snapshot,
+  sources_snapshot = excluded.sources_snapshot,
   quarantined_at   = now(),
   expired_at       = NULL
 RETURNING info_hash`

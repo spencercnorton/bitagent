@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 	"time"
@@ -237,5 +238,57 @@ func TestFreshnessConfigFromTorznab_PassesFieldsThrough(t *testing.T) {
 	}
 	if cfg.IsZero() {
 		t.Fatalf("non-default config should not be IsZero")
+	}
+}
+
+func TestLocalQuarantineRestoreUsesBoundedUnknownFreshness(t *testing.T) {
+	a := makeAdapter(FreshnessConfig{
+		HideZeroSeeders: true, HideUnknownSeedersAgeDays: 7, AuthoritativeZeroOnly: true,
+	})
+	cutoff := fixedNow.AddDate(0, 0, -7)
+	for _, tc := range []struct {
+		name    string
+		stamp   time.Time
+		tracker bool
+		keep    bool
+	}{
+		{"actual recent restore", fixedNow, false, true},
+		{"just inside window", cutoff.Add(time.Nanosecond), false, true},
+		{"exact cutoff ages out", cutoff, false, false},
+		{"older restore ages out", cutoff.Add(-time.Nanosecond), false, false},
+		{"tracker zero still wins", fixedNow, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			local := model.TorrentsTorrentSource{Source: model.SourceKeyQuarantineRestore, CreatedAt: tc.stamp, UpdatedAt: tc.stamp}
+			item := makeItem(1, sourceWithSeeders("dht", 0, false, cutoff.Add(-time.Hour)), local)
+			if tc.tracker {
+				item.Torrent.Sources = append(item.Torrent.Sources, sourceWithSeeders(model.SourceKeyTracker, 0, true, cutoff.Add(-time.Hour)))
+			}
+			out := a.applyFreshnessFilter(search.TorrentContentResult{Items: []search.TorrentContentResultItem{item}})
+			if (len(out.Items) == 1) != tc.keep {
+				t.Fatalf("keep=%v: got %d items", tc.keep, len(out.Items))
+			}
+			if !tc.tracker && (item.Torrent.Seeders().Valid || item.Torrent.Leechers().Valid) {
+				t.Fatal("local restore must leave swarm counts unknown")
+			}
+		})
+	}
+}
+
+func TestLocalQuarantineRestoreDoesNotOverrideLivenessOrLedger(t *testing.T) {
+	a := makeAdapter(FreshnessConfig{HideUnknownSeedersAgeDays: 7, AuthoritativeZeroOnly: true})
+	a.liveness = fakeSet{set: map[string]struct{}{hexOf(1): {}}}
+	a = a.WithVerdicts(fakeSet{set: map[string]struct{}{hexOf(2): {}}}, true, nil)
+	local := model.TorrentsTorrentSource{Source: model.SourceKeyQuarantineRestore, UpdatedAt: fixedNow}
+	res := search.TorrentContentResult{Items: []search.TorrentContentResultItem{
+		makeItem(1, local), makeItem(2, local), makeItem(3, local),
+	}}
+	res, err := a.applyLivenessFilter(context.Background(), res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res = a.applyFreshnessFilter(res)
+	if len(res.Items) != 1 || res.Items[0].Torrent.InfoHash.String() != hexOf(3) {
+		t.Fatalf("restore provenance must not override either exclusion: %+v", res.Items)
 	}
 }

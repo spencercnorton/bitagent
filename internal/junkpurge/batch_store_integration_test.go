@@ -71,6 +71,17 @@ CREATE TABLE torrent_files (
   path text NOT NULL,
   size bigint NOT NULL
 );
+CREATE TABLE torrent_sources (
+  key text PRIMARY KEY,
+  name text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE torrents_torrent_sources (
+  source text NOT NULL REFERENCES torrent_sources(key),
+  info_hash bytea NOT NULL REFERENCES torrents(info_hash) ON DELETE CASCADE,
+  PRIMARY KEY (source, info_hash)
+);
 CREATE TABLE torrent_contents (
   info_hash bytea NOT NULL REFERENCES torrents(info_hash) ON DELETE CASCADE,
   content_type text,
@@ -100,6 +111,7 @@ CREATE TABLE junkpurge_quarantine (
   quarantined_at timestamptz NOT NULL DEFAULT now(),
   torrent_snapshot jsonb NOT NULL,
   files_snapshot jsonb,
+  sources_snapshot jsonb,
   expired_at timestamptz
 );`)
 	require.NoError(t, err)
