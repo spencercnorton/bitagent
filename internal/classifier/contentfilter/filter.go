@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"slices"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -295,6 +297,28 @@ func (f *Filter) Decide(in Input) Decision {
 // DecideAudited is the only production LLM path. Audit failures are returned
 // to the processor so the torrent is retried without an unobserved model call.
 func (f *Filter) DecideAudited(ctx context.Context, in Input, source AuditSource) (Decision, error) {
+	if llmwork.ExecutionFrom(ctx) == nil && f.work != nil && f.work.Enabled() {
+		if t, ok := llmwork.SourceTorrent(ctx); ok {
+			a, err := f.work.Preserve(ctx, llmwork.Language, t, f.WorkPolicy())
+			if err != nil {
+				return Decision{}, err
+			}
+			if a != nil {
+				current := make([]string, 0, len(a.Languages))
+				for lang := range a.Languages {
+					current = append(current, string(lang))
+				}
+				sort.Strings(current)
+				expected := append([]string{}, in.Languages...)
+				sort.Strings(expected)
+				if in.Title != t.Name || in.Private != t.Private || in.ContentType != a.ContentType.ContentType.String() || !slices.Equal(expected, current) {
+					return Decision{}, llmwork.ErrHeld
+				}
+				return Decision{Allow: true, WouldReview: true, Review: true, Reason: ReasonLLMNonEnglish}, nil
+			}
+		}
+	}
+
 	return f.decide(ctx, in, true /* allowLLM */, &source)
 }
 

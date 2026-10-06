@@ -53,6 +53,7 @@ func WrapWithLLMStage(
 	policy classifier.Config,
 	optional struct {
 		fx.In
+		Matcher  *llmmatch.Client           `optional:"true"`
 		Work     *llmwork.Store             `optional:"true"`
 		Dispatch llmcapture.DispatchControl `optional:"true"`
 	},
@@ -69,6 +70,7 @@ func WrapWithLLMStage(
 			Budget: llmmatch.NewPostgresTypeCallBudget(pool), Capture: capture, Dispatch: optional.Dispatch,
 		})
 		stage.SetWork(optional.Work, policy)
+		stage.SetMatcherWork(optional.Matcher)
 		return stage, nil
 	})
 }
