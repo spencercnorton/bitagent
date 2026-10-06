@@ -32,6 +32,7 @@ func TestQueueActivationRequiresAllStageAndDispatchContracts(t *testing.T) {
 	_, err = provideStore(p)
 	require.Error(t, err, "selected stages must already be explicitly enabled")
 	p.Type.Enabled = true
+	p.Type.APIKey = "synthetic-test-key"
 	p.Language.Enabled = true
 	p.Language.LLMEnabled = true
 	p.Language.LLMAction = contentfilter.LLMActionReview

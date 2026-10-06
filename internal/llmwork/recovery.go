@@ -4,38 +4,42 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// recoverExpired holds each expired source case while reconciling permanent
-// dispatch evidence. A new generation can resume only if every attempted
-// request is positively undispatched or has its retained first response.
-func (s *Store) recoverExpired(ctx context.Context, tx pgx.Tx) error {
-	rows, err := tx.Query(ctx, `SELECT task_key FROM llm_work_tasks
+// recoverExpired reconciles expired generations without holding a connection
+// during the controller's reads. A conditional update protects renewed or
+// concurrently recovered leases. A new generation can resume only when all
+// attempted requests are positively undispatched or have retained responses.
+func (s *Store) recoverExpired(ctx context.Context, pool *pgxpool.Pool) error {
+	rows, err := pool.Query(ctx, `SELECT task_key,lease_generation FROM llm_work_tasks
  WHERE state='leased' AND lease_until<=clock_timestamp()
- ORDER BY lease_until,task_key FOR UPDATE SKIP LOCKED LIMIT 64`)
+ ORDER BY lease_until,task_key LIMIT 64`)
 	if err != nil {
 		return err
 	}
-	var keys [][]byte
+	type expired struct {
+		key        []byte
+		generation int64
+	}
+	var keys []expired
 	for rows.Next() {
-		var key []byte
-		if err = rows.Scan(&key); err != nil {
+		var item expired
+		if err = rows.Scan(&item.key, &item.generation); err != nil {
 			rows.Close()
 			return err
 		}
-		keys = append(keys, key)
+		keys = append(keys, item)
 	}
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
 		return err
 	}
-	for _, key := range keys {
+	for _, item := range keys {
 		state, reason := "held", "expired_lease_needs_reconcile"
 		if s.dispatch != nil && s.dispatch.Enabled() {
-			attempts, err := s.dispatch.TaskRecovery(ctx, key)
+			attempts, err := s.dispatch.TaskRecovery(ctx, item.key)
 			if err != nil {
 				return fmt.Errorf("recover optional model dispatch: %w", err)
 			}
@@ -52,11 +56,9 @@ func (s *Store) recoverExpired(ctx context.Context, tx pgx.Tx) error {
 				reason = "unknown_dispatch_or_expired_response"
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE llm_work_tasks SET state=$2,reason=$3,lease_owner=NULL,lease_until=NULL,retry_after=transaction_timestamp()
- WHERE task_key=$1`, key, state, reason); err != nil {
-			return err
-		}
-		if _, err = tx.Exec(ctx, `INSERT INTO llm_work_events(task_key,state,reason)VALUES($1,$2,$3)`, key, state, reason); err != nil {
+		if _, err = pool.Exec(ctx, `WITH changed AS(UPDATE llm_work_tasks SET state=$2,reason=$3,lease_owner=NULL,lease_until=NULL,retry_after=transaction_timestamp()
+ WHERE task_key=$1 AND state='leased' AND lease_generation=$4 AND lease_until<=clock_timestamp() RETURNING task_key)
+ INSERT INTO llm_work_events(task_key,state,reason) SELECT task_key,$2,$3 FROM changed`, item.key, state, reason, item.generation); err != nil {
 			return err
 		}
 	}
@@ -93,7 +95,8 @@ func (s *Store) Cleanup(ctx context.Context) (int64, error) {
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
 	rows, err := tx.Query(ctx, `SELECT task_key FROM llm_work_tasks w WHERE state IN ('held','obsolete','expired','completed') AND expires_at<=clock_timestamp()
- AND (payload<>'{}'::jsonb OR EXISTS(SELECT 1 FROM llm_work_events e WHERE e.task_key=w.task_key))
+ AND (payload<>'{}'::jsonb OR EXISTS(SELECT 1 FROM llm_work_events e WHERE e.task_key=w.task_key)
+      OR NOT EXISTS(SELECT 1 FROM llm_work_applications a WHERE a.task_key=w.task_key))
  ORDER BY expires_at,task_key FOR UPDATE SKIP LOCKED LIMIT 128`)
 	if err != nil {
 		return 0, err

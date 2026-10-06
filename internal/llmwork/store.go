@@ -142,16 +142,20 @@ func (s *Store) Claim(ctx context.Context, owner string) (*Lease, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Reconciliation may use the same bounded pool. Do it before acquiring
+	// the claim transaction so a one-connection pool cannot deadlock.
+	if err = s.recoverExpired(ctx, pool); err != nil {
+		return nil, err
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
-	if err = s.recoverExpired(ctx, tx); err != nil {
-		return nil, err
-	}
-	if _, err = tx.Exec(ctx, `WITH changed AS(UPDATE llm_work_tasks SET state='expired',reason='task_age',lease_owner=NULL,lease_until=NULL
- WHERE state IN ('queued','deferred') AND expires_at<=now() RETURNING task_key)
+	if _, err = tx.Exec(ctx, `WITH aged AS(SELECT task_key FROM llm_work_tasks WHERE state IN ('queued','deferred') AND expires_at<=now()
+ ORDER BY expires_at,task_key FOR UPDATE SKIP LOCKED LIMIT 128),
+ changed AS(UPDATE llm_work_tasks SET state='expired',reason='task_age',lease_owner=NULL,lease_until=NULL
+ WHERE task_key IN(SELECT task_key FROM aged) RETURNING task_key)
  INSERT INTO llm_work_events(task_key,state,reason) SELECT task_key,'expired','task_age' FROM changed`); err != nil {
 		return nil, err
 	}
