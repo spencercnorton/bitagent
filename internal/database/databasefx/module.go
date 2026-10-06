@@ -1,6 +1,8 @@
 package databasefx
 
 import (
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spencercnorton/bitagent/internal/classifier"
 	"github.com/spencercnorton/bitagent/internal/config/configfx"
 	"github.com/spencercnorton/bitagent/internal/database"
 	"github.com/spencercnorton/bitagent/internal/database/cache"
@@ -10,6 +12,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/pgstats/pgstatsfx"
 	"github.com/spencercnorton/bitagent/internal/database/postgres"
 	"github.com/spencercnorton/bitagent/internal/database/search"
+	"github.com/spencercnorton/bitagent/internal/serving"
 	"go.uber.org/fx"
 )
 
@@ -18,7 +21,16 @@ func New() fx.Option {
 		"database",
 		configfx.NewConfigModule[postgres.Config]("postgres", postgres.NewDefaultConfig()),
 		configfx.NewConfigModule[cache.Config]("gorm_cache", cache.NewDefaultConfig()),
+		configfx.NewConfigModule[serving.Config]("serving", serving.Config{}),
 		fx.Provide(
+			serving.NewMetrics,
+			func(cfg serving.Config) (*serving.Policy, error) {
+				strong, media, err := classifier.CoreAdultServingEvidence()
+				if err != nil {
+					return nil, err
+				}
+				return serving.NewPolicy(cfg, strong, media)
+			},
 			cache.NewInMemoryCacher,
 			cache.NewPlugin,
 			dao.New,
@@ -28,6 +40,10 @@ func New() fx.Option {
 			postgres.New,
 			search.New,
 		),
+		fx.Provide(fx.Annotated{
+			Group:  "prometheus_collectors,flatten",
+			Target: func(m *serving.Metrics) []prometheus.Collector { return m.Collectors() },
+		}),
 		fx.Decorate(
 			cache.NewDecorator,
 		),

@@ -10,6 +10,18 @@
   source/policy identities, time-stratum capacity and owned worker leases.
   Provider dispatch fencing and targeted application are qualified separately
   before this worker can be enabled.
+- Add reversible adult-content exclusion for consumer APIs with
+  `SERVING_EXCLUDE_ADULT`. Known XXX, positive attached adult metadata and the
+  core classifier's vetted strong native evidence are excluded before search
+  pagination, grouping, counts and facets. Internal processing and recovery
+  retain the stored data; the option defaults off.
+- Prevent source-complete quarantines from reappearing in consumer searches
+  after recrawl, independently of the optional verdict-reader mode. Legacy
+  incomplete markers retain their review status; restoring an ordinary
+  quarantine restores visibility when its snapshot row is removed.
+- Keep concurrent item/count/facet criteria immutable and apply mandatory
+  base predicates inside grouped and CTE queries without replaying them against
+  the derived outer table.
 - Recognize explicit HEVC/H.265 and AV1 codec claims while preserving existing
   serialized codec values. Infer supported scene groups independently of codec
   recognition and retain unknown or contradictory metadata as unknown.

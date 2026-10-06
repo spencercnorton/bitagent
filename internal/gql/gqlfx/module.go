@@ -105,7 +105,7 @@ func New() fx.Option {
 
 type Params struct {
 	fx.In
-	Search               lazy.Lazy[search.Search]
+	Search               lazy.Lazy[search.ServingSearch]
 	Dao                  lazy.Lazy[*dao.Query]
 	Checker              lazy.Lazy[health.Checker]
 	QueueMetricsClient   lazy.Lazy[queuemetrics.Client]
