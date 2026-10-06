@@ -1290,8 +1290,7 @@ WHERE quarantined_at < now() - make_interval(days => $1) AND expired_at IS NULL`
 	// re-stamp the whole tombstone archive and re-emit a verdict event per row.
 	quarantineExpireTombstoneSQL = `
 UPDATE junkpurge_quarantine SET expired_at = now()
-WHERE quarantined_at < now() - make_interval(days => $1) AND expired_at IS NULL
-RETURNING info_hash`
+WHERE info_hash = ANY($1) AND expired_at IS NULL`
 )
 
 // logWouldExpire reports (without tombstoning) how many quarantine entries have
@@ -1326,7 +1325,8 @@ func (w *purgeWorker) logWouldExpire(ctx context.Context, pool *pgxpool.Pool) {
 // list while leaving RestoreQuarantined (store.go) able to rebuild the torrent
 // from snapshot indefinitely. The ledger verdict moves quarantined → tombstoned;
 // both are in verdicts.blockingVerdicts, so serving and BEP-9 exclusion are
-// unchanged. Best-effort; logs on error.
+// unchanged. Each bounded chunk commits its marker and configured ledger
+// together; failed chunks remain eligible and errors are logged.
 //
 // No second "really delete after N days" horizon. expired_at is the
 // marker one would key on if owner decision D4 elects to re-arm a destructive
@@ -1336,50 +1336,23 @@ func (w *purgeWorker) expireQuarantine(ctx context.Context, pool *pgxpool.Pool) 
 	if days <= 0 {
 		days = 30
 	}
-	rows, err := pool.Query(ctx, quarantineExpireTombstoneSQL, days)
-	if err != nil {
-		w.metrics.cycleErrorsTotal.WithLabelValues("expire").Inc()
-		w.logger.Warnw("junkpurge expire tombstone", "err", err)
-		return
-	}
-	var expired [][]byte
-	scanFailed := false
-	for rows.Next() {
-		var h []byte
-		if scanErr := rows.Scan(&h); scanErr != nil {
-			w.logger.Warnw("junkpurge expire scan", "err", scanErr)
-			scanFailed = true
+	expired := 0
+	for expired < quarantineExpiryCycleLimit {
+		limit := min(quarantineExpiryChunkSize, quarantineExpiryCycleLimit-expired)
+		n, err := expireQuarantineChunk(ctx, pool, days, limit, w.verdicts != nil)
+		if err != nil {
+			w.metrics.cycleErrorsTotal.WithLabelValues("expire").Inc()
+			w.logger.Warnw("junkpurge expire tombstone", "err", err)
 			break
 		}
-		expired = append(expired, h)
-	}
-	rows.Close()
-	// pgx defers execution errors to rows.Err(): a nil pool.Query error does
-	// NOT mean the UPDATE ran. Without this check a failed expiry is silent
-	// (review-demonstrated). A scan break is also partial: the UPDATE already
-	// stamped ALL matching rows server-side, so unscanned hashes get no verdict
-	// event — count it as an error. Unlike the previous destructive form this is
-	// now fully self-healing: the rows are still there and still restorable.
-	if rowsErr := rows.Err(); rowsErr != nil || scanFailed {
-		w.metrics.cycleErrorsTotal.WithLabelValues("expire").Inc()
-		if rowsErr != nil {
-			w.logger.Warnw("junkpurge expire tombstone", "err", rowsErr)
+		expired += n
+		if n < limit {
+			break
 		}
 	}
-	if w.verdicts != nil {
-		for _, h := range expired {
-			if verr := w.verdicts.Record(ctx, verdicts.Event{
-				InfoHash: h, Verdict: verdicts.VerdictTombstoned,
-				Mechanism: verdicts.MechanismJunkpurge,
-				Reason:    "quarantine review window lapsed; tombstoned, snapshot retained and restorable",
-			}); verr != nil {
-				w.logger.Warnw("junkpurge verdict record", "err", verr)
-			}
-		}
-	}
-	if n := len(expired); n > 0 {
-		w.metrics.expiredTotal.Add(float64(n))
+	if expired > 0 {
+		w.metrics.expiredTotal.Add(float64(expired))
 		w.logger.Infow("junkpurge expired — tombstoned, snapshot retained",
-			"count", n, "window_days", days)
+			"count", expired, "window_days", days)
 	}
 }
