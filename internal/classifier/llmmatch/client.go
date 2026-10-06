@@ -207,10 +207,38 @@ func (c *Client) Allow(ctx context.Context, t model.Torrent) bool {
 	return true
 }
 
-// extractKey is the cache key for a stage-1 decision. ExtractMany must write
-// under exactly this key so a later Extract for the same name is a pure hit.
-func (c *Client) extractKey(name string) string {
-	return "extract|" + string(c.cfg.ChatBackend.Effective()) + "|" + c.cfg.Model + "|" + c.cfg.PromptVersion + "|" + strings.ToLower(name)
+// extractKey binds a stage-1 decision to the exact rendered request and route.
+// Grouped extraction has its own cache contract and cannot warm this key.
+func (c *Client) extractKey(t model.Torrent) string {
+	return c.extractionRequestKey("extract", "llmmatch-chat-extract-v1", c.newChatRequest(
+		ExtractPrompt(), ExtractInput(t.Name, extractionModelFiles(t)), 120,
+	))
+}
+
+func (c *Client) extractionRequestKey(namespace, contract string, req chatRequest) string {
+	request, _ := json.Marshal(req)
+	keyContext, _ := json.Marshal(struct {
+		Request       json.RawMessage `json:"request"`
+		Endpoint      string          `json:"endpoint"`
+		PromptVersion string          `json:"prompt_version"`
+		ContractID    string          `json:"contract_id"`
+	}{request, c.cfg.Endpoint, c.cfg.PromptVersion, matcherContractID(c.cfg, contract)})
+	digest := sha256.Sum256(keyContext)
+	return namespace + "|" + hex.EncodeToString(digest[:])
+}
+
+// extractionModelFiles is the file evidence actually sent by ExtractInput.
+// Larger file lists are omitted rather than sampled, preserving the deployed
+// request contract and avoiding cache misses for evidence the model never saw.
+func extractionModelFiles(t model.Torrent) []string {
+	files := make([]string, 0, min(len(t.Files), 5))
+	if len(t.Files) > 5 {
+		return files
+	}
+	for _, file := range t.Files {
+		files = append(files, file.Path)
+	}
+	return files
 }
 
 // Extract is stage 1: read the canonical identity from the release name.
@@ -218,7 +246,7 @@ func (c *Client) Extract(ctx context.Context, t model.Torrent) (Extraction, erro
 	if c.nativePrivateBlocked(t) {
 		return Extraction{}, nil
 	}
-	key := c.extractKey(t.Name)
+	key := c.extractKey(t)
 	if v, ok := c.cache.Get(key); ok {
 		c.metrics.cacheHits.Inc()
 		return v.(Extraction), nil
@@ -473,15 +501,8 @@ const rerankSystemPrompt = `You match a torrent to the correct TMDB entry. You a
 
 func (c *Client) callExtract(ctx context.Context, t model.Torrent) (Extraction, error) {
 	ctx = withPendingCapture(ctx)
-	files := make([]string, 0, len(t.Files))
-	for _, file := range t.Files {
-		files = append(files, file.Path)
-	}
-	modelFiles := files
-	if len(modelFiles) > 5 {
-		modelFiles = []string{}
-	}
-	user := ExtractInput(t.Name, files)
+	modelFiles := extractionModelFiles(t)
+	user := ExtractInput(t.Name, modelFiles)
 	if err := c.captureRequest(
 		ctx,
 		t,

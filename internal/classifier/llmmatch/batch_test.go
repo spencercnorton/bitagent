@@ -54,11 +54,10 @@ func TestExtractMany_SingleBatchCall(t *testing.T) {
 	assert.Equal(t, 1, st.Batches)
 	assert.Zero(t, st.Empty+st.Failed+st.Singles+st.Cached)
 
-	// The whole point: a subsequent Extract is a pure cache hit.
-	ext, err := c.Extract(context.Background(), ts[3])
-	require.NoError(t, err)
-	assert.Equal(t, "Some Movie 3", ext.Title)
-	assert.True(t, ext.OK)
+	// Exact repeat groups reuse only their own contract.
+	repeated := c.ExtractMany(context.Background(), ts, 8)
+	assert.Equal(t, 8, repeated.Cached)
+	assert.Zero(t, repeated.Batches+repeated.Singles)
 	assert.Equal(t, 1, int(atomic.LoadInt32(calls)))
 }
 
