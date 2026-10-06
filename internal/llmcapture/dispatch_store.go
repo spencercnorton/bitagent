@@ -208,7 +208,8 @@ WHERE llm_capture_dispatch_attempts.response_sha256 IS NULL OR llm_capture_dispa
 		}
 		_, err = tx.Exec(ctx, `INSERT INTO llm_capture_dispatch_attempts(capture_key,task,candidate_source,task_key,state,reason)
 VALUES ($1,$2,$3,$4,'unknown','legacy_or_uncertain_dispatch')
-ON CONFLICT(capture_key) DO UPDATE SET state='unknown',reason='uncertain_or_expired_result',updated_at=clock_timestamp()`,
+ON CONFLICT(capture_key) DO UPDATE SET state='unknown',reason='uncertain_or_expired_result',
+ task_key=COALESCE(llm_capture_dispatch_attempts.task_key,EXCLUDED.task_key),updated_at=clock_timestamp()`,
 			req.CaptureKey, string(req.Task), string(req.CandidateSource), taskKey)
 		if err == nil {
 			err = tx.Commit(ctx)
