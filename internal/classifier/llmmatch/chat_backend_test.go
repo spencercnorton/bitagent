@@ -116,7 +116,7 @@ func TestOllamaBatchAndSingleExtractionCachesBindBackend(t *testing.T) {
 	require.Equal(t, 1, stats.Batches)
 	_, err := c.Extract(context.Background(), torrent)
 	require.NoError(t, err)
-	require.Len(t, dispatched, 1, "ExtractMany and Extract share the same dialect key")
+	require.Len(t, dispatched, 2, "a group result cannot warm the single request contract")
 	var batch map[string]any
 	require.NoError(t, json.Unmarshal(dispatched[0], &batch))
 	require.EqualValues(t, 1140, batch["max_tokens"])
@@ -125,8 +125,8 @@ func TestOllamaBatchAndSingleExtractionCachesBindBackend(t *testing.T) {
 	c.cfg.ChatBackend = llmprovider.ChatBackendOpenAI
 	_, err = c.Extract(context.Background(), torrent)
 	require.NoError(t, err)
-	require.Len(t, dispatched, 2, "different dialect cannot reuse batch extraction")
-	require.Contains(t, string(dispatched[1]), `"max_completion_tokens":120`)
+	require.Len(t, dispatched, 3, "a different dialect cannot reuse the single request contract")
+	require.Contains(t, string(dispatched[2]), `"max_completion_tokens":120`)
 }
 
 func TestOllamaRerankCacheBindsBackend(t *testing.T) {

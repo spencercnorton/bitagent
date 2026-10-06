@@ -5,9 +5,9 @@
 // right shape for the live crawl but not for a multi-million-row backfill:
 // one stage-1 call per torrent is a non-starter on a local model. This
 // command pages unmatched torrent_contents, pre-warms the matcher's stage-1
-// cache with BATCHED extract prompts (25-50 names per call), then submits the
-// page to the standard classifier pass — which gets pure cache hits on
-// extract and otherwise behaves exactly like a normal reprocess (deterministic
+// cache with exact single-item requests, then submits the page to the standard
+// classifier pass — which gets compatible cache hits on extract and otherwise
+// behaves exactly like a normal reprocess (deterministic
 // steps first, LLM rerank as fallback, shadow/live semantics from the
 // classifier_llm_match config). No persistence logic is duplicated.
 //
@@ -56,7 +56,7 @@ type Result struct {
 func New(p Params) (Result, error) {
 	return Result{Command: &cli.Command{
 		Name: "batch-llm-match",
-		Usage: "Run the LLM TMDB matcher over the unmatched movie/tv backlog with batched extract prompts " +
+		Usage: "Run the LLM TMDB matcher over the unmatched movie/tv backlog with exact extraction requests " +
 			"(requires CLASSIFIER_LLM_MATCH_ENABLED=true in this process's env; do not run alongside refresh-alt-titles)",
 		Flags: []cli.Flag{
 			&cli.IntFlag{
@@ -67,7 +67,7 @@ func New(p Params) (Result, error) {
 			&cli.IntFlag{
 				Name:  "llmBatchSize",
 				Value: 32,
-				Usage: "release names per batched extract prompt (25-50 is sensible)",
+				Usage: "extract chunk size; grouped sizes (8+) require evaluation capture, which uses exact single-item requests",
 			},
 			&cli.UintFlag{
 				Name:  "limit",
@@ -93,6 +93,9 @@ type runStats struct {
 }
 
 func (p Params) action(ctx *cli.Context) error {
+	if err := p.LLMMatch.ValidateBacklogExtraction(ctx.Int("llmBatchSize")); err != nil {
+		return err
+	}
 	d, err := p.Dao.Get()
 	if err != nil {
 		return err

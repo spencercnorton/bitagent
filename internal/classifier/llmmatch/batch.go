@@ -13,9 +13,9 @@ import (
 // The batch extract path exists for backfill/reprocess runs over the unmatched
 // backlog: one-call-per-torrent doesn't scale to millions of names on a local
 // model, but the stage-1 prompt batches naturally (N names in, N extractions
-// out). Results are written to the SAME cache under the SAME keys the
-// single-name Extract uses, so a classifier pass immediately after ExtractMany
-// gets pure cache hits and the live-crawl code path stays untouched.
+// out). Grouped responses are reusable only for the exact same group request.
+// They cannot warm ordinary Extract: its system/input/output contract differs,
+// even when a group's individual name also appears in a single-item request.
 const batchExtractSystemPrompt = `You extract the canonical media identity from EACH torrent release name in a numbered list. Output ONLY compact JSON: {"items":[{"id":int,"title":string,"year":int,"type":"movie"|"tv","season":int,"episode":int,"is_anime":bool,"english":"dub"|"sub"|"none"|"unknown","is_pack":bool,"is_adult":bool}]} with exactly one item per input line, echoing that line's id unchanged. Never skip, merge, or invent ids. If you do not recognise a title for a line, still emit its item with title "".
 
 ` + extractRules
@@ -23,6 +23,16 @@ const batchExtractSystemPrompt = `You extract the canonical media identity from 
 // minBatchSplit: a failing batch is split in half (isolating a poison item)
 // until it is smaller than this, then falls back to per-name Extract calls.
 const minBatchSplit = 8
+
+// ValidateBacklogExtraction rejects grouped warming for a workflow that later
+// consumes the distinct single-item contract. Capture mode already sends
+// singles; otherwise the operator must select a single-request batch size.
+func (c *Client) ValidateBacklogExtraction(batchSize int) error {
+	if batchSize < minBatchSplit || (c.capture != nil && c.capture.Enabled()) {
+		return nil
+	}
+	return fmt.Errorf("grouped extraction cannot warm single-item workflow requests; set llmBatchSize below %d or enable evaluation capture", minBatchSplit)
+}
 
 // Batch calls scale the completion budget and request deadline with size — a
 // 40-name batch legitimately needs longer than the single-call Timeout at
@@ -57,8 +67,9 @@ func (s *BatchStats) Add(o BatchStats) {
 	s.Singles += o.Singles
 }
 
-// ExtractMany warms the stage-1 cache for the given torrents using batched
-// prompts. Names already cached (or repeated in the input) are skipped. The
+// ExtractMany evaluates the given torrents using grouped or single prompts.
+// Genuine single decisions and identical group requests are reused within
+// their own contracts. Duplicate exact single inputs are skipped. The
 // caller remains responsible for the broader Allow gate, but the native
 // private flag is enforced again here so no caller can batch a private name to
 // the endpoint when evidence is absent or stale.
@@ -75,7 +86,7 @@ func (c *Client) ExtractMany(ctx context.Context, torrents []model.Torrent, batc
 			st.Gated++
 			continue
 		}
-		key := c.extractKey(t.Name)
+		key := c.extractKey(t)
 		if _, dup := seen[key]; dup {
 			st.Cached++
 			continue
@@ -107,13 +118,36 @@ func (c *Client) extractChunk(ctx context.Context, chunk []model.Torrent, st *Ba
 		c.extractSingles(ctx, chunk, st)
 		return
 	}
+	// Grouped extraction renders names only. Do not cache that poorer evidence
+	// under a single-item request that also renders files (including subtitles).
+	var namesOnly, withFiles []model.Torrent
+	for _, t := range chunk {
+		if len(extractionModelFiles(t)) > 0 {
+			withFiles = append(withFiles, t)
+		} else {
+			namesOnly = append(namesOnly, t)
+		}
+	}
+	if len(withFiles) > 0 {
+		c.extractSingles(ctx, withFiles, st)
+		c.extractChunk(ctx, namesOnly, st)
+		return
+	}
 	if len(chunk) < minBatchSplit {
 		c.extractSingles(ctx, chunk, st)
 		return
 	}
 
-	st.Batches++
-	got, err := c.callBatchExtract(ctx, chunk)
+	key := c.batchExtractKey(chunk)
+	var got map[int]Extraction
+	cached := false
+	var err error
+	if value, ok := c.cache.Get(key); ok {
+		got, cached = value.(map[int]Extraction), true
+	} else {
+		st.Batches++
+		got, err = c.callBatchExtract(ctx, chunk)
+	}
 	if err != nil {
 		// Whole call failed (timeout, HTTP error, undecodable JSON): split in
 		// half and retry each side — halving isolates a poison name; sides
@@ -123,6 +157,9 @@ func (c *Client) extractChunk(ctx context.Context, chunk []model.Torrent, st *Ba
 		c.extractChunk(ctx, chunk[:mid], st)
 		c.extractChunk(ctx, chunk[mid:], st)
 		return
+	}
+	if !cached {
+		c.cache.Put(key, got)
 	}
 
 	// Count-match guardrail: rows the model dropped (sent 40, got 38 — the
@@ -135,7 +172,11 @@ func (c *Client) extractChunk(ctx context.Context, chunk []model.Torrent, st *Ba
 			missing = append(missing, t)
 			continue
 		}
-		c.storeExtraction(t.Name, ext, st)
+		if cached {
+			st.Cached++
+		} else {
+			c.recordBatchExtraction(ext, st)
+		}
 	}
 	if len(missing) > 0 {
 		c.logger.Warnw("batch extract dropped rows; retrying as singles",
@@ -163,7 +204,7 @@ func (c *Client) extractSingles(ctx context.Context, torrents []model.Torrent, s
 	}
 }
 
-func (c *Client) storeExtraction(name string, ext Extraction, st *BatchStats) {
+func (c *Client) recordBatchExtraction(ext Extraction, st *BatchStats) {
 	normalizeExtraction(&ext)
 	if ext.OK {
 		c.metrics.extractTotal.WithLabelValues("ok").Inc()
@@ -172,7 +213,21 @@ func (c *Client) storeExtraction(name string, ext Extraction, st *BatchStats) {
 		c.metrics.extractTotal.WithLabelValues("empty").Inc()
 		st.Empty++
 	}
-	c.cache.Put(c.extractKey(name), ext)
+}
+
+func batchExtractInput(chunk []model.Torrent) string {
+	var sb strings.Builder
+	sb.WriteString("release_names:\n")
+	for i, t := range chunk {
+		fmt.Fprintf(&sb, "%d) %s\n", i+1, t.Name)
+	}
+	return sb.String()
+}
+
+func (c *Client) batchExtractKey(chunk []model.Torrent) string {
+	maxTokens := batchBaseMaxTokens + batchPerItemMaxTokens*len(chunk)
+	return c.extractionRequestKey("batch_extract", "llmmatch-chat-batch-extract-v1",
+		c.newChatRequest(batchExtractSystemPrompt, batchExtractInput(chunk), maxTokens))
 }
 
 // callBatchExtract issues one batched stage-1 prompt and returns extractions
@@ -180,16 +235,10 @@ func (c *Client) storeExtraction(name string, ext Extraction, st *BatchStats) {
 // repeated known id is dropped so an ambiguous answer cannot choose which
 // title to attach; the caller retries those missing lines as single requests.
 func (c *Client) callBatchExtract(ctx context.Context, chunk []model.Torrent) (map[int]Extraction, error) {
-	var sb strings.Builder
-	sb.WriteString("release_names:\n")
-	for i, t := range chunk {
-		fmt.Fprintf(&sb, "%d) %s\n", i+1, t.Name)
-	}
-
 	cctx, cancel := context.WithTimeout(ctx, c.cfg.Timeout+time.Duration(len(chunk))*batchPerItemTimeout)
 	defer cancel()
 	maxTokens := batchBaseMaxTokens + batchPerItemMaxTokens*len(chunk)
-	raw, err := c.callWith(cctx, c.httpLong, "batch_extract", batchExtractSystemPrompt, sb.String(), maxTokens)
+	raw, err := c.callWith(cctx, c.httpLong, "batch_extract", batchExtractSystemPrompt, batchExtractInput(chunk), maxTokens)
 	if err != nil {
 		return nil, err
 	}

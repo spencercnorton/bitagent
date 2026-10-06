@@ -5,6 +5,12 @@
 - Parse explicit `WEB-DL`, `WEB.DL` and `WEBDL` source tokens consistently,
   preferring compound source aliases before their shorter prefixes.
 
+- Bind matcher extraction cache entries to rendered file evidence and request
+  routing. Group responses have a separate exact-request cache and cannot warm
+  single extraction. Backlog matching refuses grouped warming when evaluation
+  capture is disabled; select a single-request chunk explicitly instead. Safe
+  grouped workflow consumption requires a separate provenance-aware path.
+
 - Preserve authentic torrent source metadata in quarantine snapshots and restore
   it without overwriting newer observations. Legacy snapshots remain usable.
 - Record explicit restores as local provenance with unknown swarm counts, so
