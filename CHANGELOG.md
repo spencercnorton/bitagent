@@ -4,6 +4,9 @@
 
 - Parse explicit `WEB-DL`, `WEB.DL` and `WEBDL` source tokens consistently,
   preferring compound source aliases before their shorter prefixes.
+- Parse release attributes and resolve unique local identities after a new
+  movie/TV type fallback, within the existing content policy. The continuation
+  runs once and makes no additional model or metadata API request.
 
 - Preserve authentic torrent source metadata in quarantine snapshots and restore
   it without overwriting newer observations. Legacy snapshots remain usable.

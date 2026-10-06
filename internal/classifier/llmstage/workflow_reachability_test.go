@@ -12,6 +12,7 @@ import (
 
 	"github.com/spencercnorton/bitagent/internal/classifier"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/database/query"
 	"github.com/spencercnorton/bitagent/internal/database/search"
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/lazy"
@@ -25,7 +26,7 @@ import (
 // top-level ErrUnmatched. Loading the core source explicitly also avoids the
 // factory's ambient XDG/CWD operator overrides. Offline flags below ensure the
 // nil search/TMDB dependencies cannot be used by these fixtures.
-func coreWorkflowForTypeStage(t *testing.T) classifier.Runner {
+func coreWorkflowForTypeStage(t *testing.T, backends ...search.Search) classifier.Runner {
 	t.Helper()
 	raw, err := os.ReadFile("../classifier.core.yml")
 	require.NoError(t, err)
@@ -55,9 +56,13 @@ func coreWorkflowForTypeStage(t *testing.T) classifier.Runner {
 	source.Workflows["without_type_boundary"] = []any{
 		map[string]any{"add_tag": "retained-workflow-tag"},
 	}
+	var backend search.Search
+	if len(backends) > 0 {
+		backend = backends[0]
+	}
 	factory := classifier.New(classifier.Params{
 		Config:     classifier.NewDefaultConfig(),
-		Search:     lazy.New(func() (search.Search, error) { return nil, nil }),
+		Search:     lazy.New(func() (search.Search, error) { return backend, nil }),
 		TmdbClient: lazy.New(func() (tmdb.Client, error) { return nil, nil }),
 	})
 	compiler, err := factory.Compiler.Get()
@@ -65,6 +70,65 @@ func coreWorkflowForTypeStage(t *testing.T) classifier.Runner {
 	runner, err := compiler.Compile(source)
 	require.NoError(t, err)
 	return runner
+}
+
+type typeLocalWorkflowSearch struct {
+	search.Search
+	content model.Content
+	calls   atomic.Int32
+}
+
+func (s *typeLocalWorkflowSearch) Content(ctx context.Context, _ ...query.Option) (search.ContentResult, error) {
+	s.calls.Add(1)
+	return search.ContentResult{Items: []search.ContentResultItem{{Content: s.content}}}, nil
+}
+
+func TestDefaultWorkflowLocalTypeEnrichmentKeepsOneAuditedPrediction(t *testing.T) {
+	for _, category := range []string{"movie", "tv"} {
+		t.Run(category, func(t *testing.T) {
+			ct := model.ContentTypeMovie
+			name := "Amber.Signal.2025.1080p.BluRay.x265-GROUP.mkv"
+			if category == "tv" {
+				ct = model.ContentTypeTvShow
+				name = "Amber.Signal.S02E04.1080p.BluRay.x265-GROUP.mkv"
+			}
+			local := &typeLocalWorkflowSearch{content: model.Content{
+				Type: ct, Source: "tmdb", ID: "42", Title: "Amber Signal", ReleaseYear: 2025,
+			}}
+			cfg := NewDefaultConfig()
+			cfg.Enabled, cfg.EnableLive = true, true
+			cfg.LiveAllowedTypes = []string{"movie", "tv"}
+			var calls atomic.Int32
+			s := newStageWithServer(t, cfg, coreWorkflowForTypeStage(t, local), fakePrivacy{}, func(w http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				respondWith(w, category, .99)
+			})
+			tor := baseTorrent()
+			tor.Name, tor.Size, tor.Files = name, 70*1024*1024, nil
+			tor.FilesStatus = model.FilesStatusSingle
+			flags := offlineTypeWorkflowFlags()
+			flags["local_search_enabled"] = true
+			got, err := s.Run(context.Background(), "default", flags, tor)
+			require.NoError(t, err)
+			require.NotNil(t, got.Content)
+			require.Equal(t, "42", got.Content.ID)
+			require.True(t, got.VideoResolution.Valid)
+			require.True(t, got.VideoSource.Valid)
+			require.True(t, got.VideoCodec.Valid)
+			require.Contains(t, got.Tags, "type-local-enriched")
+			require.NotContains(t, got.Tags, "llm-matched")
+			require.EqualValues(t, 1, calls.Load())
+			require.EqualValues(t, 1, s.admission.Budget.(*testBudget).used.Load())
+			audit := s.admission.Capture.(*testAudit)
+			require.Len(t, audit.requests, 1)
+			require.Len(t, audit.results, 1)
+			require.Len(t, audit.decisions, 1)
+			require.Equal(t, "classified", audit.decisions[0].Outcome)
+			require.Equal(t, category, audit.decisions[0].Category)
+			require.True(t, audit.decisions[0].WouldApply)
+			require.True(t, audit.decisions[0].Live)
+		})
+	}
 }
 
 func offlineTypeWorkflowFlags() classifier.Flags {

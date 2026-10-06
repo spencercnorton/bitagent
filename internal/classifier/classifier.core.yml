@@ -188,6 +188,10 @@ workflows:
     # catalogue attachment or llm-matched tag is created by a type prediction.
     - type_fallback
     - run_workflow: [content_type_policy]
+    # Enrich only a new movie/TV type supplied by the callback. This action
+    # parses source attributes and checks the local mirror without remote calls.
+    - enrich_type_fallback
+    - run_workflow: [content_type_policy]
   content_type_policy:
     # delete specific content types based on the configured flags:
     - if_else:
