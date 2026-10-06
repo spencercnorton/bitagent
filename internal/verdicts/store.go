@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 )
@@ -66,10 +67,6 @@ func (s *Store) Record(ctx context.Context, ev Event) error {
 	if len(ev.InfoHash) == 0 || ev.Verdict == "" || ev.Mechanism == "" {
 		return fmt.Errorf("verdicts: incomplete event")
 	}
-	actor := ev.Actor
-	if actor == "" {
-		actor = "system"
-	}
 	pool, err := s.pool.Get()
 	if err != nil {
 		return fmt.Errorf("verdicts: acquire pool: %w", err)
@@ -79,6 +76,23 @@ func (s *Store) Record(ctx context.Context, ev Event) error {
 		return fmt.Errorf("verdicts: begin: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	if err := RecordTx(ctx, tx, ev); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// RecordTx writes an event and its derived state in the caller's transaction.
+// A mechanism that changes durable state can use this to commit its transition
+// and the ledger together. The caller must roll back on any returned error.
+func RecordTx(ctx context.Context, tx pgx.Tx, ev Event) error {
+	if len(ev.InfoHash) == 0 || ev.Verdict == "" || ev.Mechanism == "" {
+		return fmt.Errorf("verdicts: incomplete event")
+	}
+	actor := ev.Actor
+	if actor == "" {
+		actor = "system"
+	}
 
 	// State FIRST: the upsert takes the per-hash row lock, serializing
 	// concurrent Records so event ids per hash match state-write order —
@@ -102,7 +116,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		ev.InfoHash, ev.Verdict, ev.Mechanism, ev.Reason, ev.Evidence, actor, ev.ExpiresAt); err != nil {
 		return fmt.Errorf("verdicts: event insert: %w", err)
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 // blockingVerdicts are the states that exclude a hash from serving and from
