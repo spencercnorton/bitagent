@@ -157,11 +157,72 @@ func TestUniqueTypeLocalIdentityUsesOnlyExactSourceEvidence(t *testing.T) {
 		})
 	}
 	alias := content
-	alias.Title = "The Amber Signal"
+	alias.Title = "Amber Beacon"
 	alias.OriginalTitle = model.NewNullString("Amber Signal")
 	_, ok := uniqueTypeLocalContent(cl, []model.Content{alias, alias}, false)
 	require.True(t, ok, "duplicate rows of one identity are not different works")
 	cl.Date.Year = 0
 	_, ok = uniqueTypeLocalContent(cl, []model.Content{content}, true)
 	require.False(t, ok, "yearless movie cannot borrow a remake identity")
+}
+
+func TestTypeFallbackLocalContinuationHonorsLocalSearchFlagAndRunScope(t *testing.T) {
+	content := model.Content{Type: model.ContentTypeMovie, Source: "tmdb", ID: "42", Title: "Amber Signal", ReleaseYear: 2025}
+	local := &typeEnrichmentSearch{candidates: []model.Content{content}}
+	r := typeEnrichmentRunner(t, local)
+	var calls int
+	ctx := WithTypeFallback(context.Background(), func(_ context.Context, cl classification.Result) (classification.Result, error) {
+		calls++
+		cl.ContentType = model.NewNullContentType(model.ContentTypeMovie)
+		return cl, nil
+	})
+	tor := typeEnrichmentTorrent("Amber.Signal.2025.1080p.BluRay.x265-GROUP.mkv")
+	flags := typeEnrichmentFlags()
+	flags["local_search_enabled"] = false
+	got, err := r.Run(ctx, "default", flags, tor)
+	require.NoError(t, err)
+	require.True(t, got.VideoResolution.Valid, "source attributes are available without identity lookup")
+	require.Nil(t, got.Content)
+	require.Zero(t, local.calls)
+	flags["local_search_enabled"] = true
+	for range 2 {
+		got, err = r.Run(ctx, "default", flags, tor)
+		require.NoError(t, err)
+		require.Equal(t, &content, got.Content)
+	}
+	require.Equal(t, 3, calls, "each Run owns its independent continuation state")
+	require.Equal(t, 2, local.calls)
+}
+
+func TestTypeFallbackLocalContinuationLeavesExistingTypesAndNonVideoPredictionsAlone(t *testing.T) {
+	for _, ct := range []model.ContentType{model.ContentTypeMovie, model.ContentTypeMusic} {
+		t.Run(ct.String(), func(t *testing.T) {
+			local := &typeEnrichmentSearch{}
+			r := typeEnrichmentRunner(t, local)
+			var calls int
+			ctx := WithTypeFallback(context.Background(), func(_ context.Context, cl classification.Result) (classification.Result, error) {
+				calls++
+				cl.ContentType = model.NewNullContentType(ct)
+				return cl, nil
+			})
+			tor := typeEnrichmentTorrent("Amber.Signal.2025.1080p.mkv")
+			flags := typeEnrichmentFlags()
+			flags["local_search_enabled"] = false
+			if ct == model.ContentTypeMovie {
+				tor.Hint.ContentType = ct
+			}
+			got, err := r.Run(ctx, "default", flags, tor)
+			require.NoError(t, err)
+			require.Equal(t, model.NewNullContentType(ct), got.ContentType)
+			require.Nil(t, got.Content)
+			require.Zero(t, local.calls)
+			require.NotContains(t, got.Tags, typeLocalEnrichedTagName)
+			if ct == model.ContentTypeMovie {
+				require.Zero(t, calls)
+			} else {
+				require.Equal(t, 1, calls)
+				require.False(t, got.VideoResolution.Valid)
+			}
+		})
+	}
 }
