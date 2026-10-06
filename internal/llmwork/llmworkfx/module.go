@@ -11,18 +11,47 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
 	"github.com/spencercnorton/bitagent/internal/classifier/llmstage"
 	"github.com/spencercnorton/bitagent/internal/config/configfx"
+	"github.com/spencercnorton/bitagent/internal/database/search"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
+	"github.com/spencercnorton/bitagent/internal/processor"
+	"github.com/spencercnorton/bitagent/internal/worker"
 	"go.uber.org/fx"
+	"go.uber.org/zap"
 )
 
 func New() fx.Option {
 	return fx.Module("llm_work",
 		configfx.NewConfigModule[llmwork.Config]("llm_work", llmwork.NewDefaultConfig()),
 		fx.Provide(provideStore),
+		fx.Provide(provideHandler),
+		fx.Provide(fx.Annotated{Group: "workers", Target: provideWorker}),
 		fx.Provide(fx.Annotated{Group: "prometheus_collectors,flatten", Target: func(store *llmwork.Store) []prometheus.Collector { return store.Metrics().Collectors() }}),
 	)
+}
+
+type handlerParams struct {
+	fx.In
+	Pool       lazy.Lazy[*pgxpool.Pool]
+	Search     lazy.Lazy[search.Search]
+	Runner     lazy.Lazy[classifier.Runner]
+	Filter     *contentfilter.Filter
+	Matcher    *llmmatch.Client
+	Classifier classifier.Config
+	Observer   classifier.MatchDecisionObserver
+}
+
+func provideHandler(p handlerParams) llmwork.Handler {
+	return &processor.DeferredApplyHandler{Pool: p.Pool, Search: p.Search, Runner: p.Runner, Filter: p.Filter, Matcher: p.Matcher, Classifier: p.Classifier, Observer: p.Observer}
+}
+
+func provideWorker(store *llmwork.Store, handler llmwork.Handler, logger *zap.SugaredLogger) (worker.Worker, error) {
+	w, err := llmwork.NewWorker(store, handler, logger)
+	if err != nil {
+		return nil, err
+	}
+	return worker.NewWorker("llm_work", fx.Hook{OnStart: w.Start, OnStop: w.Stop}), nil
 }
 
 type storeParams struct {

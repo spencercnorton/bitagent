@@ -76,6 +76,7 @@ func TestExpiredTaskRecoveryAllowsOnlyProvenDispatchStates(t *testing.T) {
 			s, pool := workFixture(t)
 			ctx := context.Background()
 			d := draftFor(1)
+			d.Kind = Matcher
 			putPublic(t, pool, d)
 			_, err := s.Enqueue(ctx, d)
 			require.NoError(t, err)
@@ -90,6 +91,9 @@ func TestExpiredTaskRecoveryAllowsOnlyProvenDispatchStates(t *testing.T) {
 			if tc.safe {
 				require.NotNil(t, next)
 				require.Greater(t, next.Generation, old.Generation)
+				if tc.name == "retained_first_response" {
+					require.Equal(t, 100, next.Task.Priority, "started matcher completion retains priority across restart")
+				}
 				require.ErrorIs(t, s.Heartbeat(ctx, *old), ErrLease)
 			} else {
 				require.Nil(t, next)

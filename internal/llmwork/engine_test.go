@@ -39,6 +39,7 @@ func TestEngineKeepsAdmissionAndUncertainDispatchDistinct(t *testing.T) {
 		state string
 	}{
 		{"budget", DeferredError{"allowance", time.Date(2031, 1, 2, 0, 0, 0, 0, time.UTC)}, "deferred"},
+		{"recorded_budget", &DeferredError{"allowance", time.Date(2031, 1, 2, 0, 0, 0, 0, time.UTC)}, "deferred"},
 		{"privacy", ErrObsolete, "obsolete"}, {"unknown_dispatch", ErrHeld, "held"}, {"cancellation", context.Canceled, "held"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

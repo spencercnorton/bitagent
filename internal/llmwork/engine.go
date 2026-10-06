@@ -92,7 +92,10 @@ func (e Engine) RunOne(ctx context.Context) (bool, error) {
 	state, reason := "completed", "completed"
 	retry := time.Now().UTC()
 	var d DeferredError
+	var deferred *DeferredError
 	switch {
+	case errors.As(err, &deferred):
+		state, reason, retry = "deferred", deferred.Reason, deferred.RetryAfter
 	case errors.As(err, &d):
 		state, reason, retry = "deferred", d.Reason, d.RetryAfter
 	case errors.Is(err, ErrObsolete):

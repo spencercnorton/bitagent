@@ -9,9 +9,9 @@
   dispatches stay held even after ordinary capture retention.
 
 - Add a disabled-by-default lifecycle for bounded optional model tasks, with
-  source/policy identities, time-stratum capacity and owned worker leases.
-  Provider dispatch fencing and targeted application are qualified separately
-  before this worker can be enabled.
+  source/policy identities, paced time-stratum admission, completion priority,
+  owned worker leases and targeted transactional application. Ingestion retains
+  its deterministic result while optional work waits for unchanged allowances.
 - Add reversible adult-content exclusion for consumer APIs with
   `SERVING_EXCLUDE_ADULT`. Known XXX, positive attached adult metadata and the
   core classifier's vetted strong native evidence are excluded before search

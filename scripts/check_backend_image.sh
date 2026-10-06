@@ -8,6 +8,7 @@ printf '%s\n' "$help" | grep -F "bitagent $version" >/dev/null
 workers=$(docker run --rm --network none --read-only --entrypoint bitagent "$image" worker list)
 printf '%s\n' "$workers" | grep -Fx http_server >/dev/null
 printf '%s\n' "$workers" | grep -Fx dht_crawler >/dev/null
+printf '%s\n' "$workers" | grep -Fx llm_work >/dev/null
 if printf '%s\n' "$workers" | grep -Fx ui >/dev/null; then
   echo 'Unexpected site worker in backend image' >&2
   exit 1

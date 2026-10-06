@@ -38,6 +38,7 @@ func (s *Store) recoverExpired(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 	for _, item := range keys {
 		state, reason := "held", "expired_lease_needs_reconcile"
+		progressed := false
 		if s.dispatch != nil && s.dispatch.Enabled() {
 			attempts, err := s.dispatch.TaskRecovery(ctx, item.key)
 			if err != nil {
@@ -45,6 +46,9 @@ func (s *Store) recoverExpired(ctx context.Context, pool *pgxpool.Pool) error {
 			}
 			safe := true
 			for _, a := range attempts {
+				if a.Replayable {
+					progressed = true
+				}
 				if !a.SafeToRetry && !a.Replayable {
 					safe = false
 					break
@@ -57,8 +61,9 @@ func (s *Store) recoverExpired(ctx context.Context, pool *pgxpool.Pool) error {
 			}
 		}
 		if _, err = pool.Exec(ctx, `WITH changed AS(UPDATE llm_work_tasks SET state=$2,reason=$3,lease_owner=NULL,lease_until=NULL,retry_after=transaction_timestamp()
+ ,priority=CASE WHEN kind='matcher' AND $5 AND $2='deferred' THEN 100 ELSE priority END
  WHERE task_key=$1 AND state='leased' AND lease_generation=$4 AND lease_until<=clock_timestamp() RETURNING task_key)
- INSERT INTO llm_work_events(task_key,state,reason) SELECT task_key,$2,$3 FROM changed`, item.key, state, reason, item.generation); err != nil {
+ INSERT INTO llm_work_events(task_key,state,reason) SELECT task_key,$2,$3 FROM changed`, item.key, state, reason, item.generation, progressed); err != nil {
 			return err
 		}
 	}
