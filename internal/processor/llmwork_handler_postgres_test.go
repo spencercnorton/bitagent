@@ -167,6 +167,8 @@ func TestPostgresDeferredApplyDeclinesLatePrivacyHintAndTargetEdits(t *testing.T
 		`INSERT INTO label_evidence(info_hash,source,category,source_kind,source_instance,source_object_id,observed_at,strength)VALUES($1,'qbittorrent','private','test','test','test',now(),1)`,
 		`INSERT INTO torrent_hints(info_hash,content_type,created_at,updated_at)VALUES($1,'movie',now(),now())`,
 		`UPDATE torrent_contents SET content_type='tv_show' WHERE info_hash=$1`,
+		`INSERT INTO torrent_tags(info_hash,name,created_at,updated_at)VALUES($1,'manual',now(),now())`,
+		`INSERT INTO torrent_canonical_labels(info_hash,media_type,media_id,resolved_source,resolved_strength,resolved_at)VALUES($1,'movie','tmdb:42','radarr',1,now())`,
 		`INSERT INTO torrent_files(info_hash,"index",path,size,created_at,updated_at)VALUES($1,1,'New.Evidence.mkv',1024,now(),now())`,
 	} {
 		t.Run(mutation, func(t *testing.T) {
@@ -279,4 +281,13 @@ func TestPostgresDeferredReceiptRejectsWrongIdentityHashAndExpiry(t *testing.T) 
 	_, err = pool.Exec(ctx, `DELETE FROM llm_evaluation_captures`)
 	require.NoError(t, err)
 	check(lease.Task, receipt, false)
+}
+
+func TestPostgresWantedOnlyTagKeepsPublicOptionalMatchingEligible(t *testing.T) {
+	h, work, lease, _, pool, source, calls := deferredTypeHarness(t, nil, false)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `INSERT INTO torrent_tags(info_hash,name,created_at,updated_at)VALUES($1,'wanted',now(),now())`, source.InfoHash.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, h.Handle(llmwork.WithExecution(ctx, work, *lease), lease.Task))
+	require.EqualValues(t, 1, calls.Load())
 }

@@ -143,6 +143,12 @@ func TestPostgresDeferredMatcherUsesFinalPolicyAndPreservesIdentity(t *testing.T
 	h.Runner = lazy.New(func() (classifier.Runner, error) { return runner, nil })
 	h.Matcher = matcher
 	h.Observer = observer
+	// A wanted-only protection and compatible canonical type-only evidence
+	// retain ordinary public matching eligibility; neither selects an identity.
+	_, err = pool.Exec(ctx, `INSERT INTO torrent_tags(info_hash,name,created_at,updated_at)VALUES($1,'wanted',now(),now())`, source.InfoHash.Bytes())
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `INSERT INTO torrent_canonical_labels(info_hash,media_type,resolved_source,resolved_strength,resolved_at)VALUES($1,'movie','radarr',1,now())`, source.InfoHash.Bytes())
+	require.NoError(t, err)
 	p := llmmatch.WorkPayload{Type: model.NewNullContentType(model.ContentTypeMovie)}
 	lease := enqueueOptional(t, work, source, llmwork.Matcher, matcher.WorkPolicy(p), matcher.WorkInputDigest(source), p)
 	require.NoError(t, h.Handle(llmwork.WithExecution(ctx, work, *lease), lease.Task))

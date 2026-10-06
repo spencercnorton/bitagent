@@ -195,7 +195,7 @@ func guardPreservedApplications(ctx context.Context, tx *dao.Query, guards map[p
 		return nil
 	}
 	db := tx.Torrent.WithContext(ctx).UnderlyingDB()
-	if err := db.Exec(`LOCK TABLE label_evidence,torrent_verdict_state,junkpurge_quarantine IN SHARE MODE`).Error; err != nil {
+	if err := db.Exec(`LOCK TABLE label_evidence,torrent_canonical_labels,torrent_verdict_state,junkpurge_quarantine IN SHARE MODE`).Error; err != nil {
 		return err
 	}
 	hashes := make([]protocol.ID, 0, len(guards))
@@ -242,6 +242,35 @@ func guardPreservedApplications(ctx context.Context, tx *dao.Query, guards map[p
 			return err
 		}
 		if len(rows) != 1 {
+			return llmwork.ErrHeld
+		}
+		if err = db.Exec(`SELECT name FROM torrent_tags WHERE info_hash=? FOR SHARE`, hash.Bytes()).Error; err != nil {
+			return err
+		}
+		var tags []string
+		if err = db.Raw(`SELECT name FROM torrent_tags WHERE info_hash=?`, hash.Bytes()).Scan(&tags).Error; err != nil {
+			return err
+		}
+		for _, tag := range tags {
+			if llmwork.HasAuthorityTag(tag) {
+				return llmwork.ErrHeld
+			}
+		}
+		var label struct {
+			MediaType *string
+			MediaID   *string
+		}
+		if err = db.Raw(`SELECT media_type,media_id FROM torrent_canonical_labels WHERE info_hash=?`, hash.Bytes()).Scan(&label).Error; err != nil {
+			return err
+		}
+		media, id := "", ""
+		if label.MediaType != nil {
+			media = *label.MediaType
+		}
+		if label.MediaID != nil {
+			id = *label.MediaID
+		}
+		if !llmwork.CanonicalAuthorityAllows(llmwork.Kind(g.Kind), media, id, rows[0].ContentType) {
 			return llmwork.ErrHeld
 		}
 		snapshot := llmwork.NewApplicationSnapshot(llmwork.Kind(g.Kind), *rows[0], g.Tags)

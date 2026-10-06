@@ -124,7 +124,8 @@ func (s *Store) PreservePolicy(ctx context.Context, kind Kind, t model.Torrent, 
 	if decoder.Decode(&a) != nil || !a.Valid() || a.Kind != kind || !bytes.Equal(policyHash, Digest(policy(a))) {
 		return nil, ErrHeld
 	}
-	currentSource, err := LockedSource(ctx, tx, Task{Draft: Draft{InfoHash: t.InfoHash.Bytes(), SourceDigest: source}})
+	payload, _ := json.Marshal(struct{ Type model.NullContentType }{a.ContentType})
+	currentSource, err := LockedSource(ctx, tx, Task{Draft: Draft{Kind: kind, Payload: payload, InfoHash: t.InfoHash.Bytes(), SourceDigest: source}})
 	if err != nil {
 		if errors.Is(err, ErrObsolete) {
 			return nil, ErrHeld
