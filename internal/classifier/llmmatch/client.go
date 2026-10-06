@@ -246,7 +246,7 @@ func extractionModelFiles(t model.Torrent) []string {
 	if len(t.Files) > 5 {
 		return files
 	}
-	for _, file := range t.Files {
+	for _, file := range llmwork.OrderedFiles(t.Files) {
 		files = append(files, file.Path)
 	}
 	return files

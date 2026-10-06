@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -80,13 +79,7 @@ func Digest(v any) []byte {
 // SourceDigest excludes torrent observation times and swarm counters. Refreshes
 // cannot change model inputs, while file contents, hints and native privacy can.
 func SourceDigest(t model.Torrent) []byte {
-	files := append([]model.TorrentFile(nil), t.Files...)
-	sort.Slice(files, func(i, j int) bool {
-		if files[i].Index != files[j].Index {
-			return files[i].Index < files[j].Index
-		}
-		return files[i].Path < files[j].Path
-	})
+	files := OrderedFiles(t.Files)
 	fileEvidence := make([]any, 0, len(files))
 	for _, f := range files {
 		fileEvidence = append(fileEvidence, []any{f.Index, f.Path, f.Size, f.Extension})

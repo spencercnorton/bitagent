@@ -484,7 +484,7 @@ func renderUserPrompt(promptVersion string, t model.Torrent) string {
 	fmt.Fprintf(&sb, "%d", len(t.Files))
 	sb.WriteString("\nfiles:\n")
 	const maxFiles = 50
-	for i, f := range t.Files {
+	for i, f := range llmwork.OrderedFiles(t.Files) {
 		if i >= maxFiles {
 			sb.WriteString("... (truncated)\n")
 			break
@@ -620,7 +620,7 @@ func fileListHash(t model.Torrent) string {
 		return "no-files"
 	}
 	h := sha256.New()
-	for _, f := range t.Files {
+	for _, f := range llmwork.OrderedFiles(t.Files) {
 		fmt.Fprintf(h, "%d\t%s\n", f.Size, strings.ToLower(f.Path))
 	}
 	return hex.EncodeToString(h.Sum(nil)[:8])

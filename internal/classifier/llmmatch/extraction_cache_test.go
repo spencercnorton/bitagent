@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,12 +53,12 @@ func TestExtractCacheIdentityMatchesRenderedRequest(t *testing.T) {
 		t    model.Torrent
 	}{
 		{"name case", extractionTorrent("example.movie.2024.mkv", "movie.mkv", "movie.eng.srt")},
-		{"file order", extractionTorrent(base.Name, "movie.eng.srt", "movie.mkv")},
 		{"file path", extractionTorrent(base.Name, "movie.mkv", "movie.fra.srt")},
 		{"files absent", extractionTorrent(base.Name)},
 	} {
 		t.Run(tc.name, func(t *testing.T) { assert.NotEqual(t, key, c.extractKey(tc.t)) })
 	}
+	assert.Equal(t, key, c.extractKey(extractionTorrent(base.Name, "movie.eng.srt", "movie.mkv")), "preload row order is not rendered request evidence")
 	// Neither size nor admission-only source identity is rendered to the model.
 	metadataOnly := base
 	metadataOnly.Size++
@@ -70,6 +71,23 @@ func TestExtractCacheIdentityMatchesRenderedRequest(t *testing.T) {
 	otherLarge := extractionTorrent(base.Name, "g", "h", "i", "j", "k", "l", "m")
 	assert.Equal(t, c.extractKey(extractionTorrent(base.Name)), c.extractKey(large))
 	assert.Equal(t, c.extractKey(large), c.extractKey(otherLarge))
+}
+
+func TestIndexedExtractionEvidenceIsStableAfterShuffledPreload(t *testing.T) {
+	c := testClient("https://example.invalid/v1/chat/completions")
+	before := extractionTorrent("Example.Movie.2024.mkv", "movie.mkv", "movie.eng.srt", "notes.txt")
+	for i := range before.Files {
+		before.Files[i].Index = uint(i)
+	}
+	shuffled := before
+	shuffled.Files = append([]model.TorrentFile(nil), before.Files...)
+	shuffled.Files[0], shuffled.Files[2] = shuffled.Files[2], shuffled.Files[0]
+	order := append([]model.TorrentFile(nil), shuffled.Files...)
+	require.Equal(t, llmwork.SourceDigest(before), llmwork.SourceDigest(shuffled))
+	require.Equal(t, ExtractInput(before.Name, extractionModelFiles(before)), ExtractInput(shuffled.Name, extractionModelFiles(shuffled)))
+	require.Equal(t, c.extractKey(before), c.extractKey(shuffled))
+	require.Equal(t, c.WorkInputDigest(before), c.WorkInputDigest(shuffled))
+	require.Equal(t, order, shuffled.Files)
 }
 
 func TestExtractCacheIdentityIncludesRequestRoute(t *testing.T) {
