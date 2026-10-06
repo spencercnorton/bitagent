@@ -39,6 +39,9 @@ func (f *Filter) consultControlled(ctx context.Context, in Input, source AuditSo
 	var receipt llmcapture.ResultReceipt
 	var callErr error
 	if state == llmcapture.DispatchReplay {
+		if err := llmwork.BeforeDispatch(ctx); err != nil {
+			return ReasonNone, false, err
+		}
 		r, err := f.admission.Dispatch.Replay(ctx, dreq)
 		if err != nil {
 			return ReasonNone, false, err

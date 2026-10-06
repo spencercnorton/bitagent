@@ -270,7 +270,7 @@ func (c *Client) Extract(ctx context.Context, t model.Torrent) (Extraction, erro
 		return v.(Extraction), nil
 	}
 	c.metrics.cacheMisses.Inc()
-	if c.budgetCoolingDown() {
+	if (c.dispatch == nil || !c.dispatch.Enabled()) && c.budgetCoolingDown() {
 		return Extraction{}, ErrCallBudget
 	}
 
@@ -383,7 +383,7 @@ func (c *Client) RerankForMediaType(
 		return r.ID, r.Confidence, nil
 	}
 	c.metrics.cacheMisses.Inc()
-	if c.budgetCoolingDown() {
+	if (c.dispatch == nil || !c.dispatch.Enabled()) && c.budgetCoolingDown() {
 		return 0, 0, ErrCallBudget
 	}
 
@@ -917,6 +917,9 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, u
 	}
 	if c.dispatch != nil && c.dispatch.Enabled() {
 		return c.callControlledWith(ctx, hc, stage, body)
+	}
+	if llmwork.ExecutionFrom(ctx) != nil || llmwork.ReplayOnly(ctx) {
+		return nil, llmwork.ErrHeld
 	}
 	if c.budgetCoolingDown() {
 		return nil, ErrCallBudget

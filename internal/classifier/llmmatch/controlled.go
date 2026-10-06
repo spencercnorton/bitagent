@@ -26,6 +26,9 @@ func (c *Client) callControlledWith(ctx context.Context, hc *http.Client, stage 
 		return nil, c.controlledError(ctx, err)
 	}
 	if outcome == llmcapture.DispatchReplay {
+		if err := llmwork.BeforeDispatch(ctx); err != nil {
+			return nil, err
+		}
 		r, err := c.dispatch.Replay(ctx, request)
 		if err != nil {
 			return nil, err

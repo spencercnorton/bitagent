@@ -26,6 +26,7 @@ type Backend interface {
 	Claim(context.Context, string) (*Lease, error)
 	Finish(context.Context, Lease, string, string, time.Time) error
 	Heartbeat(context.Context, Lease) error
+	Completed(context.Context, Lease) (bool, error)
 }
 
 type Engine struct {
@@ -76,6 +77,18 @@ func (e Engine) RunOne(ctx context.Context) (bool, error) {
 		}
 	}()
 	err = e.Handler.Handle(work, l.Task)
+	if err == nil {
+		check, done := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		completed, checkErr := e.Backend.Completed(check, *l)
+		done()
+		if checkErr != nil {
+			return true, checkErr
+		}
+		if completed {
+			return true, nil
+		}
+		err = ErrHeld
+	}
 	state, reason := "completed", "completed"
 	retry := time.Now().UTC()
 	var d DeferredError
@@ -86,10 +99,6 @@ func (e Engine) RunOne(ctx context.Context) (bool, error) {
 		state, reason = "obsolete", "source_or_policy_changed"
 	case err != nil:
 		state, reason = "held", "reconciliation_required"
-	}
-	// A successful handler may already have completed task+apply atomically.
-	if err == nil {
-		return true, nil
 	}
 	cleanup, done := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer done()

@@ -42,6 +42,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/importer/importerfx"
 	"github.com/spencercnorton/bitagent/internal/junkpurge/junkpurgefx"
 	"github.com/spencercnorton/bitagent/internal/llmcapture/llmcapturefx"
+	"github.com/spencercnorton/bitagent/internal/llmwork/llmworkfx"
 	"github.com/spencercnorton/bitagent/internal/logging/loggingfx"
 	"github.com/spencercnorton/bitagent/internal/metrics/metricsfx"
 	"github.com/spencercnorton/bitagent/internal/processor/processorfx"
@@ -84,6 +85,7 @@ func New() fx.Option {
 		importerfx.New(),
 		loggingfx.New(),
 		llmcapturefx.New(),
+		llmworkfx.New(),
 		metainfofx.New(),
 		metricsfx.New(),
 		processorfx.New(),

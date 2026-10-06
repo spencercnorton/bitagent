@@ -19,6 +19,9 @@
 - Parse release attributes and resolve unique local identities after a new
   movie/TV type fallback, within the existing content policy. The continuation
   runs once and makes no additional model or metadata API request.
+- Commit bounded quarantine expiry chunks together with their verdict state and
+  audit events. Restore and explicit deletion commit their ledger transition
+  atomically; failed chunks retain snapshots and remain retryable.
 
 - Bind matcher extraction cache entries to rendered file evidence and request
   routing. Group responses have a separate exact-request cache and cannot warm
