@@ -169,3 +169,75 @@ func TestPostgresAbsentHintInsertIsFencedUntilSourceCommit(t *testing.T) {
 	_, err = lockedDeferredSource(ctx, next, task)
 	require.ErrorIs(t, err, llmwork.ErrObsolete)
 }
+
+func TestPostgresNewManualTagCannotCrossSourceTransaction(t *testing.T) {
+	pool, backend := deferredApplyFixture(t)
+	ctx := context.Background()
+	hash := protocol.ID{29}
+	_, err := pool.Exec(ctx, `INSERT INTO torrents(info_hash,name,size,private,files_status,created_at,updated_at)VALUES($1,'Public.Source.mkv',73400320,false,'single',now(),now())`, hash.Bytes())
+	require.NoError(t, err)
+	source := deferredTaskSource(t, backend, hash)
+	task := llmwork.Task{Draft: llmwork.Draft{Kind: llmwork.Type, InfoHash: hash.Bytes(), SourceDigest: llmwork.SourceDigest(source)}}
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	_, err = lockedDeferredSource(ctx, tx, task)
+	require.NoError(t, err)
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		_, e := pool.Exec(ctx, `INSERT INTO torrent_tags(info_hash,name,created_at,updated_at)VALUES($1,'reference',now(),now())`, hash.Bytes())
+		done <- e
+	}()
+	<-started
+	select {
+	case e := <-done:
+		t.Fatalf("new tag crossed source boundary: %v", e)
+	case <-time.After(100 * time.Millisecond):
+	}
+	require.NoError(t, tx.Commit(ctx))
+	require.NoError(t, <-done)
+	next, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer next.Rollback(ctx)
+	_, err = lockedDeferredSource(ctx, next, task)
+	require.ErrorIs(t, err, llmwork.ErrObsolete)
+}
+
+func TestPostgresExistingTagCannotBecomeManualInsideSourceTransaction(t *testing.T) {
+	pool, backend := deferredApplyFixture(t)
+	ctx := context.Background()
+	hash := protocol.ID{30}
+	_, err := pool.Exec(ctx, `INSERT INTO torrents(info_hash,name,size,private,files_status,created_at,updated_at)VALUES($1,'Public.Source.mkv',73400320,false,'single',now(),now())`, hash.Bytes())
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `INSERT INTO torrent_tags(info_hash,name,created_at,updated_at)VALUES($1,'wanted',now(),now())`, hash.Bytes())
+	require.NoError(t, err)
+	source := deferredTaskSource(t, backend, hash)
+	task := llmwork.Task{Draft: llmwork.Draft{Kind: llmwork.Type, InfoHash: hash.Bytes(), SourceDigest: llmwork.SourceDigest(source)}}
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	_, err = lockedDeferredSource(ctx, tx, task)
+	require.NoError(t, err)
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		_, e := pool.Exec(ctx, `UPDATE torrent_tags SET name='manual' WHERE info_hash=$1`, hash.Bytes())
+		done <- e
+	}()
+	<-started
+	select {
+	case e := <-done:
+		t.Fatalf("manual tag update crossed source boundary: %v", e)
+	case <-time.After(100 * time.Millisecond):
+	}
+	require.NoError(t, tx.Commit(ctx))
+	require.NoError(t, <-done)
+	next, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer next.Rollback(ctx)
+	_, err = lockedDeferredSource(ctx, next, task)
+	require.ErrorIs(t, err, llmwork.ErrObsolete)
+}
