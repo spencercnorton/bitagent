@@ -28,4 +28,3 @@ func (c *Client) submitWork(ctx context.Context, t model.Torrent) error {
 	p, _ := ctx.Value(workTypeKey{}).(WorkPayload)
 	return c.work.Submit(ctx, llmwork.Matcher, t, c.WorkPolicy(p), c.newChatRequest(ExtractPrompt(), ExtractInput(t.Name, extractionModelFiles(t)), 120), p, contentfilter.EvaluationGroupKey(t.Name), c.cfg.DailyCallLimit, c.cfg.MonthlyCallLimit)
 }
-func (c *Client) WithDispatchControl(d llmcapture.DispatchControl) *Client { c.dispatch = d; return c }

@@ -28,6 +28,17 @@ type DispatchRequest struct {
 
 type DispatchOutcome string
 
+// DispatchDeferredError reports a positively undispatched retry boundary using
+// the database's UTC clock. It does not authorize replay of an unknown intent.
+type DispatchDeferredError struct {
+	Reason        string
+	RetryAfterUTC time.Time
+}
+
+func (e *DispatchDeferredError) Error() string {
+	return "LLM request deferred before dispatch: " + e.Reason
+}
+
 const (
 	DispatchPrepared DispatchOutcome = "prepared"
 	DispatchReplay   DispatchOutcome = "replay"

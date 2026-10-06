@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an opt-in durable request dispatch fence and bounded replay of retained
+  first responses. Known pre-dispatch deferrals remain retryable; uncertain
+  dispatches stay held even after ordinary capture retention.
+
 - Add a disabled-by-default lifecycle for bounded optional model tasks, with
   source/policy identities, time-stratum capacity and owned worker leases.
   Provider dispatch fencing and targeted application are qualified separately
