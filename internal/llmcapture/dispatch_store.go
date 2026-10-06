@@ -43,7 +43,7 @@ func validateDispatchRequest(req DispatchRequest) error {
 	}
 	if req.Case != nil && (len(req.Case.TaskKey) != sha256.Size ||
 		len(req.Case.SourceDigest) != sha256.Size || len(req.Case.PolicyDigest) != sha256.Size ||
-		req.Case.LeaseOwner == "" || len(req.Case.LeaseOwner) > 64 || req.Case.LeaseGeneration <= 0) {
+		req.Case.LeaseOwner == "" || len(req.Case.LeaseOwner) > 64 || req.Case.LeaseGeneration <= 0 || req.Case.SourceRecheck == nil) {
 		return ErrDispatchLease
 	}
 	return nil
@@ -90,18 +90,21 @@ func checkCaseFence(ctx context.Context, tx pgx.Tx, fence *CaseFence) error {
 	if fence == nil {
 		return nil
 	}
-	var owned bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM llm_work_tasks
+	if fence.SourceRecheck == nil {
+		return ErrDispatchLease
+	}
+	var owned int
+	err := tx.QueryRow(ctx, `SELECT 1 FROM llm_work_tasks
 WHERE task_key=$1 AND state='leased' AND lease_owner=$2 AND lease_generation=$3
- AND lease_until>clock_timestamp() AND source_digest=$4 AND policy_digest=$5)`,
+ AND lease_until>clock_timestamp() AND source_digest=$4 AND policy_digest=$5 FOR SHARE`,
 		fence.TaskKey, fence.LeaseOwner, fence.LeaseGeneration, fence.SourceDigest, fence.PolicyDigest).Scan(&owned)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrDispatchLease
+	}
 	if err != nil {
 		return err
 	}
-	if !owned {
-		return ErrDispatchLease
-	}
-	return nil
+	return fence.SourceRecheck(ctx, tx)
 }
 
 func (d *PostgresDispatchController) Prepare(ctx context.Context, req DispatchRequest) (DispatchLease, DispatchOutcome, error) {
@@ -128,9 +131,6 @@ func (d *PostgresDispatchController) Prepare(ctx context.Context, req DispatchRe
 	if err := checkDispatchAdmission(ctx, tx, req); err != nil {
 		return lease, DispatchUnknown, err
 	}
-	if err := checkCaseFence(ctx, tx, req.Case); err != nil {
-		return lease, DispatchUnknown, err
-	}
 	// Serialize even the initially absent digest fence without tying its
 	// lifetime to a raw capture row. The row itself is never TTL-deleted.
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),718432))`, req.CaptureKey); err != nil {
@@ -148,6 +148,9 @@ FROM llm_capture_dispatch_attempts WHERE capture_key=$1 FOR UPDATE`, req.Capture
 		Scan(&state, &until, &retryAt, &existingTask, &existingSource, &existingTaskKey, &permanentDigest)
 	newFence := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !newFence {
+		return lease, DispatchUnknown, err
+	}
+	if err := checkCaseFence(ctx, tx, req.Case); err != nil {
 		return lease, DispatchUnknown, err
 	}
 	if !newFence && (existingTask != string(req.Task) || existingSource != string(req.CandidateSource) ||
@@ -347,9 +350,27 @@ func (d *PostgresDispatchController) BeginDispatch(ctx context.Context, lease Di
 	if err != nil {
 		return err
 	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Match Reserve's lock order: dispatch row, owned task, current source.
+	var locked int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM llm_capture_dispatch_attempts
+WHERE capture_key=$1 AND lease_owner=$2 AND lease_generation=$3 FOR UPDATE`,
+		lease.CaptureKey, lease.Owner, lease.Generation).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrDispatchLease
+		}
+		return err
+	}
+	if err := checkCaseFence(ctx, tx, lease.Case); err != nil {
+		return err
+	}
 	args := []any{lease.CaptureKey, lease.Owner, lease.Generation}
 	args = append(args, caseArgs(lease.Case)...)
-	tag, err := pool.Exec(ctx, `UPDATE llm_capture_dispatch_attempts d SET state='intent',dispatch_intent_at=clock_timestamp(),updated_at=clock_timestamp()
+	tag, err := tx.Exec(ctx, `UPDATE llm_capture_dispatch_attempts d SET state='intent',dispatch_intent_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE d.capture_key=$1 AND d.lease_owner=$2 AND d.lease_generation=$3 AND d.lease_until>clock_timestamp()
  AND d.state='admitted' AND d.reserved_day=(clock_timestamp() AT TIME ZONE 'UTC')::date
  AND EXISTS (`+resultPublicAdmissionSQL+`)
@@ -362,7 +383,7 @@ WHERE d.capture_key=$1 AND d.lease_owner=$2 AND d.lease_generation=$3 AND d.leas
 	if tag.RowsAffected() != 1 {
 		return ErrDispatchLease
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (d *PostgresDispatchController) DeferNoDispatch(ctx context.Context, lease DispatchLease, reason string, retryAt time.Time) error {
@@ -433,15 +454,26 @@ func (d *PostgresDispatchController) Replay(ctx context.Context, req DispatchReq
 	if err := checkDispatchAdmission(ctx, tx, req); err != nil {
 		return replay, err
 	}
+	var locked int
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM llm_capture_dispatch_attempts WHERE capture_key=$1 FOR SHARE`, req.CaptureKey).Scan(&locked); err != nil {
+		return replay, ErrDispatchUnknown
+	}
 	if err := checkCaseFence(ctx, tx, req.Case); err != nil {
 		return replay, err
 	}
 	var digest []byte
+	var taskKey []byte
+	if req.Case != nil {
+		taskKey = req.Case.TaskKey
+	}
 	err = tx.QueryRow(ctx, `SELECT r.response_body,r.response_sha256,r.http_status,r.error_class
 FROM llm_evaluation_capture_results r JOIN llm_capture_dispatch_attempts d USING(capture_key)
 WHERE r.capture_key=$1 AND d.state='result' AND d.response_sha256=r.response_sha256
  AND d.http_status=r.http_status AND d.error_class=r.error_class
- AND r.http_status>0 AND octet_length(r.response_body)<=$2`, req.CaptureKey, MaxResultBodyBytes).
+ AND r.http_status>0 AND octet_length(r.response_body)<=$2
+ AND d.task=$3 AND d.candidate_source=$4
+ AND ((d.task_key IS NULL AND $5::bytea IS NULL) OR d.task_key=$5)`, req.CaptureKey, MaxResultBodyBytes,
+		string(req.Task), string(req.CandidateSource), taskKey).
 		Scan(&replay.Result.Body, &digest, &replay.Result.StatusCode, &replay.Result.ErrorClass)
 	if err != nil {
 		return HTTPReplay{}, fmt.Errorf("%w: retained first response unavailable", ErrDispatchUnknown)

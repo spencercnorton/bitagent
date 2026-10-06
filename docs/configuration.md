@@ -144,6 +144,7 @@ chat model, API key or OpenAI data-sharing setting.
 | `CLASSIFIER_LLM_MATCH_EMBEDDINGS_MAX_DIMENSIONS` | `4096` | Maximum accepted vector length. |
 | `CLASSIFIER_LLM_MATCH_EMBEDDINGS_SHORTLIST_SIZE` | `3` | Number of candidates shown to chat, in `2..100`. |
 | `LLM_EVALUATION_CAPTURE_ENABLED` | `false` | Must be enabled for the embedding route's request, first response and final chat decision evidence. |
+| `LLM_EVALUATION_CAPTURE_DISPATCH_CONTROL_ENABLED` | `false` | Opt in to durable dispatch ownership and retained first-response replay after migration 56. Requires capture. Keep disabled until the worker and provider boundaries are qualified together. |
 
 For direct OpenAI, use `https://api.openai.com/v1/embeddings` and a model such
 as `text-embedding-3-small`. OpenAI supports the `dimensions` parameter on

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +29,11 @@ func dispatchFixture(t *testing.T) (context.Context, *pgxpool.Pool, *PostgresSto
 	t.Cleanup(cancel)
 	admin, err := pgxpool.New(ctx, dsn)
 	require.NoError(t, err)
+	extensionTx, err := admin.Begin(ctx)
+	require.NoError(t, err)
+	_, err = extensionTx.Exec(ctx, `SELECT pg_advisory_xact_lock(718435); CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public`)
+	require.NoError(t, err)
+	require.NoError(t, extensionTx.Commit(ctx))
 	schema := fmt.Sprintf("dispatch_fixture_%d", time.Now().UnixNano())
 	_, err = admin.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize())
 	require.NoError(t, err)
@@ -65,6 +71,28 @@ VALUES ($1,'SyntheticDispatch',4096,false,now(),now(),'single')`, req.InfoHash)
 	return ctx, pool, store, r, NewPostgresDispatchController(store, true), req,
 		DispatchRequest{CaptureKey: key, Task: req.Task, CandidateSource: req.CandidateSource,
 			InfoHash: req.InfoHash, FreshCapture: true}
+}
+
+func dispatchCaseFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, req Request) *CaseFence {
+	t.Helper()
+	fence := &CaseFence{TaskKey: bytes.Repeat([]byte{31}, 32), LeaseOwner: "synthetic_owner", LeaseGeneration: 1,
+		SourceDigest: bytes.Repeat([]byte{32}, 32), PolicyDigest: bytes.Repeat([]byte{33}, 32)}
+	_, err := pool.Exec(ctx, `INSERT INTO llm_work_tasks
+(task_key,kind,info_hash,source_digest,policy_digest,input_digest,family_digest,payload,priority,time_bucket,daily_limit,monthly_limit,state,lease_owner,lease_generation,lease_until,expires_at)
+VALUES ($1,'matcher',$2,$3,$4,$3,$4,'{}'::jsonb,50,0,15,450,'leased',$5,1,clock_timestamp()+interval '1 minute',clock_timestamp()+interval '1 day')`,
+		fence.TaskKey, req.InfoHash, fence.SourceDigest, fence.PolicyDigest, fence.LeaseOwner)
+	require.NoError(t, err)
+	fence.SourceRecheck = func(ctx context.Context, tx pgx.Tx) error {
+		var name string
+		if err := tx.QueryRow(ctx, `SELECT name FROM torrents WHERE info_hash=$1 FOR UPDATE`, req.InfoHash).Scan(&name); err != nil {
+			return err
+		}
+		if name != "SyntheticDispatch" {
+			return ErrDispatchLease
+		}
+		return nil
+	}
+	return fence
 }
 
 func TestDispatchControllerPostgres(t *testing.T) {
@@ -234,19 +262,18 @@ AND EXISTS(SELECT 1 FROM llm_capture_dispatch_attempts WHERE state='prepared')`)
 
 	t.Run("joint source-case generation fence and late first-result recovery", func(t *testing.T) {
 		ctx, pool, _, recorder, controller, req, binding := dispatchFixture(t)
-		fence := &CaseFence{TaskKey: bytes.Repeat([]byte{31}, 32), LeaseOwner: "synthetic_owner", LeaseGeneration: 1,
-			SourceDigest: bytes.Repeat([]byte{32}, 32), PolicyDigest: bytes.Repeat([]byte{33}, 32)}
-		_, err := pool.Exec(ctx, `INSERT INTO llm_work_tasks
-(task_key,kind,info_hash,source_digest,policy_digest,input_digest,family_digest,payload,priority,time_bucket,daily_limit,monthly_limit,state,lease_owner,lease_generation,lease_until,expires_at)
-VALUES ($1,'matcher',$2,$3,$4,$3,$4,'{}'::jsonb,50,0,15,450,'leased',$5,1,clock_timestamp()+interval '1 minute',clock_timestamp()+interval '1 day')`,
-			fence.TaskKey, req.InfoHash, fence.SourceDigest, fence.PolicyDigest, fence.LeaseOwner)
-		require.NoError(t, err)
+		fence := dispatchCaseFixture(t, ctx, pool, req)
 		binding.Case = fence
 		lease, _, err := controller.Prepare(ctx, binding)
 		require.NoError(t, err)
 		allowed, err := controller.Reserve(ctx, lease, "matcher", 15, 450)
 		require.NoError(t, err)
 		require.True(t, allowed)
+		stripped := lease
+		stripped.Case = nil
+		require.ErrorIs(t, controller.BeginDispatch(ctx, stripped), ErrDispatchLease, "a linked source-case fence cannot be stripped")
+		_, err = controller.Reserve(ctx, stripped, "matcher", 15, 450)
+		require.ErrorIs(t, err, ErrDispatchLease)
 		_, err = pool.Exec(ctx, `UPDATE llm_work_tasks SET lease_generation=2 WHERE task_key=$1`, fence.TaskKey)
 		require.NoError(t, err)
 		require.ErrorIs(t, controller.BeginDispatch(ctx, lease), ErrDispatchLease)
@@ -262,6 +289,84 @@ VALUES ($1,'matcher',$2,$3,$4,$3,$4,'{}'::jsonb,50,0,15,450,'leased',$5,1,clock_
 		require.Equal(t, "result", recovery[0].State)
 		require.True(t, recovery[0].Replayable)
 		require.False(t, recovery[0].SafeToRetry)
+	})
+
+	t.Run("legacy completed replay links a case before crash recovery", func(t *testing.T) {
+		ctx, pool, store, recorder, controller, req, binding := dispatchFixture(t)
+		_, err := recorder.RecordHTTPResult(ctx, binding.CaptureKey, HTTPResult{Body: []byte(`{"first":true}`), StatusCode: 200, ErrorClass: "none"})
+		require.NoError(t, err)
+		binding.FreshCapture = false
+		_, outcome, err := controller.Prepare(ctx, binding)
+		require.NoError(t, err)
+		require.Equal(t, DispatchReplay, outcome)
+		binding.Case = dispatchCaseFixture(t, ctx, pool, req)
+		_, outcome, err = controller.Prepare(ctx, binding)
+		require.NoError(t, err)
+		require.Equal(t, DispatchReplay, outcome)
+		// A process restart sees the existing permanent request linked to its
+		// source case, even if it died before recording case progress.
+		restarted := NewPostgresDispatchController(store, true)
+		recovery, err := restarted.TaskRecovery(ctx, binding.Case.TaskKey)
+		require.NoError(t, err)
+		require.Len(t, recovery, 1)
+		require.True(t, recovery[0].Replayable)
+		require.False(t, recovery[0].SafeToRetry)
+		_, err = restarted.Replay(ctx, binding)
+		require.NoError(t, err)
+		binding.Case = nil
+		_, err = restarted.Replay(ctx, binding)
+		require.ErrorIs(t, err, ErrDispatchUnknown, "replay cannot strip its permanent source-case linkage")
+	})
+
+	t.Run("current source recheck and intent share locked evidence", func(t *testing.T) {
+		ctx, pool, _, _, controller, req, binding := dispatchFixture(t)
+		binding.Case = dispatchCaseFixture(t, ctx, pool, req)
+		lease, _, err := controller.Prepare(ctx, binding)
+		require.NoError(t, err)
+		allowed, err := controller.Reserve(ctx, lease, "matcher", 15, 450)
+		require.NoError(t, err)
+		require.True(t, allowed)
+		_, err = pool.Exec(ctx, `UPDATE torrents SET name='ChangedSource' WHERE info_hash=$1`, req.InfoHash)
+		require.NoError(t, err)
+		require.ErrorIs(t, controller.BeginDispatch(ctx, lease), ErrDispatchLease, "a change after the outer callback prevents intent")
+		_, err = pool.Exec(ctx, `UPDATE torrents SET name='SyntheticDispatch' WHERE info_hash=$1`, req.InfoHash)
+		require.NoError(t, err)
+		guard := lease.Case.SourceRecheck
+		locked, release := make(chan struct{}), make(chan struct{})
+		var once atomic.Bool
+		lease.Case.SourceRecheck = func(ctx context.Context, tx pgx.Tx) error {
+			if err := guard(ctx, tx); err != nil {
+				return err
+			}
+			if once.CompareAndSwap(false, true) {
+				close(locked)
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			return nil
+		}
+		begun := make(chan error, 1)
+		go func() { begun <- controller.BeginDispatch(ctx, lease) }()
+		<-locked
+		mutated := make(chan error, 1)
+		go func() {
+			_, err := pool.Exec(ctx, `UPDATE torrents SET name='ChangedSource' WHERE info_hash=$1`, req.InfoHash)
+			mutated <- err
+		}()
+		select {
+		case err := <-mutated:
+			t.Fatalf("source mutation passed retained evidence lock: %v", err)
+		case <-time.After(20 * time.Millisecond):
+		}
+		close(release)
+		require.NoError(t, <-begun)
+		require.NoError(t, <-mutated)
+		var state string
+		require.NoError(t, pool.QueryRow(ctx, `SELECT state FROM llm_capture_dispatch_attempts`).Scan(&state))
+		require.Equal(t, "intent", state)
 	})
 
 	t.Run("monthly denial reports next month without changing limits", func(t *testing.T) {
@@ -280,6 +385,52 @@ VALUES ('matcher',date_trunc('month',now() AT TIME ZONE 'UTC')::date,(now() AT T
 		var calls int
 		require.NoError(t, pool.QueryRow(ctx, `SELECT monthly_calls FROM llm_request_budgets WHERE scope='matcher'`).Scan(&calls))
 		require.Equal(t, 450, calls)
+	})
+
+	t.Run("completed digest without retained body stays held after TTL", func(t *testing.T) {
+		ctx, pool, store, recorder, controller, req, binding := dispatchFixture(t)
+		_, err := recorder.RecordHTTPResult(ctx, binding.CaptureKey, HTTPResult{Body: []byte(`{"first":true}`), StatusCode: 200, ErrorClass: "none"})
+		require.NoError(t, err)
+		binding.FreshCapture = false
+		_, outcome, err := controller.Prepare(ctx, binding)
+		require.NoError(t, err)
+		require.Equal(t, DispatchReplay, outcome)
+		_, err = pool.Exec(ctx, `UPDATE llm_evaluation_captures SET captured_at=clock_timestamp()-interval '2 minutes',expires_at=clock_timestamp()-interval '1 second';
+UPDATE llm_evaluation_capture_admissions SET expires_at=clock_timestamp()-interval '1 second'`)
+		require.NoError(t, err)
+		_, err = store.DeleteExpired(ctx)
+		require.NoError(t, err)
+		_, err = recorder.Capture(ctx, req)
+		require.NoError(t, err)
+		binding.FreshCapture = true
+		_, _, err = controller.Prepare(ctx, binding)
+		require.ErrorIs(t, err, ErrDispatchUnknown)
+		// A newly inserted second body is not the original permanent authority.
+		_, err = recorder.RecordHTTPResult(ctx, binding.CaptureKey, HTTPResult{Body: []byte(`{"second":true}`), StatusCode: 200, ErrorClass: "none"})
+		require.NoError(t, err)
+		_, _, err = controller.Prepare(ctx, binding)
+		require.ErrorIs(t, err, ErrCaptureUnavailable)
+	})
+
+	t.Run("known cancellation before intent reuses its same-day slot", func(t *testing.T) {
+		ctx, pool, _, _, controller, _, binding := dispatchFixture(t)
+		lease, _, err := controller.Prepare(ctx, binding)
+		require.NoError(t, err)
+		allowed, err := controller.Reserve(ctx, lease, "matcher", 15, 450)
+		require.NoError(t, err)
+		require.True(t, allowed)
+		require.NoError(t, controller.DeferNoDispatch(ctx, lease, "canceled_before_intent", time.Now().UTC()))
+		binding.FreshCapture = false
+		fresh, _, err := controller.Prepare(ctx, binding)
+		require.NoError(t, err)
+		allowed, err = controller.Reserve(ctx, fresh, "matcher", 15, 450)
+		require.NoError(t, err)
+		require.True(t, allowed)
+		require.ErrorIs(t, controller.BeginDispatch(ctx, lease), ErrDispatchLease)
+		require.NoError(t, controller.BeginDispatch(ctx, fresh))
+		var calls int
+		require.NoError(t, pool.QueryRow(ctx, `SELECT daily_calls FROM llm_request_budgets WHERE scope='matcher'`).Scan(&calls))
+		require.Equal(t, 1, calls, "positive no-dispatch evidence does not buy or refund another same-day reservation")
 	})
 }
 
