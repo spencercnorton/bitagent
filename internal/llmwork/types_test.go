@@ -3,6 +3,7 @@ package llmwork
 import (
 	"math"
 	"testing"
+	"time"
 
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/protocol"
@@ -80,4 +81,14 @@ func TestConfigurationIsInertAndBounded(t *testing.T) {
 	c.Enabled = true
 	c.Kinds = []Kind{Type, Type}
 	require.Error(t, c.Validate())
+}
+
+func TestSourceDigestExcludesHintObservationTimes(t *testing.T) {
+	t0 := model.Torrent{InfoHash: protocol.ID{1}, Name: "Example.Movie.2026.mkv", Hint: model.TorrentHint{ContentType: model.ContentTypeMovie, Title: model.NewNullString("Example Movie"), CreatedAt: time.Unix(1, 0), UpdatedAt: time.Unix(2, 0)}}
+	t1 := t0
+	t1.Hint.CreatedAt = time.Unix(3, 0)
+	t1.Hint.UpdatedAt = time.Unix(4, 0)
+	require.Equal(t, SourceDigest(t0), SourceDigest(t1))
+	t1.Hint.Title = model.NewNullString("Another Movie")
+	require.NotEqual(t, SourceDigest(t0), SourceDigest(t1))
 }

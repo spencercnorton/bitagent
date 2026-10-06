@@ -67,7 +67,7 @@ FROM torrent_contents WHERE info_hash=$1 ORDER BY id FOR UPDATE`, t.InfoHash.Byt
 	}
 	if selected.ContentID.Valid {
 		selected.Content.Type, selected.Content.Source, selected.Content.ID = selected.ContentType.ContentType, selected.ContentSource.String, selected.ContentID.String
-		if err = tx.QueryRow(ctx, `SELECT created_at FROM content WHERE type=$1 AND source=$2 AND id=$3 FOR SHARE`, selected.Content.Type.String(), selected.Content.Source, selected.Content.ID).Scan(&selected.Content.CreatedAt); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT title,release_year,original_language,original_title,adult,tsv::text,created_at,updated_at FROM content WHERE type=$1 AND source=$2 AND id=$3 FOR SHARE`, selected.Content.Type.String(), selected.Content.Source, selected.Content.ID).Scan(&selected.Content.Title, &selected.Content.ReleaseYear, &selected.Content.OriginalLanguage, &selected.Content.OriginalTitle, &selected.Content.Adult, &selected.Content.Tsv, &selected.Content.CreatedAt, &selected.Content.UpdatedAt); err != nil {
 			return selected, err
 		}
 	}

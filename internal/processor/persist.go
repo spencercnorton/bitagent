@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
+	"sort"
 
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/model"
@@ -197,7 +198,13 @@ func guardPreservedApplications(ctx context.Context, tx *dao.Query, guards map[p
 	if err := db.Exec(`LOCK TABLE label_evidence,torrent_verdict_state,junkpurge_quarantine IN SHARE MODE`).Error; err != nil {
 		return err
 	}
-	for hash, g := range guards {
+	hashes := make([]protocol.ID, 0, len(guards))
+	for hash := range guards {
+		hashes = append(hashes, hash)
+	}
+	sort.Slice(hashes, func(i, j int) bool { return hashes[i].String() < hashes[j].String() })
+	for _, hash := range hashes {
+		g := guards[hash]
 		var matched bool
 		if err := db.Raw(`SELECT EXISTS(SELECT 1 FROM llm_work_applications a JOIN llm_work_tasks w USING(task_key) WHERE a.task_key=? AND a.info_hash=? AND a.source_digest=? AND a.policy_digest=? AND w.state='completed')`, g.TaskKey, hash.Bytes(), g.SourceDigest, g.PolicyDigest).Scan(&matched).Error; err != nil {
 			return err
