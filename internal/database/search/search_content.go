@@ -7,6 +7,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/query"
 	"github.com/spencercnorton/bitagent/internal/maps"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"gorm.io/gen"
 	"gorm.io/gen/field"
 )
 
@@ -28,8 +29,17 @@ func (s search) Content(ctx context.Context, options ...query.Option) (result Co
 		query.Options(append([]query.Option{query.SelectAll()}, options...)...),
 		model.TableNameContent,
 		func(ctx context.Context, q *dao.Query) query.SubQuery {
+			base := q.Content.WithContext(ctx).ReadDB()
+			if s.adultPolicy != nil {
+				predicate := s.adultPolicy.ContentCondition()
+				base = base.Scopes(func(d gen.Dao) gen.Dao {
+					do := d.(*gen.DO)
+					do.ReplaceDB(do.UnderlyingDB().Where(predicate))
+					return d
+				})
+			}
 			return query.GenericSubQuery[dao.IContentDo]{
-				SubQuery: q.Content.WithContext(ctx).ReadDB(),
+				SubQuery: base,
 			}
 		},
 	)

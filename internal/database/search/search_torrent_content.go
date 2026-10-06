@@ -6,6 +6,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/database/query"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"gorm.io/gen"
 	"gorm.io/gen/field"
 	"gorm.io/gorm/clause"
 )
@@ -28,8 +29,17 @@ func (s search) TorrentContent(ctx context.Context, options ...query.Option) (To
 		query.Options(append([]query.Option{query.SelectAll()}, options...)...),
 		model.TableNameTorrentContent,
 		func(ctx context.Context, q *dao.Query) query.SubQuery {
+			base := q.TorrentContent.WithContext(ctx).ReadDB()
+			if s.adultPolicy != nil {
+				predicate := s.adultPolicy.TorrentCondition(model.TableNameTorrentContent)
+				base = base.Scopes(func(d gen.Dao) gen.Dao {
+					do := d.(*gen.DO)
+					do.ReplaceDB(do.UnderlyingDB().Where(predicate))
+					return d
+				})
+			}
 			return query.GenericSubQuery[dao.ITorrentContentDo]{
-				SubQuery: q.TorrentContent.WithContext(ctx).ReadDB(),
+				SubQuery: base,
 			}
 		},
 	)

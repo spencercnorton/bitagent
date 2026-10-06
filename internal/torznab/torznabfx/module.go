@@ -19,7 +19,7 @@ import (
 // so the fx.Provide signature stays compact.
 type torznabClientDeps struct {
 	fx.In
-	Search          lazy.Lazy[search.Search]
+	Search          lazy.Lazy[search.ServingSearch]
 	TorznabConfig   torznab.Config
 	EvidenceConfig  evidence.Config
 	LivenessStore   *liveness.Store

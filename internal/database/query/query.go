@@ -225,7 +225,10 @@ func (gq *genericQuery[T]) doItems() {
 
 				sql := dao.ToSQL(sqCte.UnderlyingDB()) + " LIMIT " + strconv.Itoa(stoppingPoint)
 
-				cte := gq.factory(raceCtx, gq.daoQ).UnderlyingDB().Clauses(
+				// The inner SELECT already contains mandatory base conditions.
+				// A fresh outer statement must not replay table-specific scopes
+				// against the CTE rather than the underlying table.
+				cte := gq.factory(raceCtx, gq.daoQ).UnderlyingDB().Session(&gorm.Session{NewDB: true}).Clauses(
 					exclause.NewWith("cte", sql, true),
 					exclause.NewWith("cte_count", "SELECT COUNT(*) AS total_count FROM cte", true),
 				).Table("cte").Where("(SELECT MAX(total_count) FROM cte_count) < " + strconv.Itoa(stoppingPoint))
@@ -322,7 +325,10 @@ func (gq *genericQuery[T]) doItemsGrouped() {
 	// Outer: re-order the representatives by the user's orderBy (_order_N aliases
 	// projected into the derived table by the inner) and paginate. applyPost adds
 	// the ORDER BY / LIMIT(+1 for hasNextPage) / OFFSET.
-	outerDB := gq.factory(gq.ctx, gq.daoQ).UnderlyingDB().Table("(" + innerSQL + ") AS grouped")
+	// The representative query has already enforced the base visibility scope.
+	// Replaying that scope against the derived alias can lose rows or reference
+	// a table absent from the outer FROM clause.
+	outerDB := gq.factory(gq.ctx, gq.daoQ).UnderlyingDB().Session(&gorm.Session{NewDB: true}).Table("(" + innerSQL + ") AS grouped")
 	if postErr := gq.builder.applyPost(outerDB); postErr != nil {
 		gq.addError(postErr)
 		return
