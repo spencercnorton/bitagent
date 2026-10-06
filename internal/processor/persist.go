@@ -1,8 +1,11 @@
 package processor
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
+	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/model"
@@ -12,6 +15,7 @@ import (
 )
 
 type persistPayload struct {
+	applications     map[protocol.ID]*classification.ApplicationPreservation
 	torrentContents  []model.TorrentContent
 	deleteIDs        []string
 	deleteInfoHashes []protocol.ID
@@ -118,6 +122,9 @@ func (c processor) persist(ctx context.Context, payload persistPayload) error {
 	}
 
 	return c.dao.Transaction(func(tx *dao.Query) error {
+		if err := guardPreservedApplications(ctx, tx, payload.applications); err != nil {
+			return err
+		}
 		if len(contentsPtr) > 0 {
 			if createContentErr := tx.Content.WithContext(ctx).Clauses(
 				clause.OnConflict{
@@ -178,4 +185,71 @@ func (c processor) persist(ctx context.Context, payload persistPayload) error {
 
 		return nil
 	})
+}
+
+// Recheck normal refreshes in their writing transaction. This closes the gap
+// between a read-only preservation lookup and the processor's UpdateAll upsert.
+func guardPreservedApplications(ctx context.Context, tx *dao.Query, guards map[protocol.ID]*classification.ApplicationPreservation) error {
+	if len(guards) == 0 {
+		return nil
+	}
+	db := tx.Torrent.WithContext(ctx).UnderlyingDB()
+	if err := db.Exec(`LOCK TABLE label_evidence,torrent_verdict_state,junkpurge_quarantine IN SHARE MODE`).Error; err != nil {
+		return err
+	}
+	for hash, g := range guards {
+		var matched bool
+		if err := db.Raw(`SELECT EXISTS(SELECT 1 FROM llm_work_applications a JOIN llm_work_tasks w USING(task_key) WHERE a.task_key=? AND a.info_hash=? AND a.source_digest=? AND a.policy_digest=? AND w.state='completed')`, g.TaskKey, hash.Bytes(), g.SourceDigest, g.PolicyDigest).Scan(&matched).Error; err != nil {
+			return err
+		}
+		if !matched {
+			return llmwork.ErrHeld
+		}
+		t, err := tx.Torrent.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where(tx.Torrent.InfoHash.Eq(hash)).Preload(tx.Torrent.Files, tx.Torrent.Hint).First()
+		if err != nil {
+			return err
+		}
+		if err = db.Exec(`SELECT 1 FROM torrent_files WHERE info_hash=? FOR SHARE`, hash.Bytes()).Error; err != nil {
+			return err
+		}
+		if err = db.Exec(`SELECT 1 FROM torrent_hints WHERE info_hash=? FOR SHARE`, hash.Bytes()).Error; err != nil {
+			return err
+		}
+		// Hydrate again after child locks to exclude a concurrent edit of an existing file.
+		t, err = tx.Torrent.WithContext(ctx).Where(tx.Torrent.InfoHash.Eq(hash)).Preload(tx.Torrent.Files, tx.Torrent.Hint).First()
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(llmwork.SourceDigest(*t), g.SourceDigest) {
+			return llmwork.ErrHeld
+		}
+		var blocked bool
+		if err = db.Raw(`SELECT EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=? AND source='qbittorrent' AND lower(category) IN('private','bitgrab')) OR EXISTS(SELECT 1 FROM torrent_verdict_state WHERE info_hash=? AND verdict IN('quarantined','blacklisted','tombstoned')) OR EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=? AND expired_at IS NULL)`, hash.Bytes(), hash.Bytes(), hash.Bytes()).Scan(&blocked).Error; err != nil {
+			return err
+		}
+		if blocked {
+			return llmwork.ErrHeld
+		}
+		rows, err := tx.TorrentContent.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where(tx.TorrentContent.InfoHash.Eq(hash)).Preload(tx.TorrentContent.Content).Find()
+		if err != nil {
+			return err
+		}
+		if len(rows) != 1 {
+			return llmwork.ErrHeld
+		}
+		snapshot := llmwork.NewApplicationSnapshot(llmwork.Kind(g.Kind), *rows[0], g.Tags)
+		if !bytes.Equal(llmwork.Digest(snapshot), g.SnapshotDigest) {
+			return llmwork.ErrHeld
+		}
+		for _, tag := range g.Tags {
+			var exists bool
+			if err = db.Raw(`SELECT EXISTS(SELECT 1 FROM torrent_tags WHERE info_hash=? AND name=?)`, hash.Bytes(), tag).Scan(&exists).Error; err != nil {
+				return err
+			}
+			if !exists {
+				return llmwork.ErrHeld
+			}
+		}
+	}
+	return nil
 }

@@ -3,6 +3,7 @@ package classification
 import "github.com/spencercnorton/bitagent/internal/model"
 
 type Result struct {
+	Preserved *ApplicationPreservation
 	ContentAttributes
 	Content *model.Content
 	Tags    map[string]struct{}

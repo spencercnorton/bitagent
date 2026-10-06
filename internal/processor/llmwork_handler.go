@@ -65,7 +65,7 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 		if x != nil {
 			return x
 		}
-		target, x = lockedUnknownDeferredTarget(c, tx, source, task.Kind == llmwork.Type)
+		target, x = lockedDeferredTarget(c, tx, source, task.Kind == llmwork.Type, task.Kind == llmwork.Language)
 		if x != nil {
 			return x
 		}
@@ -74,7 +74,34 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 	if err = load(ctx); err != nil {
 		return err
 	}
-	if err = llmwork.SetSourceRecheck(ctx, load); err != nil {
+	recheckTx := func(c context.Context, tx pgx.Tx) error {
+		current, x := lockedDeferredSource(c, tx, task)
+		if x != nil {
+			return x
+		}
+		nowTarget, x := lockedDeferredTarget(c, tx, current, task.Kind == llmwork.Type, task.Kind == llmwork.Language)
+		if x != nil {
+			return x
+		}
+		if !sameDeferredTarget(target, nowTarget) {
+			return llmwork.ErrObsolete
+		}
+		return nil
+	}
+	if err = llmwork.SetSourceRecheck(ctx, func(c context.Context) error {
+		tx, x := pool.Begin(c)
+		if x != nil {
+			return x
+		}
+		defer tx.Rollback(context.WithoutCancel(c))
+		if x = recheckTx(c, tx); x != nil {
+			return x
+		}
+		return tx.Commit(c)
+	}); err != nil {
+		return err
+	}
+	if err = llmwork.SetTransactionalSourceRecheck(ctx, recheckTx); err != nil {
 		return err
 	}
 	ctx = llmwork.WithSourceTorrent(ctx, source)
@@ -153,7 +180,11 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 			return err
 		}
 		result = llmwork.NewApplicationSnapshot(llmwork.Language, target, nil).Result()
-		if !bytes.Equal(llmwork.Digest(p.Input), llmwork.Digest(torrentToFilterInput(source, result))) || !bytes.Equal(p.Source.InfoHash, task.InfoHash) || !bytes.Equal(p.Source.GroupKey, []byte(contentfilter.EvaluationGroupKey(source.Name))) {
+		group := []byte(contentfilter.EvaluationGroupKey(source.Name))
+		if result.Content != nil {
+			group = []byte(fmt.Sprintf("%s\x00%s\x00%s", result.Content.Type, result.Content.Source, result.Content.ID))
+		}
+		if !bytes.Equal(llmwork.Digest(p.Input), llmwork.Digest(torrentToFilterInput(source, result))) || !bytes.Equal(p.Source.InfoHash, task.InfoHash) || !bytes.Equal(p.Source.GroupKey, group) {
 			return llmwork.ErrObsolete
 		}
 		policy = h.Filter.WorkPolicy()
@@ -240,7 +271,7 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 		if x != nil {
 			return x
 		}
-		before, x := lockedUnknownDeferredTarget(ctx, tx, current, task.Kind == llmwork.Type)
+		before, x := lockedDeferredTarget(ctx, tx, current, task.Kind == llmwork.Type, task.Kind == llmwork.Language)
 		if x != nil {
 			return x
 		}
@@ -272,7 +303,7 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 			episodes, _ := json.Marshal(after.Episodes)
 			changed, x := tx.Exec(ctx, `UPDATE torrent_contents SET content_type=$2,content_source=$3,content_id=$4,languages=$5::jsonb,episodes=$6::jsonb,
 video_resolution=$7,video_source=$8,video_codec=$9,video_3d=$10,video_modifier=$11,release_group=$12,english_audio=$13,english_audio_source=$14,
-release_granularity=$15,release_date=$16,anime_absolute_episode=$17,is_anime=$18,tsv=$19,updated_at=now() WHERE id=$1 AND content_source IS NULL AND content_id IS NULL`, before.ID, after.ContentType, after.ContentSource, after.ContentID, string(languages), string(episodes), after.VideoResolution, after.VideoSource, after.VideoCodec, after.Video3D, after.VideoModifier, after.ReleaseGroup, after.EnglishAudio, after.EnglishAudioSource, after.ReleaseGranularity, after.ReleaseDate, after.AnimeAbsoluteEpisode, after.IsAnime, after.Tsv)
+release_granularity=$15,release_date=$16,anime_absolute_episode=$17,is_anime=$18,tsv=$19::tsvector,updated_at=now() WHERE id=$1 AND content_source IS NULL AND content_id IS NULL`, before.ID, after.ContentType, after.ContentSource, after.ContentID, string(languages), string(episodes), after.VideoResolution, after.VideoSource, after.VideoCodec, after.Video3D, after.VideoModifier, after.ReleaseGroup, after.EnglishAudio, after.EnglishAudioSource, after.ReleaseGranularity, after.ReleaseDate, after.AnimeAbsoluteEpisode, after.IsAnime, after.Tsv.String())
 			if x != nil {
 				return x
 			}
@@ -326,7 +357,7 @@ func ensureDeferredContent(ctx context.Context, tx pgx.Tx, tc *model.TorrentCont
 	if c.Source == "" || c.ID == "" || c.Title == "" {
 		return llmwork.ErrObsolete
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO content(type,source,id,title,release_year,original_language,original_title,adult,tsv,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),now()) ON CONFLICT DO NOTHING`, c.Type.String(), c.Source, c.ID, c.Title, c.ReleaseYear, c.OriginalLanguage, c.OriginalTitle, c.Adult, c.Tsv)
+	_, err := tx.Exec(ctx, `INSERT INTO content(type,source,id,title,release_year,original_language,original_title,adult,tsv,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::tsvector,now(),now()) ON CONFLICT DO NOTHING`, c.Type.String(), c.Source, c.ID, c.Title, c.ReleaseYear, c.OriginalLanguage, c.OriginalTitle, c.Adult, c.Tsv.String())
 	if err != nil {
 		return err
 	}

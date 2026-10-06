@@ -18,6 +18,7 @@ import (
 // not a provider response, a canonical identity label or independently reviewed
 // gold. Source text and model response bytes are deliberately absent.
 type ApplicationSnapshot struct {
+	guard              *classification.ApplicationPreservation
 	content            *model.Content
 	Schema             string                    `json:"schema"`
 	Kind               Kind                      `json:"kind"`
@@ -34,6 +35,7 @@ type ApplicationSnapshot struct {
 	ReleaseGroup       model.NullString          `json:"releaseGroup"`
 	EnglishAudio       model.NullEnglishAudio    `json:"englishAudio"`
 	EnglishAudioSource model.NullString          `json:"englishAudioSource"`
+	ReleaseDate        model.Date                `json:"releaseDate"`
 	ContentCreatedAt   time.Time                 `json:"contentCreatedAt"`
 	Tags               []string                  `json:"tags"`
 }
@@ -41,13 +43,13 @@ type ApplicationSnapshot struct {
 func NewApplicationSnapshot(kind Kind, tc model.TorrentContent, tags []string) ApplicationSnapshot {
 	sorted := append([]string(nil), tags...)
 	sort.Strings(sorted)
-	return ApplicationSnapshot{&tc.Content, "llm-application-v1", kind, tc.ContentType, tc.ContentSource, tc.ContentID,
+	return ApplicationSnapshot{nil, &tc.Content, "llm-application-v1", kind, tc.ContentType, tc.ContentSource, tc.ContentID,
 		tc.Languages, tc.Episodes, tc.VideoResolution, tc.VideoSource, tc.VideoCodec, tc.Video3D, tc.VideoModifier,
-		tc.ReleaseGroup, tc.EnglishAudio, tc.EnglishAudioSource, tc.Content.CreatedAt, sorted}
+		tc.ReleaseGroup, tc.EnglishAudio, tc.EnglishAudioSource, tc.ReleaseDate, tc.Content.CreatedAt, sorted}
 }
 
 func (a ApplicationSnapshot) Attributes() classification.ContentAttributes {
-	return classification.ContentAttributes{ContentType: a.ContentType, Languages: a.Languages, Episodes: a.Episodes,
+	return classification.ContentAttributes{ContentType: a.ContentType, Date: a.ReleaseDate, Languages: a.Languages, Episodes: a.Episodes,
 		VideoResolution: a.VideoResolution, VideoSource: a.VideoSource, VideoCodec: a.VideoCodec,
 		Video3D: a.Video3D, VideoModifier: a.VideoModifier, ReleaseGroup: a.ReleaseGroup}
 }
@@ -100,10 +102,17 @@ func (s *Store) PreservePolicy(ctx context.Context, kind Kind, t model.Torrent, 
 		return nil, err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
-	var raw, source, policyHash []byte
-	err = tx.QueryRow(ctx, `SELECT a.applied_snapshot,a.source_digest,a.policy_digest FROM llm_work_applications a JOIN llm_work_tasks w USING(task_key)
- WHERE a.info_hash=$1 AND w.kind=$2 AND w.state='completed' ORDER BY a.applied_at DESC LIMIT 1 FOR SHARE OF a,w`, t.InfoHash.Bytes(), string(kind)).Scan(&raw, &source, &policyHash)
+	var raw, source, policyHash, key []byte
+	err = tx.QueryRow(ctx, `SELECT a.applied_snapshot,a.source_digest,a.policy_digest,a.task_key FROM llm_work_applications a JOIN llm_work_tasks w USING(task_key)
+ WHERE a.info_hash=$1 AND w.kind=$2 AND w.state='completed' ORDER BY a.applied_at DESC LIMIT 1 FOR SHARE OF a,w`, t.InfoHash.Bytes(), string(kind)).Scan(&raw, &source, &policyHash, &key)
 	if errors.Is(err, pgx.ErrNoRows) {
+		var completed bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM llm_work_tasks WHERE info_hash=$1 AND kind=$2 AND state='completed')`, t.InfoHash.Bytes(), string(kind)).Scan(&completed); err != nil {
+			return nil, err
+		}
+		if completed {
+			return nil, ErrHeld
+		}
 		return nil, tx.Commit(ctx)
 	}
 	if err != nil {
@@ -126,7 +135,8 @@ func (s *Store) PreservePolicy(ctx context.Context, kind Kind, t model.Torrent, 
 		return nil, ErrHeld
 	}
 	var tc model.TorrentContent
-	rows, err := tx.Query(ctx, `SELECT content_type,content_source,content_id,languages,episodes,video_resolution,video_source,video_codec,video_3d,video_modifier,release_group,english_audio,english_audio_source
+	var languages, episodes []byte
+	rows, err := tx.Query(ctx, `SELECT content_type,content_source,content_id,languages,episodes,video_resolution,video_source,video_codec,video_3d,video_modifier,release_group,english_audio,english_audio_source,release_date
  FROM torrent_contents WHERE info_hash=$1 FOR SHARE`, t.InfoHash.Bytes())
 	if err != nil {
 		return nil, err
@@ -134,8 +144,20 @@ func (s *Store) PreservePolicy(ctx context.Context, kind Kind, t model.Torrent, 
 	n := 0
 	for rows.Next() {
 		n++
-		err = rows.Scan(&tc.ContentType, &tc.ContentSource, &tc.ContentID, &tc.Languages, &tc.Episodes, &tc.VideoResolution, &tc.VideoSource, &tc.VideoCodec, &tc.Video3D, &tc.VideoModifier, &tc.ReleaseGroup, &tc.EnglishAudio, &tc.EnglishAudioSource)
+		err = rows.Scan(&tc.ContentType, &tc.ContentSource, &tc.ContentID, &languages, &episodes, &tc.VideoResolution, &tc.VideoSource, &tc.VideoCodec, &tc.Video3D, &tc.VideoModifier, &tc.ReleaseGroup, &tc.EnglishAudio, &tc.EnglishAudioSource, &tc.ReleaseDate)
 		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+	}
+	if len(languages) > 0 {
+		if err = json.Unmarshal(languages, &tc.Languages); err != nil {
+			rows.Close()
+			return nil, err
+		}
+	}
+	if len(episodes) > 0 {
+		if err = json.Unmarshal(episodes, &tc.Episodes); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -150,7 +172,7 @@ func (s *Store) PreservePolicy(ctx context.Context, kind Kind, t model.Torrent, 
 	}
 	if tc.ContentID.Valid {
 		tc.Content.Type, tc.Content.Source, tc.Content.ID = tc.ContentType.ContentType, tc.ContentSource.String, tc.ContentID.String
-		err = tx.QueryRow(ctx, `SELECT title,release_year,original_language,original_title,adult,tsv,created_at,updated_at FROM content WHERE type=$1 AND source=$2 AND id=$3 FOR SHARE`, tc.ContentType.ContentType.String(), tc.ContentSource.String, tc.ContentID.String).Scan(&tc.Content.Title, &tc.Content.ReleaseYear, &tc.Content.OriginalLanguage, &tc.Content.OriginalTitle, &tc.Content.Adult, &tc.Content.Tsv, &tc.Content.CreatedAt, &tc.Content.UpdatedAt)
+		err = tx.QueryRow(ctx, `SELECT title,release_year,original_language,original_title,adult,tsv::text,created_at,updated_at FROM content WHERE type=$1 AND source=$2 AND id=$3 FOR SHARE`, tc.ContentType.ContentType.String(), tc.ContentSource.String, tc.ContentID.String).Scan(&tc.Content.Title, &tc.Content.ReleaseYear, &tc.Content.OriginalLanguage, &tc.Content.OriginalTitle, &tc.Content.Adult, &tc.Content.Tsv, &tc.Content.CreatedAt, &tc.Content.UpdatedAt)
 		if err != nil {
 			return nil, ErrHeld
 		}
@@ -178,13 +200,14 @@ func (s *Store) PreservePolicy(ctx context.Context, kind Kind, t model.Torrent, 
 		return nil, err
 	}
 	a.content = &tc.Content
+	a.guard = &classification.ApplicationPreservation{TaskKey: key, SourceDigest: source, PolicyDigest: policyHash, SnapshotDigest: Digest(a), Kind: string(kind), Tags: append([]string(nil), a.Tags...)}
 	return &a, nil
 }
 
 // Result carries stored catalogue identity without allowing normal persistence
 // to replace its authoritative content record.
 func (a ApplicationSnapshot) Result() classification.Result {
-	r := classification.Result{ContentAttributes: a.Attributes(), Tags: map[string]struct{}{}}
+	r := classification.Result{Preserved: a.guard, ContentAttributes: a.Attributes(), Tags: map[string]struct{}{}}
 	for _, tag := range a.Tags {
 		r.Tags[tag] = struct{}{}
 	}

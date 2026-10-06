@@ -3,6 +3,7 @@ package llmwork
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
 	"github.com/spencercnorton/bitagent/internal/model"
@@ -64,10 +65,21 @@ OR EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=$1 AND expired_at I
 	if err != nil {
 		return t, err
 	}
+	var languages, episodes []byte
 	err = tx.QueryRow(ctx, `SELECT info_hash,content_type,content_source,content_id,title,release_year,languages,episodes,video_resolution,video_source,video_codec,video_3d,video_modifier,release_group,created_at,updated_at
-FROM torrent_hints WHERE info_hash=$1 FOR SHARE`, task.InfoHash).Scan(&t.Hint.InfoHash, &t.Hint.ContentType, &t.Hint.ContentSource, &t.Hint.ContentID, &t.Hint.Title, &t.Hint.ReleaseYear, &t.Hint.Languages, &t.Hint.Episodes, &t.Hint.VideoResolution, &t.Hint.VideoSource, &t.Hint.VideoCodec, &t.Hint.Video3D, &t.Hint.VideoModifier, &t.Hint.ReleaseGroup, &t.Hint.CreatedAt, &t.Hint.UpdatedAt)
+FROM torrent_hints WHERE info_hash=$1 FOR SHARE`, task.InfoHash).Scan(&t.Hint.InfoHash, &t.Hint.ContentType, &t.Hint.ContentSource, &t.Hint.ContentID, &t.Hint.Title, &t.Hint.ReleaseYear, &languages, &episodes, &t.Hint.VideoResolution, &t.Hint.VideoSource, &t.Hint.VideoCodec, &t.Hint.Video3D, &t.Hint.VideoModifier, &t.Hint.ReleaseGroup, &t.Hint.CreatedAt, &t.Hint.UpdatedAt)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return t, err
+	}
+	if len(languages) > 0 {
+		if err = json.Unmarshal(languages, &t.Hint.Languages); err != nil {
+			return t, err
+		}
+	}
+	if len(episodes) > 0 {
+		if err = json.Unmarshal(episodes, &t.Hint.Episodes); err != nil {
+			return t, err
+		}
 	}
 	if !bytes.Equal(SourceDigest(t), task.SourceDigest) {
 		return t, ErrObsolete

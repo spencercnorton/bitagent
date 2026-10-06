@@ -162,6 +162,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 
 	tcs := make([]model.TorrentContent, 0, len(searchResult.Torrents))
 
+	preserved := map[protocol.ID]*classification.ApplicationPreservation{}
 	tagsToAdd := make(map[protocol.ID]map[string]struct{})
 
 	failedHashes := make([]protocol.ID, 0, len(searchResult.MissingInfoHashes))
@@ -177,6 +178,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		go func(torrent model.Torrent) {
 			defer wg.Done()
 
+			sourceTorrent := torrent
 			thisDeleteIDs := make(map[string]struct{}, len(torrent.Contents))
 			foundMatch := false
 
@@ -198,7 +200,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 
 			// Per-run sideband for the LLM matcher's English-track read —
 			// survives the find_match result discard on unmatched outcomes.
-			runCtx := llmsignal.WithHolder(ctx)
+			runCtx := llmwork.WithSourceTorrent(llmsignal.WithHolder(ctx), sourceTorrent)
 
 			cl, classifyErr := c.runner.Run(runCtx, workflowName, params.ClassifierFlags, torrent)
 
@@ -281,7 +283,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 							"%s\x00%s\x00%s", cl.Content.Type, cl.Content.Source, cl.Content.ID,
 						))
 					}
-					d, filterErr := c.contentFilter.DecideAudited(llmwork.WithSourceTorrent(ctx, torrent), fi, contentfilter.AuditSource{
+					d, filterErr := c.contentFilter.DecideAudited(llmwork.WithSourceTorrent(ctx, sourceTorrent), fi, contentfilter.AuditSource{
 						InfoHash: torrent.InfoHash.Bytes(), GroupKey: groupKey,
 					})
 					if filterErr != nil {
@@ -329,6 +331,9 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 				}
 
 				tcs = append(tcs, torrentContent)
+				if cl.Preserved != nil {
+					preserved[torrent.InfoHash] = cl.Preserved
+				}
 
 				if len(cl.Tags) > 0 {
 					tagsToAdd[torrent.InfoHash] = cl.Tags
@@ -343,6 +348,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 	// classifier/content-filter drops and no replacement TorrentContent rows.
 	payload := persistPayload{
 		torrentContents:  tcs,
+		applications:     preserved,
 		deleteIDs:        idsToDelete,
 		deleteInfoHashes: infoHashesToDelete,
 		addTags:          tagsToAdd,

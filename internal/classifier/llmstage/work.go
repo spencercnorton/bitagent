@@ -95,6 +95,9 @@ func (s *Stage) WorkInputDigest(t model.Torrent) []byte {
 // before ordinary workflow actions can replace it.
 func (s *Stage) SetMatcherWork(c *llmmatch.Client) { s.matcherWork = c }
 func (s *Stage) preserveWork(ctx context.Context, t model.Torrent, p WorkPayload) (*llmwork.ApplicationSnapshot, error) {
+	if source, ok := llmwork.SourceTorrent(ctx); ok {
+		t = source
+	}
 	if s.matcherWork != nil {
 		a, err := s.work.PreservePolicy(ctx, llmwork.Matcher, t, func(a llmwork.ApplicationSnapshot) any {
 			return s.matcherWork.WorkPolicy(llmmatch.WorkPayload{Type: a.ContentType})
