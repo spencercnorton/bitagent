@@ -61,14 +61,7 @@ func New(params Params) Result {
 				celEnvOption,
 			},
 			dependencies: dependencies{
-				search: localSearchSemaphore{
-					search: localSearch{
-						Search:            s,
-						altTitleMatch:     params.Config.AltTitleMatch,
-						fuzzyMatchEnabled: params.Config.FuzzyMatchEnabled,
-					},
-					semaphore: make(chan struct{}, 1),
-				},
+				search:                NewLocalSearch(s, params.Config),
 				tmdbClient:            tmdbClient,
 				llmMatch:              params.LlmMatch,
 				matchDecisionObserver: params.MatchDecisionObserver,

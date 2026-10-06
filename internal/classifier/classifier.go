@@ -50,6 +50,9 @@ type executionContext struct {
 	torrentPb *protobuf.Torrent
 	result    classification.Result
 	resultPb  *protobuf.Classification
+	// Shared only by actions in this Run, including nested workflows. The state
+	// cannot leak to another torrent or admit recursive fallback enrichment.
+	typeFallback *typeFallbackRunState
 }
 
 func (c executionContext) withResult(result classification.Result) executionContext {

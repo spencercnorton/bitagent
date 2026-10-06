@@ -23,6 +23,7 @@ var Enums = []enum{
 	newEnum("FileType", model.FileTypeNames()),
 	newEnum("FilesStatus", model.FilesStatusNames()),
 	newEnum("Language", model.LanguageValueStrings()),
+	newEnum("EnglishAudio", model.EnglishAudioNames()),
 	newEnum("Video3D", model.Video3DNames()),
 	newEnum("VideoCodec", model.VideoCodecNames()),
 	newEnum("VideoModifier", model.VideoModifierNames()),

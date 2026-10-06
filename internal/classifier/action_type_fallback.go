@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 // TypeFallback supplies an optional type-only prediction at the workflow's
@@ -12,6 +13,11 @@ import (
 type TypeFallback func(context.Context, classification.Result) (classification.Result, error)
 
 type typeFallbackContextKey struct{}
+
+type typeFallbackRunState struct {
+	typeApplied model.NullContentType
+	enriched    bool
+}
 
 // WithTypeFallback installs a callback without coupling the workflow compiler
 // to a provider or creating a classifier/LLM-stage dependency cycle.
@@ -48,7 +54,15 @@ func (typeFallbackAction) compileAction(ctx compilerContext) (action, error) {
 		return action{}, ctx.error(err)
 	}
 	return action{run: func(ctx executionContext) (classification.Result, error) {
-		return RunTypeFallback(ctx.Context, ctx.result)
+		result, err := RunTypeFallback(ctx.Context, ctx.result)
+		if err == nil && ctx.typeFallback != nil &&
+			!ctx.result.ContentType.Valid && ctx.result.Content == nil &&
+			result.Content == nil && result.ContentType.Valid &&
+			(result.ContentType.ContentType == model.ContentTypeMovie ||
+				result.ContentType.ContentType == model.ContentTypeTvShow) {
+			ctx.typeFallback.typeApplied = result.ContentType
+		}
+		return result, err
 	}}, nil
 }
 

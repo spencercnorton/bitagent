@@ -37,6 +37,19 @@ type localSearch struct {
 	fuzzyMatchEnabled bool
 }
 
+// NewLocalSearch wraps a database search with the classifier's local candidate
+// and alias policy. The shared semaphore bounds its database work; no metadata
+// API or model client is constructed.
+func NewLocalSearch(backend search.Search, cfg Config) LocalSearch {
+	if backend == nil {
+		return nil
+	}
+	return localSearchSemaphore{
+		search:    localSearch{Search: backend, altTitleMatch: cfg.AltTitleMatch, fuzzyMatchEnabled: cfg.FuzzyMatchEnabled},
+		semaphore: make(chan struct{}, 1),
+	}
+}
+
 // contentMatchCandidates returns the title strings a search result may be
 // matched against: the canonical title, the original title, and — when
 // altTitleMatch is enabled — any stored alternative/translated titles.

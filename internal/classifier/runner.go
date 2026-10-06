@@ -97,6 +97,7 @@ func (r runner) Run(ctx context.Context, workflow string, flags Flags, t model.T
 		torrent:      t,
 		torrentPb:    protobuf.NewTorrent(t),
 		result:       cl,
+		typeFallback: &typeFallbackRunState{},
 	}
 
 	return w.run(exCtx)

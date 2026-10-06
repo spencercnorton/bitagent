@@ -56,6 +56,27 @@ Test Torznab capabilities and a synthetic request before connecting a full
 client stack. Evaluate optional processing in shadow/dry-run mode before
 accepting live verdicts or deletion.
 
+## Quarantine maintenance
+
+Quarantine expiry retains snapshots indefinitely; it does not delete them or
+blacklist a hash. Maintenance processes oldest eligible snapshots in chunks of
+at most 256, with at most 1,024 transitions before candidate work in a cycle.
+The existing unexpired-snapshot index keeps the retained archive out of that
+scan. A larger backlog remains eligible for later ordinary cycles.
+
+When the verdict ledger is configured, each expiry chunk commits its marker,
+current state and events together. A failed or canceled chunk rolls back and
+can be retried normally; committed chunks are not repeated. Restore and explicit
+deletion also commit their ledger transition with the snapshot operation.
+Ledger failures therefore fail those operator actions while retaining their
+original snapshot, rather than report success with inconsistent state.
+
+Restore validates the locked snapshot after acquiring the raw-torrent lock.
+If another operation refreshed or removed that snapshot, the restore rolls
+back; an operator can review the current version and retry. Delayed quarantine
+observations cannot change a completed restore, deletion or expiry back to
+quarantined.
+
 ## Backup, upgrade and recovery
 
 Back up PostgreSQL and optional configuration/data volumes. Store secrets

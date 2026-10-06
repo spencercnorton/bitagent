@@ -10,9 +10,18 @@
   source/policy identities, time-stratum capacity and owned worker leases.
   Provider dispatch fencing and targeted application are qualified separately
   before this worker can be enabled.
+- Recognize explicit HEVC/H.265 and AV1 codec claims while preserving existing
+  serialized codec values. Infer supported scene groups independently of codec
+  recognition and retain unknown or contradictory metadata as unknown.
 
 - Parse explicit `WEB-DL`, `WEB.DL` and `WEBDL` source tokens consistently,
   preferring compound source aliases before their shorter prefixes.
+- Parse release attributes and resolve unique local identities after a new
+  movie/TV type fallback, within the existing content policy. The continuation
+  runs once and makes no additional model or metadata API request.
+- Commit bounded quarantine expiry chunks together with their verdict state and
+  audit events. Restore and explicit deletion commit their ledger transition
+  atomically; failed chunks retain snapshots and remain retryable.
 
 - Bind matcher extraction cache entries to rendered file evidence and request
   routing. Group responses have a separate exact-request cache and cannot warm
