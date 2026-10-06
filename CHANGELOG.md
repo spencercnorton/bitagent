@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Apply deferred model receipts with source-bound compare-and-set transactions and retain committed facts across ordinary refreshes and response expiry.
+
 - Add an opt-in durable request dispatch fence and bounded replay of retained
   first responses. Known pre-dispatch deferrals remain retryable; uncertain
   dispatches stay held even after ordinary capture retention.

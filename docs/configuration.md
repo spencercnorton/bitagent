@@ -402,3 +402,19 @@ See [reference/cli.md](reference/cli.md) for the full CLI surface.
 - [reference/metrics.md](reference/metrics.md)
 - [csam-defense.md](csam-defense.md)
 - [operations/security.md](operations/security.md)
+
+Deferred tasks apply through a narrow compare-and-set adapter. A type task can
+only enrich one still-unknown, unattached public row with a qualified movie/TV
+prediction and local metadata. A matcher task must retain the normal final
+identity, year, confidence and audit checks before attaching an identity. A
+language task can add the audited review tag; it cannot remove content. Current
+source files, hints, privacy, quarantine, policy, request and response receipts
+are rechecked before dispatch and in the transaction that writes the target,
+tags, application provenance and task completion.
+
+Committed application facts are retained separately from expiring provider
+bodies. Ordinary processing may preserve those facts after response retention
+ends, including after a restart, only while current source, policy, target and
+tags still match. A missing or changed fact holds processing for explicit
+reconciliation. Preservation does not authorize another provider request and
+is checked again inside the ordinary persistence transaction.
