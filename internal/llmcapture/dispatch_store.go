@@ -151,6 +151,7 @@ FROM llm_capture_dispatch_attempts WHERE capture_key=$1 FOR UPDATE`, req.Capture
 		return lease, DispatchUnknown, err
 	}
 	if !newFence && (existingTask != string(req.Task) || existingSource != string(req.CandidateSource) ||
+		(len(existingTaskKey) > 0 && req.Case == nil) ||
 		(req.Case != nil && len(existingTaskKey) > 0 && !bytes.Equal(existingTaskKey, req.Case.TaskKey))) {
 		return lease, DispatchUnknown, ErrDispatchLease
 	}
@@ -178,7 +179,7 @@ FROM llm_evaluation_capture_results WHERE capture_key=$1 AND octet_length(respon
 VALUES ($1,$2,$3,$4,'result',$5,$6,$7,clock_timestamp())
 ON CONFLICT(capture_key) DO UPDATE SET state='result',response_sha256=EXCLUDED.response_sha256,
  http_status=EXCLUDED.http_status,error_class=EXCLUDED.error_class,result_at=COALESCE(llm_capture_dispatch_attempts.result_at,EXCLUDED.result_at),
- updated_at=clock_timestamp()
+ task_key=COALESCE(llm_capture_dispatch_attempts.task_key,EXCLUDED.task_key),updated_at=clock_timestamp()
 WHERE llm_capture_dispatch_attempts.response_sha256 IS NULL OR llm_capture_dispatch_attempts.response_sha256=EXCLUDED.response_sha256`,
 			req.CaptureKey, string(req.Task), string(req.CandidateSource), taskKey, digest, status, errorClass)
 		if err != nil {
@@ -271,10 +272,11 @@ func (d *PostgresDispatchController) Reserve(ctx context.Context, lease Dispatch
 	defer func() { _ = tx.Rollback(ctx) }()
 	var task Task
 	var reusable bool
-	err = tx.QueryRow(ctx, `SELECT task,COALESCE(reserved_day=(clock_timestamp() AT TIME ZONE 'UTC')::date AND budget_scope=$4,false)
+	var linkedTask []byte
+	err = tx.QueryRow(ctx, `SELECT task,COALESCE(reserved_day=(clock_timestamp() AT TIME ZONE 'UTC')::date AND budget_scope=$4,false),task_key
 FROM llm_capture_dispatch_attempts WHERE capture_key=$1 AND lease_owner=$2 AND lease_generation=$3
  AND lease_until>clock_timestamp() AND state IN ('prepared','admitted') FOR UPDATE`, lease.CaptureKey, lease.Owner, lease.Generation, scope).
-		Scan(&task, &reusable)
+		Scan(&task, &reusable, &linkedTask)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrDispatchLease
 	}
@@ -282,6 +284,9 @@ FROM llm_capture_dispatch_attempts WHERE capture_key=$1 AND lease_owner=$2 AND l
 		return false, err
 	}
 	if dispatchScope(task) != scope {
+		return false, ErrDispatchLease
+	}
+	if len(linkedTask) > 0 && (lease.Case == nil || !bytes.Equal(linkedTask, lease.Case.TaskKey)) {
 		return false, ErrDispatchLease
 	}
 	if daily <= 0 || monthly <= 0 {
@@ -348,9 +353,9 @@ func (d *PostgresDispatchController) BeginDispatch(ctx context.Context, lease Di
 WHERE d.capture_key=$1 AND d.lease_owner=$2 AND d.lease_generation=$3 AND d.lease_until>clock_timestamp()
  AND d.state='admitted' AND d.reserved_day=(clock_timestamp() AT TIME ZONE 'UTC')::date
  AND EXISTS (`+resultPublicAdmissionSQL+`)
- AND ($4::bytea IS NULL OR EXISTS(SELECT 1 FROM llm_work_tasks w
+ AND ((d.task_key IS NULL AND $4::bytea IS NULL) OR (d.task_key=$4 AND EXISTS(SELECT 1 FROM llm_work_tasks w
   WHERE w.task_key=$4 AND w.state='leased' AND w.lease_owner=$5 AND w.lease_generation=$6
-   AND w.lease_until>clock_timestamp() AND w.source_digest=$7 AND w.policy_digest=$8))`, args...)
+   AND w.lease_until>clock_timestamp() AND w.source_digest=$7 AND w.policy_digest=$8)))`, args...)
 	if err != nil {
 		return err
 	}
@@ -483,7 +488,7 @@ WHERE d.task_key=$1 AND d.capture_key=r.capture_key AND d.state IN ('intent','un
    AND r.response_sha256=d.response_sha256 AND r.http_status>0
    AND octet_length(r.response_body)<=$2) AS replayable,
  d.state IN ('prepared','no_dispatch','admitted') AS safe_to_retry
-FROM llm_capture_dispatch_attempts d WHERE task_key=$1 ORDER BY capture_key`, taskKey, MaxResultBodyBytes)
+FROM llm_capture_dispatch_attempts d WHERE task_key=$1 ORDER BY capture_key LIMIT 257`, taskKey, MaxResultBodyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -495,6 +500,9 @@ FROM llm_capture_dispatch_attempts d WHERE task_key=$1 ORDER BY capture_key`, ta
 			return nil, err
 		}
 		out = append(out, item)
+		if len(out) > 256 {
+			return nil, fmt.Errorf("%w: request recovery exceeds bounded case limit", ErrCaptureUnavailable)
+		}
 	}
 	return out, rows.Err()
 }

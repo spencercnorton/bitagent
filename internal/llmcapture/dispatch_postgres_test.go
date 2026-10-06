@@ -1,6 +1,7 @@
 package llmcapture
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -200,6 +201,85 @@ UPDATE llm_evaluation_capture_admissions SET expires_at=clock_timestamp()-interv
 		var state string
 		require.NoError(t, pool.QueryRow(ctx, `SELECT state FROM llm_capture_dispatch_attempts`).Scan(&state))
 		require.Equal(t, "admitted", state)
+	})
+
+	for _, point := range []string{"admission", "commit"} {
+		t.Run("budget and "+point+" failure roll back together", func(t *testing.T) {
+			ctx, pool, _, _, controller, _, binding := dispatchFixture(t)
+			lease, _, err := controller.Prepare(ctx, binding)
+			require.NoError(t, err)
+			_, err = pool.Exec(ctx, `CREATE FUNCTION synthetic_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN IF NEW.state='admitted' THEN RAISE EXCEPTION 'synthetic admission failure'; END IF; RETURN NEW; END $$`)
+			require.NoError(t, err)
+			trigger := "CREATE TRIGGER fail_admission BEFORE UPDATE ON llm_capture_dispatch_attempts FOR EACH ROW EXECUTE FUNCTION synthetic_failure()"
+			if point == "commit" {
+				trigger = "CREATE CONSTRAINT TRIGGER fail_admission AFTER UPDATE ON llm_capture_dispatch_attempts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION synthetic_failure()"
+			}
+			_, err = pool.Exec(ctx, trigger)
+			require.NoError(t, err)
+			allowed, err := controller.Reserve(ctx, lease, "matcher", 15, 450)
+			require.Error(t, err)
+			require.False(t, allowed)
+			var untouched bool
+			require.NoError(t, pool.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM llm_request_budgets)
+AND EXISTS(SELECT 1 FROM llm_capture_dispatch_attempts WHERE state='prepared')`).Scan(&untouched))
+			require.True(t, untouched)
+			_, err = pool.Exec(ctx, "DROP TRIGGER fail_admission ON llm_capture_dispatch_attempts")
+			require.NoError(t, err)
+			allowed, err = controller.Reserve(ctx, lease, "matcher", 15, 450)
+			require.NoError(t, err)
+			require.True(t, allowed)
+		})
+	}
+
+	t.Run("joint source-case generation fence and late first-result recovery", func(t *testing.T) {
+		ctx, pool, _, recorder, controller, req, binding := dispatchFixture(t)
+		fence := &CaseFence{TaskKey: bytes.Repeat([]byte{31}, 32), LeaseOwner: "synthetic_owner", LeaseGeneration: 1,
+			SourceDigest: bytes.Repeat([]byte{32}, 32), PolicyDigest: bytes.Repeat([]byte{33}, 32)}
+		_, err := pool.Exec(ctx, `INSERT INTO llm_work_tasks
+(task_key,kind,info_hash,source_digest,policy_digest,input_digest,family_digest,payload,priority,time_bucket,daily_limit,monthly_limit,state,lease_owner,lease_generation,lease_until,expires_at)
+VALUES ($1,'matcher',$2,$3,$4,$3,$4,'{}'::jsonb,50,0,15,450,'leased',$5,1,clock_timestamp()+interval '1 minute',clock_timestamp()+interval '1 day')`,
+			fence.TaskKey, req.InfoHash, fence.SourceDigest, fence.PolicyDigest, fence.LeaseOwner)
+		require.NoError(t, err)
+		binding.Case = fence
+		lease, _, err := controller.Prepare(ctx, binding)
+		require.NoError(t, err)
+		allowed, err := controller.Reserve(ctx, lease, "matcher", 15, 450)
+		require.NoError(t, err)
+		require.True(t, allowed)
+		_, err = pool.Exec(ctx, `UPDATE llm_work_tasks SET lease_generation=2 WHERE task_key=$1`, fence.TaskKey)
+		require.NoError(t, err)
+		require.ErrorIs(t, controller.BeginDispatch(ctx, lease), ErrDispatchLease)
+		_, err = pool.Exec(ctx, `UPDATE llm_work_tasks SET lease_generation=1 WHERE task_key=$1`, fence.TaskKey)
+		require.NoError(t, err)
+		require.NoError(t, controller.BeginDispatch(ctx, lease))
+		// The process dies after immutable recording but before ObserveResult.
+		_, err = recorder.RecordHTTPResult(ctx, binding.CaptureKey, HTTPResult{Body: []byte(`{"first":true}`), StatusCode: 200, ErrorClass: "none"})
+		require.NoError(t, err)
+		recovery, err := controller.TaskRecovery(ctx, fence.TaskKey)
+		require.NoError(t, err)
+		require.Len(t, recovery, 1)
+		require.Equal(t, "result", recovery[0].State)
+		require.True(t, recovery[0].Replayable)
+		require.False(t, recovery[0].SafeToRetry)
+	})
+
+	t.Run("monthly denial reports next month without changing limits", func(t *testing.T) {
+		ctx, pool, _, _, controller, _, binding := dispatchFixture(t)
+		_, err := pool.Exec(ctx, `INSERT INTO llm_request_budgets(scope,month_start,day_start,daily_calls,monthly_calls)
+VALUES ('matcher',date_trunc('month',now() AT TIME ZONE 'UTC')::date,(now() AT TIME ZONE 'UTC')::date,0,450)`)
+		require.NoError(t, err)
+		lease, _, err := controller.Prepare(ctx, binding)
+		require.NoError(t, err)
+		allowed, err := controller.Reserve(ctx, lease, "matcher", 15, 450)
+		require.False(t, allowed)
+		var deferred *DispatchDeferredError
+		require.ErrorAs(t, err, &deferred)
+		require.Equal(t, "monthly_budget", deferred.Reason)
+		require.Equal(t, 1, deferred.RetryAfterUTC.Day())
+		var calls int
+		require.NoError(t, pool.QueryRow(ctx, `SELECT monthly_calls FROM llm_request_budgets WHERE scope='matcher'`).Scan(&calls))
+		require.Equal(t, 450, calls)
 	})
 }
 
