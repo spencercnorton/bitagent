@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
 )
 
@@ -13,11 +12,15 @@ type WorkPayload struct {
 	Source AuditSource
 }
 
+// WorkPolicyVersion advances when review eligibility or application changes.
+// It is separate from the historical evaluation capture's build identity.
+const WorkPolicyVersion = "language-review-work-policy-v1"
+
 func (f *Filter) SetWork(work *llmwork.Store) { f.work = work }
 func (f *Filter) WorkPolicy() any {
 	cfg := f.cfg
 	cfg.LLMOpenaiApiKey = ""
-	return []any{cfg, llmcapture.CurrentBuildIdentity()}
+	return []any{WorkPolicyVersion, cfg}
 }
 func (f *Filter) SubmitWork(ctx context.Context, in Input, source AuditSource) error {
 	if f.work == nil || !f.work.Config().Accepts(llmwork.Language) {

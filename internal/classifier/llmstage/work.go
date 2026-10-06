@@ -13,6 +13,12 @@ import (
 )
 
 type workRunKey struct{}
+
+// WorkPolicyVersion must advance when application semantics change. The
+// evaluation capture retains its build generation independently of this
+// semantic task identity, so a binary restart does not buy the same request.
+const WorkPolicyVersion = "classifier-type-work-policy-v1"
+
 type WorkPayload struct {
 	Workflow string
 	Flags    classifier.Flags
@@ -31,7 +37,7 @@ func (s *Stage) SetWork(work *llmwork.Store, policy classifier.Config) {
 func (s *Stage) WorkPolicy(p WorkPayload) any {
 	cfg := s.cfg
 	cfg.APIKey = ""
-	return []any{cfg, s.workPolicy, p, llmcapture.CurrentBuildIdentity()}
+	return []any{WorkPolicyVersion, cfg, s.workPolicy, p}
 }
 
 func (s *Stage) submitWork(ctx context.Context, t model.Torrent) error {
