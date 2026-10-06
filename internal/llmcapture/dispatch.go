@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type CaseFence struct {
@@ -12,6 +14,9 @@ type CaseFence struct {
 	LeaseGeneration int64
 	SourceDigest    []byte
 	PolicyDigest    []byte
+	// SourceRecheck compares and locks the current source evidence inside the
+	// dispatch transaction. It is never persisted in the digest-only fence.
+	SourceRecheck func(context.Context, pgx.Tx) error
 }
 
 type DispatchRequest struct {

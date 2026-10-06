@@ -15,10 +15,13 @@ import (
 	"time"
 
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 const embeddingShortlistAlgorithm = "embedding-cosine-shortlist-v1"
+
+type embeddingDispatchKey struct{}
 
 type embeddingRequest struct {
 	Model          string          `json:"model"`
@@ -141,12 +144,59 @@ func (c *Client) embeddingShortlist(ctx context.Context, t model.Torrent, ext Ex
 	}); err != nil {
 		return nil, nil, err
 	}
-	if pending, _ := ctx.Value(pendingCaptureContextKey{}).(*pendingCapture); pending == nil || pending.outcome != llmcapture.OutcomeRecorded {
+	dispatchPending, _ := ctx.Value(pendingCaptureContextKey{}).(*pendingCapture)
+	var vectors [][]float64
+	replayed := false
+	if c.dispatch != nil && c.dispatch.Enabled() {
+		if dispatchPending == nil {
+			return nil, nil, llmcapture.ErrCaptureUnavailable
+		}
+		binding := llmcapture.DispatchRequest{CaptureKey: dispatchPending.key, Task: llmcapture.TaskMatcherEmbedding,
+			CandidateSource: source, InfoHash: t.InfoHash.Bytes(), FreshCapture: dispatchPending.outcome == llmcapture.OutcomeRecorded,
+			Case: llmwork.CaseFence(ctx)}
+		lease, outcome, prepareErr := c.dispatch.Prepare(ctx, binding)
+		if prepareErr != nil {
+			var deferred *llmcapture.DispatchDeferredError
+			if errors.As(prepareErr, &deferred) {
+				if binding.Case != nil {
+					return nil, nil, llmwork.RecordDeferral(ctx, deferred.Reason, deferred.RetryAfterUTC)
+				}
+				audit.Outcome = "fallback"
+				return candidates, audit, nil
+			}
+			return nil, nil, fmt.Errorf("%w: embedding dispatch admission: %v", llmcapture.ErrCaptureUnavailable, prepareErr)
+		}
+		if outcome == llmcapture.DispatchReplay {
+			if err := llmwork.BeforeDispatch(ctx); err != nil {
+				return nil, nil, err
+			}
+			response, replayErr := c.dispatch.Replay(ctx, binding)
+			if replayErr != nil {
+				return nil, nil, replayErr
+			}
+			llmcapture.ResultTraceFrom(ctx).RecordResult(llmcapture.TaskMatcherEmbedding, source, response.Receipt)
+			if response.Result.StatusCode == http.StatusOK && response.Result.ErrorClass == "none" {
+				vectors, err = decodeEmbeddingVectors(response.Result.Body, len(request.Input), cfg)
+			} else {
+				err = fmt.Errorf("retained embedding response is not successful")
+			}
+			replayed = true
+		} else if outcome == llmcapture.DispatchPrepared {
+			ctx = context.WithValue(ctx, embeddingDispatchKey{}, lease)
+		} else {
+			return nil, nil, llmcapture.ErrCaptureUnavailable
+		}
+	} else if dispatchPending == nil || dispatchPending.outcome != llmcapture.OutcomeRecorded {
 		// Concurrent workers/restarts cannot buy a second response for the
 		// immutable request. Successful in-process retries use the cache above.
 		return nil, nil, fmt.Errorf("%w: embedding request is already captured", llmcapture.ErrCaptureUnavailable)
 	}
-	vectors, err := c.callEmbeddings(ctx, t, body, len(request.Input))
+	if !replayed {
+		vectors, err = c.callEmbeddings(ctx, t, body, len(request.Input))
+	}
+	if errors.Is(err, llmwork.ErrDeferred) {
+		return nil, nil, err
+	}
 	if errors.Is(err, llmcapture.ErrPrivacyBlocked) || errors.Is(err, llmcapture.ErrCaptureUnavailable) {
 		return nil, nil, err
 	}
@@ -236,6 +286,15 @@ func (c *Client) callEmbeddings(ctx context.Context, t model.Torrent, body []byt
 		defer func() { <-c.slots }()
 	default:
 		c.metrics.gateRejects.WithLabelValues("concurrency").Inc()
+		if lease, ok := ctx.Value(embeddingDispatchKey{}).(llmcapture.DispatchLease); ok {
+			retry := time.Now().UTC().Add(time.Second)
+			if err := c.dispatch.DeferNoDispatch(ctx, lease, "concurrency", retry); err != nil {
+				return nil, err
+			}
+			if llmwork.CaseFence(ctx) != nil {
+				return nil, llmwork.RecordDeferral(ctx, "concurrency", retry)
+			}
+		}
 		return nil, ErrCallBudget
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.Embeddings.Endpoint, bytes.NewReader(body))
@@ -247,14 +306,27 @@ func (c *Client) callEmbeddings(ctx context.Context, t model.Torrent, body []byt
 		request.Header.Set("Authorization", "Bearer "+c.cfg.Embeddings.APIKey)
 	}
 	budgetCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	if c.budget == nil {
+	lease, controlled := ctx.Value(embeddingDispatchKey{}).(llmcapture.DispatchLease)
+	if c.budget == nil && !controlled {
 		cancel()
 		c.metrics.budgetSkips.WithLabelValues("unavailable").Inc()
 		return nil, ErrCallBudget
 	}
-	allowed, err := c.budget.Reserve(budgetCtx, c.cfg.DailyCallLimit, c.cfg.MonthlyCallLimit)
+	var allowed bool
+	if controlled {
+		allowed, err = c.dispatch.Reserve(budgetCtx, lease, "matcher", c.cfg.DailyCallLimit, c.cfg.MonthlyCallLimit)
+	} else {
+		allowed, err = c.budget.Reserve(budgetCtx, c.cfg.DailyCallLimit, c.cfg.MonthlyCallLimit)
+	}
 	cancel()
 	if err != nil || !allowed {
+		var deferred *llmcapture.DispatchDeferredError
+		if errors.As(err, &deferred) && llmwork.CaseFence(ctx) != nil {
+			return nil, llmwork.RecordDeferral(ctx, deferred.Reason, deferred.RetryAfterUTC)
+		}
+		if controlled && err != nil && deferred == nil {
+			return nil, fmt.Errorf("%w: embedding budget admission: %v", llmcapture.ErrCaptureUnavailable, err)
+		}
 		reason := "exhausted"
 		if err != nil {
 			reason = "unavailable"
@@ -273,6 +345,14 @@ func (c *Client) callEmbeddings(ctx context.Context, t model.Torrent, body []byt
 	recheckCancel()
 	if err != nil {
 		return nil, fmt.Errorf("%w: embedding admission recheck", llmcapture.ErrCaptureUnavailable)
+	}
+	if controlled {
+		if err := llmwork.BeforeDispatch(ctx); err != nil {
+			return nil, err
+		}
+		if err := c.dispatch.BeginDispatch(ctx, lease); err != nil {
+			return nil, fmt.Errorf("%w: embedding dispatch fence: %v", llmcapture.ErrCaptureUnavailable, err)
+		}
 	}
 	c.metrics.calls.WithLabelValues(c.cfg.Embeddings.Model, "embedding").Inc()
 	start := time.Now()
@@ -301,6 +381,18 @@ func (c *Client) callEmbeddings(ctx context.Context, t model.Torrent, body []byt
 	c.recordEmbeddingUsage(result.Body)
 	if recordErr := c.recordCapturedResult(ctx, "embedding", result); recordErr != nil {
 		return nil, recordErr
+	}
+	if controlled {
+		receipt, ok := llmcapture.ResultTraceFrom(ctx).Result(llmcapture.TaskMatcherEmbedding, pending.source)
+		if !ok {
+			return nil, llmcapture.ErrCaptureUnavailable
+		}
+		if err := c.dispatch.ObserveResult(ctx, lease, receipt); err != nil {
+			return nil, fmt.Errorf("%w: embedding dispatch receipt: %v", llmcapture.ErrCaptureUnavailable, err)
+		}
+		if err := llmwork.RecordProgress(ctx); err != nil {
+			return nil, err
+		}
 	}
 	if err != nil {
 		c.metrics.callErrors.WithLabelValues("embedding", result.ErrorClass).Inc()

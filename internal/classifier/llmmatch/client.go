@@ -58,13 +58,6 @@ func (c *Client) WithDispatchControl(dispatch llmcapture.DispatchControl) *Clien
 	return c
 }
 
-// WithDispatchControl opts the client into the shared request fence. Production
-// passes a controller disabled by default until its schema and behavior qualify.
-func (c *Client) WithDispatchControl(dispatch llmcapture.DispatchControl) *Client {
-	c.dispatch = dispatch
-	return c
-}
-
 func NewClient(cfg Config, privacy PrivacyStore, metrics *Metrics, logger *zap.SugaredLogger) *Client {
 	return NewClientWithCapture(cfg, privacy, metrics, logger, nil)
 }
