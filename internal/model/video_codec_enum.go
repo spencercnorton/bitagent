@@ -23,6 +23,8 @@ const (
 	VideoCodecDivX  VideoCodec = "DivX"
 	VideoCodecMPEG2 VideoCodec = "MPEG2"
 	VideoCodecMPEG4 VideoCodec = "MPEG4"
+	VideoCodecHEVC  VideoCodec = "HEVC"
+	VideoCodecAV1   VideoCodec = "AV1"
 )
 
 var ErrInvalidVideoCodec = fmt.Errorf("not a valid VideoCodec, try [%s]", strings.Join(_VideoCodecNames, ", "))
@@ -35,6 +37,8 @@ var _VideoCodecNames = []string{
 	string(VideoCodecDivX),
 	string(VideoCodecMPEG2),
 	string(VideoCodecMPEG4),
+	string(VideoCodecHEVC),
+	string(VideoCodecAV1),
 }
 
 // VideoCodecNames returns a list of possible string values of VideoCodec.
@@ -54,6 +58,8 @@ func VideoCodecValues() []VideoCodec {
 		VideoCodecDivX,
 		VideoCodecMPEG2,
 		VideoCodecMPEG4,
+		VideoCodecHEVC,
+		VideoCodecAV1,
 	}
 }
 
@@ -82,6 +88,10 @@ var _VideoCodecValue = map[string]VideoCodec{
 	"mpeg2": VideoCodecMPEG2,
 	"MPEG4": VideoCodecMPEG4,
 	"mpeg4": VideoCodecMPEG4,
+	"HEVC":  VideoCodecHEVC,
+	"hevc":  VideoCodecHEVC,
+	"AV1":   VideoCodecAV1,
+	"av1":   VideoCodecAV1,
 }
 
 // ParseVideoCodec attempts to convert a string to a VideoCodec.
