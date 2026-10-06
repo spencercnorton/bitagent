@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -37,7 +38,7 @@ func (d *PostgresDispatchController) pool() (*pgxpool.Pool, error) {
 }
 
 func validateDispatchRequest(req DispatchRequest) error {
-	if len(req.CaptureKey) != sha256.Size || len(req.InfoHash) != 20 ||
+	if len(req.CaptureKey) != sha256.Size || (len(req.SemanticKey) != 0 && len(req.SemanticKey) != sha256.Size) || len(req.InfoHash) != 20 ||
 		req.Task == TaskJunkPurge || validateTaskSource(req.Task, req.CandidateSource) != nil {
 		return fmt.Errorf("%w: invalid dispatch binding", ErrCaptureUnavailable)
 	}
@@ -131,24 +132,33 @@ func (d *PostgresDispatchController) Prepare(ctx context.Context, req DispatchRe
 	if err := checkDispatchAdmission(ctx, tx, req); err != nil {
 		return lease, DispatchUnknown, err
 	}
-	// Serialize even the initially absent digest fence without tying its
-	// lifetime to a raw capture row. The row itself is never TTL-deleted.
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),718432))`, req.CaptureKey); err != nil {
+	identity, semantic, err := admittedSemanticIdentity(ctx, tx, req)
+	if err != nil {
+		return lease, DispatchUnknown, err
+	}
+	// Lock complete semantics rather than a build-specific evaluation key.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),718432))`, semantic); err != nil {
+		return lease, DispatchUnknown, err
+	}
+	fenceKey, legacyUnknown, err := resolveSemanticFence(ctx, tx, req, identity, semantic)
+	if err != nil {
 		return lease, DispatchUnknown, err
 	}
 	var state string
-	var until *time.Time
-	var retryAt *time.Time
-	var existingTask string
-	var existingSource string
-	var existingTaskKey []byte
-	var permanentDigest []byte
-	err = tx.QueryRow(ctx, `SELECT state,lease_until,retry_after,task,candidate_source,task_key,response_sha256
-FROM llm_capture_dispatch_attempts WHERE capture_key=$1 FOR UPDATE`, req.CaptureKey).
-		Scan(&state, &until, &retryAt, &existingTask, &existingSource, &existingTaskKey, &permanentDigest)
+	var until, retryAt, permanentObserved *time.Time
+	var existingTask, existingSource string
+	var permanentLegacy bool
+	var existingTaskKey, permanentDigest, activeKey []byte
+	err = tx.QueryRow(ctx, `SELECT state,lease_until,retry_after,task,candidate_source,task_key,response_sha256,
+COALESCE(active_capture_key,capture_key),legacy_unproven,response_observed_at FROM llm_capture_dispatch_attempts WHERE capture_key=$1 FOR UPDATE`, fenceKey).
+		Scan(&state, &until, &retryAt, &existingTask, &existingSource, &existingTaskKey, &permanentDigest, &activeKey, &permanentLegacy, &permanentObserved)
 	newFence := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !newFence {
 		return lease, DispatchUnknown, err
+	}
+	legacyUnknown = legacyUnknown || permanentLegacy
+	if newFence {
+		activeKey = append([]byte(nil), fenceKey...)
 	}
 	if err := checkCaseFence(ctx, tx, req.Case); err != nil {
 		return lease, DispatchUnknown, err
@@ -158,37 +168,61 @@ FROM llm_capture_dispatch_attempts WHERE capture_key=$1 FOR UPDATE`, req.Capture
 		(req.Case != nil && len(existingTaskKey) > 0 && !bytes.Equal(existingTaskKey, req.Case.TaskKey))) {
 		return lease, DispatchUnknown, ErrDispatchLease
 	}
-	var body []byte
-	var digest []byte
+	var taskKey []byte
+	if req.Case != nil {
+		taskKey = req.Case.TaskKey
+	}
+	// The fence always retains its original key. Only a positively
+	// undispatched attempt may later choose another active capture.
+	if newFence {
+		initialState := "prepared"
+		if legacyUnknown || !req.FreshCapture {
+			initialState = "unknown"
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO llm_capture_dispatch_attempts
+(capture_key,semantic_key,active_capture_key,task,candidate_source,task_key,state,legacy_unproven)
+VALUES($1,$2,$1,$3,$4,$5,$6,$7)`, fenceKey, semantic, string(req.Task), string(req.CandidateSource), taskKey, initialState, legacyUnknown)
+	} else {
+		_, err = tx.Exec(ctx, `UPDATE llm_capture_dispatch_attempts SET semantic_key=$2,
+active_capture_key=COALESCE(active_capture_key,capture_key) WHERE capture_key=$1 AND (semantic_key IS NULL OR semantic_key=$2)`, fenceKey, semantic)
+	}
+	if err != nil {
+		return lease, DispatchUnknown, err
+	}
+	if err := linkDispatchAlias(ctx, tx, req.CaptureKey, fenceKey); err != nil {
+		return lease, DispatchUnknown, err
+	}
+	if err := linkDispatchAlias(ctx, tx, activeKey, fenceKey); err != nil {
+		return lease, DispatchUnknown, err
+	}
+	var body, digest []byte
 	var status int
 	var errorClass string
-	resultErr := tx.QueryRow(ctx, `SELECT response_body,response_sha256,http_status,error_class
-FROM llm_evaluation_capture_results WHERE capture_key=$1 AND octet_length(response_body)<=$2`, req.CaptureKey, MaxResultBodyBytes).
-		Scan(&body, &digest, &status, &errorClass)
+	var observedAt time.Time
+	// An original body must remain admitted and unexpired. The current
+	// build's fresh admission does not renew an older response's lifetime.
+	resultErr := tx.QueryRow(ctx, `SELECT response_body,response_sha256,http_status,error_class,observed_at
+FROM llm_evaluation_capture_results WHERE capture_key=$1 AND octet_length(response_body)<=$2
+ AND EXISTS (`+resultPublicAdmissionSQL+`)`, activeKey, MaxResultBodyBytes).
+		Scan(&body, &digest, &status, &errorClass, &observedAt)
 	if resultErr != nil && !errors.Is(resultErr, pgx.ErrNoRows) {
 		return lease, DispatchUnknown, resultErr
 	}
-	if resultErr == nil && status > 0 {
+	if !legacyUnknown && resultErr == nil && status > 0 {
 		actual := sha256.Sum256(body)
 		if !bytes.Equal(digest, actual[:]) || (len(permanentDigest) > 0 && !bytes.Equal(permanentDigest, digest)) {
 			return lease, DispatchUnknown, ErrCaptureUnavailable
 		}
-		var taskKey []byte
-		if req.Case != nil {
-			taskKey = req.Case.TaskKey
+		if permanentObserved != nil && !permanentObserved.Equal(observedAt) {
+			return lease, DispatchUnknown, ErrDispatchUnknown
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO llm_capture_dispatch_attempts
-(capture_key,task,candidate_source,task_key,state,response_sha256,http_status,error_class,result_at)
-VALUES ($1,$2,$3,$4,'result',$5,$6,$7,clock_timestamp())
-ON CONFLICT(capture_key) DO UPDATE SET state='result',response_sha256=EXCLUDED.response_sha256,
- http_status=EXCLUDED.http_status,error_class=EXCLUDED.error_class,result_at=COALESCE(llm_capture_dispatch_attempts.result_at,EXCLUDED.result_at),
- task_key=COALESCE(llm_capture_dispatch_attempts.task_key,EXCLUDED.task_key),updated_at=clock_timestamp()
-WHERE llm_capture_dispatch_attempts.response_sha256 IS NULL OR llm_capture_dispatch_attempts.response_sha256=EXCLUDED.response_sha256`,
-			req.CaptureKey, string(req.Task), string(req.CandidateSource), taskKey, digest, status, errorClass)
+		_, err = tx.Exec(ctx, `UPDATE llm_capture_dispatch_attempts SET state='result',response_sha256=$2,
+http_status=$3,error_class=$4,result_at=COALESCE(result_at,clock_timestamp()),response_observed_at=COALESCE(response_observed_at,$6),
+task_key=COALESCE(task_key,$5),updated_at=clock_timestamp() WHERE capture_key=$1`, fenceKey, digest, status, errorClass, taskKey, observedAt)
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
 		if err != nil {
-			return lease, DispatchUnknown, err
-		}
-		if err := tx.Commit(ctx); err != nil {
 			return lease, DispatchUnknown, err
 		}
 		return lease, DispatchReplay, nil
@@ -200,17 +234,10 @@ WHERE llm_capture_dispatch_attempts.response_sha256 IS NULL OR llm_capture_dispa
 	if !newFence && state == "intent" && until != nil && until.After(now) {
 		return lease, DispatchBusy, ErrDispatchBusy
 	}
-	if (!newFence && (state == "intent" || state == "unknown" || state == "result")) ||
+	if legacyUnknown || (!newFence && (state == "intent" || state == "unknown" || state == "result")) ||
 		(newFence && (!req.FreshCapture || resultErr == nil)) {
-		var taskKey []byte
-		if req.Case != nil {
-			taskKey = req.Case.TaskKey
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO llm_capture_dispatch_attempts(capture_key,task,candidate_source,task_key,state,reason)
-VALUES ($1,$2,$3,$4,'unknown','legacy_or_uncertain_dispatch')
-ON CONFLICT(capture_key) DO UPDATE SET state='unknown',reason='uncertain_or_expired_result',
- task_key=COALESCE(llm_capture_dispatch_attempts.task_key,EXCLUDED.task_key),updated_at=clock_timestamp()`,
-			req.CaptureKey, string(req.Task), string(req.CandidateSource), taskKey)
+		_, err = tx.Exec(ctx, `UPDATE llm_capture_dispatch_attempts SET state='unknown',
+reason='uncertain_or_expired_result',task_key=COALESCE(task_key,$2),updated_at=clock_timestamp() WHERE capture_key=$1`, fenceKey, taskKey)
 		if err == nil {
 			err = tx.Commit(ctx)
 		}
@@ -229,18 +256,12 @@ ON CONFLICT(capture_key) DO UPDATE SET state='unknown',reason='uncertain_or_expi
 	if _, err := rand.Read(token[:]); err != nil {
 		return lease, DispatchUnknown, err
 	}
-	lease = DispatchLease{CaptureKey: append([]byte(nil), req.CaptureKey...), Owner: hex.EncodeToString(token[:]), Case: cloneCase(req.Case)}
-	var taskKey []byte
-	if req.Case != nil {
-		taskKey = req.Case.TaskKey
-	}
-	err = tx.QueryRow(ctx, `INSERT INTO llm_capture_dispatch_attempts
-(capture_key,task,candidate_source,task_key,state,lease_owner,lease_generation,lease_until)
-VALUES ($1,$2,$3,$4,'prepared',$5,1,clock_timestamp()+$6::interval)
-ON CONFLICT(capture_key) DO UPDATE SET state='prepared',lease_owner=EXCLUDED.lease_owner,
- lease_generation=llm_capture_dispatch_attempts.lease_generation+1,lease_until=EXCLUDED.lease_until,
- task_key=COALESCE(llm_capture_dispatch_attempts.task_key,EXCLUDED.task_key),retry_after=NULL,reason='',updated_at=clock_timestamp()
-RETURNING lease_generation`, req.CaptureKey, string(req.Task), string(req.CandidateSource), taskKey, lease.Owner, duration.String()).Scan(&lease.Generation)
+	lease = DispatchLease{CaptureKey: append([]byte(nil), req.CaptureKey...), FenceKey: append([]byte(nil), fenceKey...),
+		Owner: hex.EncodeToString(token[:]), Case: cloneCase(req.Case)}
+	err = tx.QueryRow(ctx, `UPDATE llm_capture_dispatch_attempts SET state='prepared',active_capture_key=$2,
+lease_owner=$3,lease_generation=lease_generation+1,lease_until=clock_timestamp()+$4::interval,
+task_key=COALESCE(task_key,$5),retry_after=NULL,reason='',updated_at=clock_timestamp() WHERE capture_key=$1
+RETURNING lease_generation`, fenceKey, req.CaptureKey, lease.Owner, duration.String(), taskKey).Scan(&lease.Generation)
 	if err == nil {
 		err = tx.Commit(ctx)
 	}
@@ -279,7 +300,9 @@ func (d *PostgresDispatchController) Reserve(ctx context.Context, lease Dispatch
 	var linkedTask []byte
 	err = tx.QueryRow(ctx, `SELECT task,COALESCE(reserved_day=(clock_timestamp() AT TIME ZONE 'UTC')::date AND budget_scope=$4,false),task_key
 FROM llm_capture_dispatch_attempts WHERE capture_key=$1 AND lease_owner=$2 AND lease_generation=$3
- AND lease_until>clock_timestamp() AND state IN ('prepared','admitted') FOR UPDATE`, lease.CaptureKey, lease.Owner, lease.Generation, scope).
+ AND lease_until>clock_timestamp() AND state IN ('prepared','admitted')
+ AND COALESCE(active_capture_key,capture_key)=$5
+ AND EXISTS (`+strings.ReplaceAll(resultPublicAdmissionSQL, "$1", "$5")+`) FOR UPDATE`, dispatchFenceKey(lease), lease.Owner, lease.Generation, scope, lease.CaptureKey).
 		Scan(&task, &reusable, &linkedTask)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrDispatchLease
@@ -293,11 +316,11 @@ FROM llm_capture_dispatch_attempts WHERE capture_key=$1 AND lease_owner=$2 AND l
 	if len(linkedTask) > 0 && (lease.Case == nil || !bytes.Equal(linkedTask, lease.Case.TaskKey)) {
 		return false, ErrDispatchLease
 	}
-	if daily <= 0 || monthly <= 0 {
-		return false, nil
-	}
 	if err := checkCaseFence(ctx, tx, lease.Case); err != nil {
 		return false, err
+	}
+	if daily <= 0 || monthly <= 0 {
+		return false, nil
 	}
 	if !reusable {
 		var used int
@@ -317,7 +340,7 @@ WHERE scope=$1 AND month_start=date_trunc('month',clock_timestamp() AT TIME ZONE
 			err = tx.QueryRow(ctx, `UPDATE llm_capture_dispatch_attempts SET state='no_dispatch',reason=$2,
 lease_until=NULL,retry_after=(date_trunc($3,clock_timestamp() AT TIME ZONE 'UTC')+
  CASE WHEN $3='month' THEN interval '1 month' ELSE interval '1 day' END) AT TIME ZONE 'UTC',updated_at=clock_timestamp()
-WHERE capture_key=$1 RETURNING retry_after`, lease.CaptureKey, reason, period).Scan(&retry)
+WHERE capture_key=$1 RETURNING retry_after`, dispatchFenceKey(lease), reason, period).Scan(&retry)
 			if err == nil {
 				err = tx.Commit(ctx)
 			}
@@ -332,7 +355,7 @@ WHERE capture_key=$1 RETURNING retry_after`, lease.CaptureKey, reason, period).S
 	}
 	_, err = tx.Exec(ctx, `UPDATE llm_capture_dispatch_attempts SET state='admitted',budget_scope=$2,
 reserved_day=(clock_timestamp() AT TIME ZONE 'UTC')::date,
-reserved_month=date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')::date,updated_at=clock_timestamp() WHERE capture_key=$1`, lease.CaptureKey, scope)
+reserved_month=date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')::date,updated_at=clock_timestamp() WHERE capture_key=$1`, dispatchFenceKey(lease), scope)
 	if err == nil {
 		err = tx.Commit(ctx)
 	}
@@ -360,7 +383,7 @@ func (d *PostgresDispatchController) BeginDispatch(ctx context.Context, lease Di
 	var locked int
 	if err := tx.QueryRow(ctx, `SELECT 1 FROM llm_capture_dispatch_attempts
 WHERE capture_key=$1 AND lease_owner=$2 AND lease_generation=$3 FOR UPDATE`,
-		lease.CaptureKey, lease.Owner, lease.Generation).Scan(&locked); err != nil {
+		dispatchFenceKey(lease), lease.Owner, lease.Generation).Scan(&locked); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrDispatchLease
 		}
@@ -369,12 +392,14 @@ WHERE capture_key=$1 AND lease_owner=$2 AND lease_generation=$3 FOR UPDATE`,
 	if err := checkCaseFence(ctx, tx, lease.Case); err != nil {
 		return err
 	}
-	args := []any{lease.CaptureKey, lease.Owner, lease.Generation}
+	args := []any{dispatchFenceKey(lease), lease.Owner, lease.Generation}
 	args = append(args, caseArgs(lease.Case)...)
+	args = append(args, lease.CaptureKey)
 	tag, err := tx.Exec(ctx, `UPDATE llm_capture_dispatch_attempts d SET state='intent',dispatch_intent_at=clock_timestamp(),updated_at=clock_timestamp()
 WHERE d.capture_key=$1 AND d.lease_owner=$2 AND d.lease_generation=$3 AND d.lease_until>clock_timestamp()
- AND d.state='admitted' AND d.reserved_day=(clock_timestamp() AT TIME ZONE 'UTC')::date
- AND EXISTS (`+resultPublicAdmissionSQL+`)
+ AND COALESCE(d.active_capture_key,d.capture_key)=$9
+ AND NOT d.legacy_unproven AND d.state='admitted' AND d.reserved_day=(clock_timestamp() AT TIME ZONE 'UTC')::date
+ AND EXISTS (`+strings.ReplaceAll(resultPublicAdmissionSQL, "$1", "$9")+`)
  AND ((d.task_key IS NULL AND $4::bytea IS NULL) OR (d.task_key=$4 AND EXISTS(SELECT 1 FROM llm_work_tasks w
   WHERE w.task_key=$4 AND w.state='leased' AND w.lease_owner=$5 AND w.lease_generation=$6
    AND w.lease_until>clock_timestamp() AND w.source_digest=$7 AND w.policy_digest=$8)))`, args...)
@@ -397,7 +422,7 @@ func (d *PostgresDispatchController) DeferNoDispatch(ctx context.Context, lease 
 	}
 	tag, err := pool.Exec(ctx, `UPDATE llm_capture_dispatch_attempts SET state='no_dispatch',reason=$4,retry_after=$5,lease_until=NULL,updated_at=clock_timestamp()
 WHERE capture_key=$1 AND lease_owner=$2 AND lease_generation=$3 AND lease_until>clock_timestamp()
- AND state IN ('prepared','admitted')`, lease.CaptureKey, lease.Owner, lease.Generation, reason, retryAt)
+ AND state IN ('prepared','admitted') AND COALESCE(active_capture_key,capture_key)=$6`, dispatchFenceKey(lease), lease.Owner, lease.Generation, reason, retryAt, lease.CaptureKey)
 	if err != nil {
 		return err
 	}
@@ -420,15 +445,16 @@ func (d *PostgresDispatchController) ObserveResult(ctx context.Context, lease Di
 	tag, err := pool.Exec(ctx, `UPDATE llm_capture_dispatch_attempts d
 SET state=CASE WHEN r.http_status=0 THEN 'unknown' ELSE 'result' END,
  response_sha256=r.response_sha256,http_status=r.http_status,error_class=r.error_class,
- result_at=clock_timestamp(),updated_at=clock_timestamp()
+ response_observed_at=COALESCE(d.response_observed_at,r.observed_at),result_at=COALESCE(d.result_at,clock_timestamp()),updated_at=clock_timestamp()
 FROM llm_evaluation_capture_results r
 WHERE d.capture_key=$1 AND d.lease_owner=$2 AND d.lease_generation=$3
- AND d.state IN ('intent','unknown','result') AND r.capture_key=d.capture_key
+ AND d.state IN ('intent','unknown','result') AND r.capture_key=COALESCE(d.active_capture_key,d.capture_key) AND r.capture_key=$8
  AND r.response_sha256=$4 AND r.http_status=$5 AND r.error_class=$6
  AND octet_length(r.response_body)<=$7
  AND (d.response_sha256 IS NULL OR d.response_sha256=r.response_sha256)
- AND EXISTS (`+resultPublicAdmissionSQL+`)`, lease.CaptureKey, lease.Owner, lease.Generation,
-		receipt.ResponseSHA256, receipt.StatusCode, receipt.ErrorClass, MaxResultBodyBytes)
+ AND (d.response_observed_at IS NULL OR d.response_observed_at=r.observed_at)
+ AND EXISTS (`+strings.ReplaceAll(resultPublicAdmissionSQL, "$1", "$8")+`)`, dispatchFenceKey(lease), lease.Owner, lease.Generation,
+		receipt.ResponseSHA256, receipt.StatusCode, receipt.ErrorClass, MaxResultBodyBytes, lease.CaptureKey)
 	if err != nil {
 		return err
 	}
@@ -455,26 +481,33 @@ func (d *PostgresDispatchController) Replay(ctx context.Context, req DispatchReq
 	if err := checkDispatchAdmission(ctx, tx, req); err != nil {
 		return replay, err
 	}
-	var locked int
-	if err := tx.QueryRow(ctx, `SELECT 1 FROM llm_capture_dispatch_attempts WHERE capture_key=$1 FOR SHARE`, req.CaptureKey).Scan(&locked); err != nil {
+	_, semantic, err := admittedSemanticIdentity(ctx, tx, req)
+	if err != nil {
+		return replay, err
+	}
+	var fenceKey, activeKey []byte
+	err = tx.QueryRow(ctx, `SELECT d.capture_key,COALESCE(d.active_capture_key,d.capture_key)
+FROM llm_capture_dispatch_attempts d JOIN llm_capture_dispatch_aliases a ON a.fence_key=d.capture_key
+WHERE a.capture_key=$1 AND d.semantic_key=$2 FOR SHARE OF d`, req.CaptureKey, semantic).Scan(&fenceKey, &activeKey)
+	if err != nil {
 		return replay, ErrDispatchUnknown
 	}
 	if err := checkCaseFence(ctx, tx, req.Case); err != nil {
 		return replay, err
 	}
-	var digest []byte
-	var taskKey []byte
+	var digest, taskKey []byte
 	if req.Case != nil {
 		taskKey = req.Case.TaskKey
 	}
 	err = tx.QueryRow(ctx, `SELECT r.response_body,r.response_sha256,r.http_status,r.error_class
-FROM llm_evaluation_capture_results r JOIN llm_capture_dispatch_attempts d USING(capture_key)
-WHERE r.capture_key=$1 AND d.state='result' AND d.response_sha256=r.response_sha256
- AND d.http_status=r.http_status AND d.error_class=r.error_class
+FROM llm_evaluation_capture_results r JOIN llm_capture_dispatch_attempts d
+ON r.capture_key=COALESCE(d.active_capture_key,d.capture_key)
+WHERE r.capture_key=$1 AND d.capture_key=$6 AND NOT d.legacy_unproven AND d.state='result' AND d.response_sha256=r.response_sha256
+ AND d.http_status=r.http_status AND d.error_class=r.error_class AND d.response_observed_at=r.observed_at
  AND r.http_status>0 AND octet_length(r.response_body)<=$2
  AND d.task=$3 AND d.candidate_source=$4
- AND ((d.task_key IS NULL AND $5::bytea IS NULL) OR d.task_key=$5)`, req.CaptureKey, MaxResultBodyBytes,
-		string(req.Task), string(req.CandidateSource), taskKey).
+ AND ((d.task_key IS NULL AND $5::bytea IS NULL) OR d.task_key=$5)
+ AND EXISTS (`+resultPublicAdmissionSQL+`)`, activeKey, MaxResultBodyBytes, string(req.Task), string(req.CandidateSource), taskKey, fenceKey).
 		Scan(&replay.Result.Body, &digest, &replay.Result.StatusCode, &replay.Result.ErrorClass)
 	if err != nil {
 		return HTTPReplay{}, fmt.Errorf("%w: retained first response unavailable", ErrDispatchUnknown)
@@ -483,12 +516,8 @@ WHERE r.capture_key=$1 AND d.state='result' AND d.response_sha256=r.response_sha
 	if !bytes.Equal(digest, actual[:]) {
 		return HTTPReplay{}, ErrCaptureUnavailable
 	}
-	// This is the original first response, explicitly a cache replay rather
-	// than another HTTP observation. Existing idempotent decision contracts
-	// already distinguish that original authority from cohort membership.
-	replay.Receipt = ResultReceipt{CaptureKey: append([]byte(nil), req.CaptureKey...),
-		ResponseSHA256: append([]byte(nil), digest...), FirstObservation: true,
-		FromCache: true, StatusCode: replay.Result.StatusCode, ErrorClass: replay.Result.ErrorClass}
+	replay.Receipt = ResultReceipt{CaptureKey: append([]byte(nil), activeKey...), ResponseSHA256: append([]byte(nil), digest...),
+		FirstObservation: true, FromCache: true, StatusCode: replay.Result.StatusCode, ErrorClass: replay.Result.ErrorClass}
 	if err := tx.Commit(ctx); err != nil {
 		return HTTPReplay{}, err
 	}
@@ -507,20 +536,23 @@ func (d *PostgresDispatchController) TaskRecovery(ctx context.Context, taskKey [
 	// recoverable from that exact first row. This does not dispatch or refund.
 	if _, err := pool.Exec(ctx, `UPDATE llm_capture_dispatch_attempts d SET state='result',
 response_sha256=r.response_sha256,http_status=r.http_status,error_class=r.error_class,
-result_at=COALESCE(d.result_at,r.observed_at),updated_at=clock_timestamp()
+response_observed_at=COALESCE(d.response_observed_at,r.observed_at),result_at=COALESCE(d.result_at,r.observed_at),updated_at=clock_timestamp()
 FROM llm_evaluation_capture_results r JOIN llm_evaluation_captures c USING(capture_key)
-WHERE d.task_key=$1 AND d.capture_key=r.capture_key AND d.state IN ('intent','unknown')
+WHERE d.task_key=$1 AND COALESCE(d.active_capture_key,d.capture_key)=r.capture_key AND d.state IN ('intent','unknown') AND NOT d.legacy_unproven
  AND c.expires_at>clock_timestamp() AND c.task=d.task AND COALESCE(c.candidate_source,'')=d.candidate_source
  AND r.http_status>0 AND octet_length(r.response_body)<=$2
- AND (d.response_sha256 IS NULL OR d.response_sha256=r.response_sha256)`, taskKey, MaxResultBodyBytes); err != nil {
+ AND (d.response_sha256 IS NULL OR d.response_sha256=r.response_sha256)
+ AND (d.response_observed_at IS NULL OR d.response_observed_at=r.observed_at)`, taskKey, MaxResultBodyBytes); err != nil {
 		return nil, err
 	}
-	rows, err := pool.Query(ctx, `SELECT d.capture_key,d.state,
+	rows, err := pool.Query(ctx, `SELECT COALESCE(d.active_capture_key,d.capture_key),d.state,
  EXISTS(SELECT 1 FROM llm_evaluation_capture_results r JOIN llm_evaluation_captures c USING(capture_key)
-  WHERE r.capture_key=d.capture_key AND c.expires_at>clock_timestamp()
-   AND r.response_sha256=d.response_sha256 AND r.http_status>0
+  WHERE r.capture_key=COALESCE(d.active_capture_key,d.capture_key) AND c.expires_at>clock_timestamp()
+   AND NOT d.legacy_unproven AND d.state='result'
+   AND r.response_sha256=d.response_sha256 AND r.http_status=d.http_status AND r.error_class=d.error_class
+   AND r.observed_at=d.response_observed_at AND r.http_status>0
    AND octet_length(r.response_body)<=$2) AS replayable,
- d.state IN ('prepared','no_dispatch','admitted') AS safe_to_retry
+ NOT d.legacy_unproven AND d.state IN ('prepared','no_dispatch','admitted') AS safe_to_retry
 FROM llm_capture_dispatch_attempts d WHERE task_key=$1 ORDER BY capture_key LIMIT 257`, taskKey, MaxResultBodyBytes)
 	if err != nil {
 		return nil, err

@@ -83,6 +83,21 @@ capture, an expired dispatch intent or a transport outcome with no HTTP receipt
 remains held. Process restart and raw capture cleanup do not authorize another
 request: a permanent digest-only fence survives ordinary retention.
 
+Build identity remains part of each evaluation capture and its original receipt.
+Dispatch ownership additionally binds the complete request semantics: task,
+candidate source, sampling origin, source and release family, complete rendered
+model/task inputs, provider, model, prompt and explicit policy contract. A build
+change alone resolves to the first permanent fence. A retained response keeps
+its original capture, build and immutable decision authority; replay never adds
+an HTTP observation to the newer build's cohort. Positively undispatched work
+can use the current build's admitted capture after its lease and retry boundary
+allow it, retaining the first fence and any reusable same-day reservation.
+Unknown intent, expired or missing original bodies, and legacy cross-build
+captures without dispatch proof remain held. Exact response observation time
+also prevents a replacement body after retention from renewing the first receipt,
+even when its bytes match. Semantic equality establishes replay identity; it
+does not establish model correctness or a canonical label.
+
 Replay uses the exact retained first HTTP response under the current request,
 privacy and policy boundary. It consumes no additional provider request or budget
 and is recorded as a cache replay. Missing or expired response bodies cannot be

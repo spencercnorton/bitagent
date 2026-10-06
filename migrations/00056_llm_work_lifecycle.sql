@@ -55,6 +55,9 @@ CREATE INDEX llm_work_applications_source_idx ON llm_work_applications(info_hash
 -- retention or source-case jobs. Raw request/response/body/hash data is not here.
 CREATE TABLE llm_capture_dispatch_attempts (
  capture_key bytea PRIMARY KEY CHECK (octet_length(capture_key)=32),
+ semantic_key bytea CHECK (semantic_key IS NULL OR octet_length(semantic_key)=32),
+ active_capture_key bytea CHECK (active_capture_key IS NULL OR octet_length(active_capture_key)=32),
+ legacy_unproven boolean NOT NULL DEFAULT false,
  task text NOT NULL CHECK (task IN ('matcher_extract','matcher_rerank','matcher_embedding','classifier_type','contentfilter')),
  candidate_source text NOT NULL DEFAULT '' CHECK (candidate_source IN ('','local','api')),
  task_key bytea CHECK (task_key IS NULL OR octet_length(task_key)=32),
@@ -68,6 +71,7 @@ CREATE TABLE llm_capture_dispatch_attempts (
  reserved_day date,
  reserved_month date,
  response_sha256 bytea CHECK (response_sha256 IS NULL OR octet_length(response_sha256)=32),
+ response_observed_at timestamptz,
  http_status integer CHECK (http_status BETWEEN 0 AND 599),
  error_class text CHECK (error_class IS NULL OR length(error_class)<=64),
  dispatch_intent_at timestamptz,
@@ -77,6 +81,18 @@ CREATE TABLE llm_capture_dispatch_attempts (
 );
 CREATE INDEX llm_capture_dispatch_task_idx ON llm_capture_dispatch_attempts(task_key)
  WHERE task_key IS NOT NULL;
+CREATE UNIQUE INDEX llm_capture_dispatch_semantic_idx ON llm_capture_dispatch_attempts(semantic_key)
+ WHERE semantic_key IS NOT NULL;
+-- Build-specific captures resolve to the first permanent semantic fence. No
+-- raw request or response is copied, and retention cannot delete the alias.
+CREATE TABLE llm_capture_dispatch_aliases (
+ capture_key bytea PRIMARY KEY CHECK (octet_length(capture_key)=32),
+ fence_key bytea NOT NULL REFERENCES llm_capture_dispatch_attempts(capture_key),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX llm_capture_dispatch_alias_fence_idx ON llm_capture_dispatch_aliases(fence_key);
+CREATE INDEX llm_evaluation_captures_semantic_lookup_idx
+ ON llm_evaluation_captures(source_sha256,task,input_sha256);
 
 -- +goose Down
 -- +goose StatementBegin
@@ -85,6 +101,8 @@ DO $$ BEGIN
     RAISE EXCEPTION 'retained optional model task history prevents destructive downgrade';
   END IF;
 END $$;
+DROP INDEX llm_evaluation_captures_semantic_lookup_idx;
+DROP TABLE llm_capture_dispatch_aliases;
 DROP TABLE llm_capture_dispatch_attempts;
 DROP TABLE llm_work_applications;
 DROP TABLE llm_work_events;
