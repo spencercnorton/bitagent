@@ -91,8 +91,6 @@ CREATE TABLE llm_capture_dispatch_aliases (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 CREATE INDEX llm_capture_dispatch_alias_fence_idx ON llm_capture_dispatch_aliases(fence_key);
-CREATE INDEX llm_evaluation_captures_semantic_lookup_idx
- ON llm_evaluation_captures(source_sha256,task,input_sha256);
 
 -- +goose Down
 -- +goose StatementBegin
@@ -101,7 +99,6 @@ DO $$ BEGIN
     RAISE EXCEPTION 'retained optional model task history prevents destructive downgrade';
   END IF;
 END $$;
-DROP INDEX llm_evaluation_captures_semantic_lookup_idx;
 DROP TABLE llm_capture_dispatch_aliases;
 DROP TABLE llm_capture_dispatch_attempts;
 DROP TABLE llm_work_applications;
