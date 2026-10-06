@@ -68,11 +68,14 @@ func (s *Store) Enqueue(ctx context.Context, d Draft) (string, error) {
 	if !public {
 		return "privacy", ErrObsolete
 	}
-	var exists bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM llm_work_tasks WHERE task_key=$1)`, key).Scan(&exists); err != nil {
+	var existing string
+	if err = tx.QueryRow(ctx, `SELECT COALESCE((SELECT state FROM llm_work_tasks WHERE task_key=$1),'')`, key).Scan(&existing); err != nil {
 		return "unavailable", err
 	}
-	if exists {
+	if existing != "" {
+		if existing == "completed" {
+			return "completed", tx.Commit(ctx)
+		}
 		return "duplicate", tx.Commit(ctx)
 	}
 	var pending, bucketPending int
@@ -211,4 +214,54 @@ func (s *Store) Heartbeat(ctx context.Context, l Lease) error {
 		return ErrLease
 	}
 	return nil
+}
+
+func (s *Store) MarkProgress(ctx context.Context, l Lease) error {
+	pool, err := s.pool.Get()
+	if err != nil {
+		return err
+	}
+	tag, err := pool.Exec(ctx, `UPDATE llm_work_tasks SET priority=100
+ WHERE task_key=$1 AND state='leased' AND lease_owner=$2 AND lease_generation=$3 AND lease_until>now()`, l.Task.Key, l.Owner, l.Generation)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrLease
+	}
+	return nil
+}
+
+// Apply commits a narrow source adapter and its completion marker together.
+// The adapter owns current-source/target/receipt checks inside this transaction.
+func (s *Store) Apply(ctx context.Context, l Lease, reason string, apply func(pgx.Tx) error) error {
+	pool, err := s.pool.Get()
+	if err != nil {
+		return err
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	var owned bool
+	err = tx.QueryRow(ctx, `SELECT true FROM llm_work_tasks WHERE task_key=$1 AND state='leased' AND lease_owner=$2 AND lease_generation=$3 AND lease_until>now() FOR UPDATE`, l.Task.Key, l.Owner, l.Generation).Scan(&owned)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrLease
+	}
+	if err != nil {
+		return err
+	}
+	if apply != nil {
+		if err = apply(tx); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(ctx, `UPDATE llm_work_tasks SET state='completed',reason=$2,completed_at=now(),lease_owner=NULL,lease_until=NULL WHERE task_key=$1`, l.Task.Key, reason); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO llm_work_events(task_key,state,reason)VALUES($1,'completed',$2)`, l.Task.Key, reason); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

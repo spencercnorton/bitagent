@@ -37,6 +37,20 @@ CREATE TABLE llm_work_events (
 );
 CREATE INDEX llm_work_events_task_idx ON llm_work_events (task_key,id);
 
+-- Committed application evidence survives ordinary HTTP-body retention. It is
+-- model application provenance, never a canonical label or human gold. Current
+-- source, policy and committed target must still match before preservation.
+CREATE TABLE llm_work_applications (
+    task_key bytea PRIMARY KEY REFERENCES llm_work_tasks(task_key),
+    info_hash bytea NOT NULL CHECK (octet_length(info_hash)=20),
+    source_digest bytea NOT NULL CHECK (octet_length(source_digest)=32),
+    policy_digest bytea NOT NULL CHECK (octet_length(policy_digest)=32),
+    applied_snapshot jsonb NOT NULL CHECK (
+      jsonb_typeof(applied_snapshot)='object' AND octet_length(applied_snapshot::text)<=65536),
+    applied_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX llm_work_applications_source_idx ON llm_work_applications(info_hash);
+
 -- Digest-only dispatch fences intentionally have NO foreign key to capture
 -- retention or source-case jobs. Raw request/response/body/hash data is not here.
 CREATE TABLE llm_capture_dispatch_attempts (
@@ -72,6 +86,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 DROP TABLE llm_capture_dispatch_attempts;
+DROP TABLE llm_work_applications;
 DROP TABLE llm_work_events;
 DROP TABLE llm_work_tasks;
 -- +goose StatementEnd

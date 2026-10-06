@@ -18,6 +18,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"go.uber.org/zap"
 )
@@ -55,6 +56,8 @@ type Stage struct {
 	admission  Admission
 	slots      chan struct{}
 	retryAfter atomic.Int64
+	work       *llmwork.Store
+	workPolicy classifier.Config
 }
 
 // NewStage constructs the stage. It does not perform I/O; the HTTP
@@ -128,6 +131,7 @@ func (s *Stage) Run(
 	flags classifier.Flags,
 	t model.Torrent,
 ) (classification.Result, error) {
+	ctx = context.WithValue(ctx, workRunKey{}, WorkPayload{Workflow: workflow, Flags: flags})
 	if enabled, ok := flags["llm_stage_enabled"].(bool); ok && !enabled {
 		s.metrics.gateRejectsTotal.WithLabelValues("runtime_flag").Inc()
 		return s.inner.Run(ctx, workflow, flags, t)
@@ -300,6 +304,13 @@ func (s *Stage) plausibleMedia(t model.Torrent) bool {
 // classify is the cache-check + HTTP call. Returns a Decision or
 // error. Callers map error to a gate-reject metric.
 func (s *Stage) classify(ctx context.Context, t model.Torrent) (Decision, error) {
+	if err := s.submitWork(ctx, t); err != nil {
+		if errors.Is(err, llmwork.ErrReplayOnly) {
+			ctx = llmwork.WithReplayOnly(ctx)
+		} else {
+			return Decision{}, err
+		}
+	}
 	if err := s.admissionReady(); err != nil {
 		return Decision{}, err
 	}

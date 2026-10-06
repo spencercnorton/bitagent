@@ -114,6 +114,7 @@ type matchRunner struct {
 // failed) that the caller should propagate so the torrent is retried — it is
 // NOT the same as a clean "no match" (which is an Outcome).
 func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullContentType) (MatchDecision, error) {
+	ctx = llmmatch.WithWorkType(ctx, ct)
 	lm := r.lm
 	if !lm.Enabled() {
 		return MatchDecision{Outcome: OutcomeDisabled}, nil

@@ -14,11 +14,12 @@ const (
 // `worker run --all`) ignores Enabled so disabling collection cannot disable
 // the retention guarantee.
 type Config struct {
-	Enabled         bool          `yaml:"enabled"`
-	Retention       time.Duration `yaml:"retention"`
-	CleanupInterval time.Duration `yaml:"cleanup_interval"`
-	MaxRows         int           `yaml:"max_rows"`
-	MaxInputBytes   int           `yaml:"max_input_bytes"`
+	Enabled                bool          `yaml:"enabled"`
+	DispatchControlEnabled bool          `yaml:"dispatch_control_enabled"`
+	Retention              time.Duration `yaml:"retention"`
+	CleanupInterval        time.Duration `yaml:"cleanup_interval"`
+	MaxRows                int           `yaml:"max_rows"`
+	MaxInputBytes          int           `yaml:"max_input_bytes"`
 }
 
 func NewDefaultConfig() Config {
@@ -32,6 +33,9 @@ func NewDefaultConfig() Config {
 }
 
 func (c Config) validate() error {
+	if c.DispatchControlEnabled && !c.Enabled {
+		return ErrInvalidConfig("dispatch control requires enabled capture")
+	}
 	if c.Retention <= 0 {
 		return ErrInvalidConfig("retention must be positive")
 	}

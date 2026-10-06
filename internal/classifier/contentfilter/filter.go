@@ -12,6 +12,7 @@ import (
 
 	"github.com/spencercnorton/bitagent/internal/anime"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 )
 
 // Decision is what Filter.Decide returns for one torrent.
@@ -103,6 +104,7 @@ type Filter struct {
 	llmCb     LLMCallbacks // optional metrics+logging hooks
 	budget    *dailyBudget
 	admission Admission
+	work      *llmwork.Store
 	slots     chan struct{}
 }
 
@@ -113,8 +115,9 @@ type CallBudget interface {
 // Admission is mandatory in production: every possible billed dispatch must
 // reserve durable capacity and retain an exact request/result/decision chain.
 type Admission struct {
-	Budget  CallBudget
-	Capture llmcapture.Capturer
+	Budget   CallBudget
+	Capture  llmcapture.Capturer
+	Dispatch llmcapture.DispatchControl
 }
 
 type AuditSource struct {
@@ -505,6 +508,19 @@ func (f *Filter) consultAudited(
 	in Input,
 	source AuditSource,
 ) (DropReason, bool, error) {
+	if err := f.SubmitWork(ctx, in, source); err != nil {
+		if errors.Is(err, llmwork.ErrDeferred) {
+			return ReasonNone, false, nil
+		}
+		if errors.Is(err, llmwork.ErrReplayOnly) {
+			ctx = llmwork.WithReplayOnly(ctx)
+		} else {
+			return ReasonNone, false, err
+		}
+	}
+	if f.admission.Dispatch != nil && f.admission.Dispatch.Enabled() {
+		return f.consultControlled(ctx, in, source)
+	}
 	recorder, ok := f.admission.Capture.(llmcapture.ContentFilterResultRecorder)
 	client, clientOK := f.llm.(AuditedLLMClient)
 	if f.admission.Budget == nil || f.admission.Capture == nil ||
