@@ -145,3 +145,50 @@ func TestTaskCleanupPreservesPermanentFenceAndCommittedApplication(t *testing.T)
 	require.NoError(t, err)
 	require.Zero(t, n, "scrubbed applications must not starve later cleanup batches")
 }
+
+func TestApplyRollsBackWhenLeaseExpiresDuringCallback(t *testing.T) {
+	s, pool := workFixture(t)
+	ctx := context.Background()
+	d := draftFor(1)
+	putPublic(t, pool, d)
+	_, err := s.Enqueue(ctx, d)
+	require.NoError(t, err)
+	l, err := s.Claim(ctx, "apply")
+	require.NoError(t, err)
+	require.NotNil(t, l)
+	_, err = pool.Exec(ctx, `UPDATE llm_work_tasks SET lease_until=clock_timestamp()+interval '100 milliseconds' WHERE task_key=$1`, l.Task.Key)
+	require.NoError(t, err)
+	err = s.Apply(ctx, *l, "applied", func(tx pgx.Tx) error {
+		_, x := tx.Exec(ctx, `INSERT INTO llm_work_applications(task_key,info_hash,source_digest,policy_digest,applied_snapshot)VALUES($1,$2,$3,$4,'{}'::jsonb)`, l.Task.Key, d.InfoHash, d.SourceDigest, d.PolicyDigest)
+		if x != nil {
+			return x
+		}
+		_, x = tx.Exec(ctx, `SELECT pg_sleep(0.2)`)
+		return x
+	})
+	require.ErrorIs(t, err, ErrLease)
+	var n int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM llm_work_applications`).Scan(&n))
+	require.Zero(t, n)
+	var state string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT state FROM llm_work_tasks`).Scan(&state))
+	require.Equal(t, "leased", state)
+}
+
+func TestPausedQueueStillExpiresRawProposals(t *testing.T) {
+	s, pool := workFixture(t)
+	ctx := context.Background()
+	d := draftFor(1)
+	putPublic(t, pool, d)
+	_, err := s.Enqueue(ctx, d)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE llm_work_tasks SET created_at=now()-interval '8 days',expires_at=now()-interval '1 day'`)
+	require.NoError(t, err)
+	s.cfg.Enabled = false
+	n, err := s.Cleanup(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+	var count int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM llm_work_tasks`).Scan(&count))
+	require.Zero(t, count)
+}

@@ -94,6 +94,16 @@ func (s *Store) Cleanup(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
+	// Turning off inference does not suspend raw proposal retention. These
+	// bounded age transitions cannot grant dispatch or retry authority.
+	if _, err = tx.Exec(ctx, `WITH aged AS(SELECT task_key FROM llm_work_tasks
+ WHERE expires_at<=clock_timestamp() AND (state IN ('queued','deferred') OR state='leased' AND lease_until<=clock_timestamp())
+ ORDER BY expires_at,task_key FOR UPDATE SKIP LOCKED LIMIT 128), changed AS(
+ UPDATE llm_work_tasks SET state=CASE WHEN state='leased' THEN 'held' ELSE 'expired' END,
+ reason='task_age',lease_owner=NULL,lease_until=NULL WHERE task_key IN(SELECT task_key FROM aged) RETURNING task_key,state)
+ INSERT INTO llm_work_events(task_key,state,reason) SELECT task_key,state,'task_age' FROM changed`); err != nil {
+		return 0, err
+	}
 	rows, err := tx.Query(ctx, `SELECT task_key FROM llm_work_tasks w WHERE state IN ('held','obsolete','expired','completed') AND expires_at<=clock_timestamp()
  AND (payload<>'{}'::jsonb OR EXISTS(SELECT 1 FROM llm_work_events e WHERE e.task_key=w.task_key)
       OR NOT EXISTS(SELECT 1 FROM llm_work_applications a WHERE a.task_key=w.task_key))

@@ -95,18 +95,16 @@ func (w *Worker) run(ctx context.Context, done chan struct{}) {
 
 func (w *Worker) Stop(ctx context.Context) error {
 	w.mu.Lock()
+	defer w.mu.Unlock()
 	cancel, done := w.cancel, w.done
-	w.mu.Unlock()
 	if cancel == nil {
 		return nil
 	}
 	cancel()
 	select {
 	case <-done:
-		w.mu.Lock()
 		w.cancel = nil
 		w.done = nil
-		w.mu.Unlock()
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

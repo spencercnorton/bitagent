@@ -270,8 +270,13 @@ func (s *Store) Apply(ctx context.Context, l Lease, reason string, apply func(pg
 			return err
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE llm_work_tasks SET state='completed',reason=$2,completed_at=now(),lease_owner=NULL,lease_until=NULL WHERE task_key=$1`, l.Task.Key, reason); err != nil {
+	tag, err := tx.Exec(ctx, `UPDATE llm_work_tasks SET state='completed',reason=$2,completed_at=clock_timestamp(),lease_owner=NULL,lease_until=NULL
+ WHERE task_key=$1 AND state='leased' AND lease_owner=$3 AND lease_generation=$4 AND lease_until>clock_timestamp()`, l.Task.Key, reason, l.Owner, l.Generation)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrLease
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO llm_work_events(task_key,state,reason)VALUES($1,'completed',$2)`, l.Task.Key, reason); err != nil {
 		return err
