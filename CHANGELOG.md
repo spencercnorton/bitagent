@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Parse explicit `WEB-DL`, `WEB.DL` and `WEBDL` source tokens consistently,
+  preferring compound source aliases before their shorter prefixes.
+
 - Preserve authentic torrent source metadata in quarantine snapshots and restore
   it without overwriting newer observations. Legacy snapshots remain usable.
 - Record explicit restores as local provenance with unknown swarm counts, so

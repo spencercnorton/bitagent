@@ -2,6 +2,7 @@ package model
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/spencercnorton/bitagent/internal/keywords"
@@ -28,6 +29,7 @@ var videoSourceAliases = map[string]VideoSource{
 	"satrip":  VideoSourceTV,
 	"web":     VideoSourceWEBRip,
 	"web-dl":  VideoSourceWEBDL,
+	"web.dl":  VideoSourceWEBDL,
 	"web-rip": VideoSourceWEBRip,
 }
 
@@ -36,6 +38,16 @@ func createVideoSourceRegex() *regexp.Regexp {
 	for alias := range videoSourceAliases {
 		names = append(names, alias)
 	}
+	// The keyword matcher tries alternatives in order. A generic "web" can
+	// otherwise consume the separator in "web-dl" before its full token wins.
+	// Longest first preserves specific sources; the tie-break makes map-derived
+	// aliases produce the same regex in every process.
+	sort.Slice(names, func(i, j int) bool {
+		if len(names[i]) != len(names[j]) {
+			return len(names[i]) > len(names[j])
+		}
+		return names[i] < names[j]
+	})
 
 	return keywords.MustNewRegexFromKeywords(names...)
 }
