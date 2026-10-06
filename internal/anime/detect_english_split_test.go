@@ -17,7 +17,7 @@ func TestEnglishSplitSignals(t *testing.T) {
 		audio, sub  bool
 		legacyTrack bool
 	}{
-		{"[Judas] Show - 12 [Dual-Audio]", true, false, true},
+		{"[Judas] Show - 12 [Dual-Audio]", false, false, true},
 		{"[Group] Show - 05 (Dub) [1080p]", true, false, false},
 		{"[Group] Show S01 Dubbed 1080p", true, false, false},
 		{"[Group] Show - 07 English Audio", true, false, false},

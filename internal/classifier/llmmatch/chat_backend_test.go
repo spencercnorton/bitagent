@@ -185,7 +185,7 @@ func TestOllamaExtractManyWithCaptureKeepsIndependentExactRequests(t *testing.T)
 	require.Len(t, audit.results, 8)
 	for i, captured := range audit.requests {
 		require.Equal(t, wire[i], []byte(captured.ModelInputJSON))
-		require.Equal(t, "llmmatch-chat-extract-v1-ollama-chat-v1", captured.ContractID)
+		require.Equal(t, "llmmatch-chat-extract-v2-ollama-chat-v1", captured.ContractID)
 		var task map[string]any
 		require.NoError(t, json.Unmarshal(captured.TaskInputJSON, &task))
 		require.Equal(t, "ollama", task["chat_backend"])

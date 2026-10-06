@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a bounded, local English and availability shadow-review command with
+  source-bound receipts; preserve unknown track evidence and stale swarm data.
+- Stop labelling unnamed dual/multi audio as English, preserving uncertainty
+  in the foreign-audio filter, and version the matcher extraction contract.
+
 - Add frozen, journalled field-only release repairs with NULL-only claim filling, reviewed historical source corrections and guarded rollback. Preserve retained claims during ordinary processing.
 
 - Retain nullable, versioned HDR, audio/channel, encoder and revision filename

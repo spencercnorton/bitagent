@@ -221,7 +221,7 @@ func (c *Client) Allow(ctx context.Context, t model.Torrent) bool {
 // extractKey binds a stage-1 decision to the exact rendered request and route.
 // Grouped extraction has its own cache contract and cannot warm this key.
 func (c *Client) extractKey(t model.Torrent) string {
-	return c.extractionRequestKey("extract", "llmmatch-chat-extract-v1", c.newChatRequest(
+	return c.extractionRequestKey("extract", "llmmatch-chat-extract-v2", c.newChatRequest(
 		ExtractPrompt(), ExtractInput(t.Name, extractionModelFiles(t)), 120,
 	))
 }
@@ -501,10 +501,10 @@ const extractRules = `Rules:
 ANIME (Japanese animation): set is_anime=true. Anime names are their own dialect — expect fansub group brackets like [SubsPlease] [Erai-raws] [HorribleSubs], romaji or Japanese titles, and ABSOLUTE episode numbering (a lone number after the title, e.g. "Show Name - 137", is an absolute episode, NOT a year; convert to season/episode only if you are confident, otherwise leave season=0, episode=<the number>). For title use the canonical title TMDB indexes (usually the official English title, e.g. "Shingeki no Kyojin" -> "Attack on Titan"; "Kimetsu no Yaiba" -> "Demon Slayer").
 
 ENGLISH TRACK — judge the release's ENGLISH availability specifically:
-- "dub"  : has an ENGLISH audio dub. Explicit signals: "English Dub", "ENG DUB", "Dubbed". "Dual Audio" / "Multi Audio" / "[Dual]" / "DUAL" mean an English dub ONLY when English is among the named AUDIO languages or no audio languages are named at all; when the named audio languages exclude English (e.g. "Dual Audio [Hindi+Jpn]"), there is no English dub — judge by the remaining signals (English subs present -> "sub", otherwise "none"). A subtitle-language list ("Multi-Sub: Spa, Fra", "Subs: Spanish, French") names SUBTITLE languages and never negates the English dub implied by Dual/Multi-Audio.
-- "sub"  : Japanese audio with an English subtitle track. Signals: English fansub groups (SubsPlease, Erai-raws, HorribleSubs, Judas, etc.), "Eng Sub", "Multi-Sub", ".eng.srt"/".eng.ass" subtitle files.
-- "none" : Japanese-only, no English audio or subtitles (a "raw"). Signals: "RAW", Japanese-only tags, or a bare Japanese/romaji title with no English group or dub/sub marker.
-- "unknown" : you cannot tell.
+- "dub"  : English is explicitly named as an AUDIO language ("English Dub", "ENG DUB", "English Audio", "Dual Audio [ENG+JPN]"). Generic "Dual Audio", "Multi Audio", "[Dual]", "DUAL" and "Dubbed" do not prove English. When no audio languages are named, keep audio availability unknown. Named non-English audio does not prove the absence of another English track.
+- "sub"  : an English subtitle track is explicitly advertised ("Eng Sub", "Subtitles: English", ".eng.srt"/".eng.ass" subtitle files). Generic Multi-Sub and a translated title do not prove English. Group reputation alone is insufficient when track evidence is contradictory or incomplete.
+- "none" : explicit evidence establishes neither English audio nor English subtitles, such as Japanese audio only with no English subtitles. A bare Japanese/romaji title, unknown track languages or generic dual/multi tags must never become "none".
+- "unknown" : missing, incomplete or contradictory track evidence. Keep title language and TMDB original language separate from release audio/subtitle claims.
 For non-anime, set english to "unknown" unless a non-English audio is explicit.
 
 PACKS (multi-film bundles): if the release bundles MULTIPLE different films — trilogy, duology, collection, filmography, "complete collection" of movies, or a year range spanning several films (e.g. "2001-2003", "2013-2019") — set is_pack=true (title may name the franchise). A multi-season or complete-series TV pack is NOT a pack: it still belongs to exactly one show, so set is_pack=false for those.
@@ -526,7 +526,7 @@ func (c *Client) callExtract(ctx context.Context, t model.Torrent) (Extraction, 
 		t,
 		llmcapture.TaskMatcherExtract,
 		llmcapture.CandidateSourceNone,
-		matcherContractID(c.cfg, "llmmatch-chat-extract-v1"),
+		matcherContractID(c.cfg, "llmmatch-chat-extract-v2"),
 		[]byte(contentfilter.EvaluationGroupKey(t.Name)),
 		ExtractPrompt(),
 		user,

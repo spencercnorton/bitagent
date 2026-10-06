@@ -90,7 +90,7 @@ func TestOpenAIDataSharingRequestIsDirectBoundedAndAuditable(t *testing.T) {
 	require.NotContains(t, object, "provider")
 	require.NotContains(t, object["messages"].([]any)[1].(map[string]any)["content"], "/no_think")
 	require.Equal(t,
-		"llmmatch-chat-extract-v1-openai-data-sharing-v1",
-		matcherContractID(cfg, "llmmatch-chat-extract-v1"),
+		"llmmatch-chat-extract-v2-openai-data-sharing-v1",
+		matcherContractID(cfg, "llmmatch-chat-extract-v2"),
 	)
 }

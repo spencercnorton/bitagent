@@ -16,6 +16,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/app/cmd/evalreplaycmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/granularitybackfillcmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/matcherevalcmd"
+	"github.com/spencercnorton/bitagent/internal/app/cmd/policyshadowcmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/processcmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/purgecontenttypescmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/refreshalttitlescmd"
@@ -131,6 +132,7 @@ func New() fx.Option {
 			refreshseedscmd.New,
 			reprocesscmd.New,
 			processcmd.New,
+			policyshadowcmd.New,
 			workercmd.New,
 		),
 		fx.Decorate(migrations.NewDecorator),

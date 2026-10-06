@@ -64,7 +64,7 @@ type Signals struct {
 	EnglishTrack bool
 
 	// EnglishAudioSignal is true when the name explicitly advertises an
-	// ENGLISH AUDIO track (dub): Dual/Multi-Audio, Eng Dub, Dubbed,
+	// ENGLISH AUDIO track (dub): explicitly named English, Eng Dub, Dubbed,
 	// (Dub)/[Dub], English Audio. Wider than EnglishTrack's audio half —
 	// covers the bare forms the exam found missing — and separate from
 	// subtitle advertisements.
@@ -206,7 +206,10 @@ var (
 	// english_audio column. Audio adds the bare forms the combined regex
 	// missed (Dubbed, (Dub), English Audio); bare "dual"/"raw" stay out —
 	// "Dual" is a movie title and fansub groups embed "Raws".
-	englishAudioAnchoredRe = regexp.MustCompile(`(?i)(dual[ ._-]?audio|multi[ ._-]?audio|eng(?:lish)?[ ._-]?dub(?:bed)?s?|[\[(]dub[\])]|english[ ._-]?audio|\[dual\])`)
+	englishAudioAnchoredRe = regexp.MustCompile(`(?i)(eng(?:lish)?[ ._-]?dub(?:bed)?s?|[\[(]dub[\])]|english[ ._-]?audio)`)
+	genericAudioRe         = regexp.MustCompile(`(?i)(?:dual[ ._-]?audio|multi[ ._-]?audio|\[dual\])`)
+	namedAudioListRe       = regexp.MustCompile(`(?i)(?:dual|multi)[ ._-]?audio[ ._:=-]*[\[(]([^\]\)]+)[\]\)]`)
+	namedAudioEnglishRe    = regexp.MustCompile(`(?i)\b(?:eng|english|en)\b`)
 	englishAudioBareRe     = regexp.MustCompile(`(?i)\bdubbed\b`)
 	englishSubAnchoredRe   = regexp.MustCompile(`(?i)(eng(?:lish)?[ ._-]?subs?|multi[ ._-]?subs?|multiple[ ._-]?subtitle|[\[(](?:eng)?subs?[\])]|soft[ ._-]?subs?)`)
 	englishSubBareRe       = regexp.MustCompile(`(?i)\bsubbed\b`)
@@ -215,8 +218,7 @@ var (
 	// "Spanish Subbed") — a common real release class the bare forms would
 	// otherwise mislabel as English. The anchored forms above are immune
 	// ("English Dubbed" carries its own language token); "multi" stays OUT
-	// of this list, matching the existing Dual/Multi=English convention
-	// until the LLM phase revisits it.
+	// of this list. Generic Dual/Multi audio does not name English.
 	nonEnglishTrackRe = regexp.MustCompile(`(?i)(hindi|tamil|telugu|kannada|malayalam|bengali|french|german|spanish|castellano|italian|portuguese|russian|polish|arabic|latino)[ ._-]{0,2}(dub|sub)(?:bed)?s?\b`)
 	// rawFansubGroups release UNSUBBED transport streams or encode-only
 	// remuxes, so membership of the allowlist says nothing about an English
@@ -303,6 +305,7 @@ func Detect(name string) Signals {
 	s.EnglishTrack = englishTrackRe.MatchString(name)
 	nonEnglish := nonEnglishTrackRe.MatchString(name)
 	s.EnglishAudioSignal = englishAudioAnchoredRe.MatchString(name) ||
+		namedEnglishAudio(name) ||
 		(englishAudioBareRe.MatchString(name) && !nonEnglish)
 	s.EnglishSubSignal = englishSubAnchoredRe.MatchString(name) ||
 		(englishSubBareRe.MatchString(name) && !nonEnglish)
@@ -324,7 +327,7 @@ func Detect(name string) Signals {
 	// while their group name already answers the question. Raw/encode groups
 	// are excluded; Yameii dubs.
 	if s.FansubGroup != "" && !s.EnglishAudioSignal && !s.EnglishSubSignal &&
-		!explicitForeignTrack(name) {
+		!explicitForeignTrack(name) && !genericAudioRe.MatchString(name) {
 		if _, raw := rawFansubGroups[s.FansubGroup]; !raw {
 			if _, dub := dubFansubGroups[s.FansubGroup]; dub {
 				s.EnglishAudioSignal = true
@@ -381,4 +384,15 @@ func atoi(s string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+// namedEnglishAudio requires an actual audio-language list; subtitle labels
+// inside that list cannot manufacture an English audio advertisement.
+func namedEnglishAudio(name string) bool {
+	for _, m := range namedAudioListRe.FindAllStringSubmatch(name, -1) {
+		if !strings.Contains(strings.ToLower(m[1]), "sub") && namedAudioEnglishRe.MatchString(m[1]) {
+			return true
+		}
+	}
+	return false
 }
