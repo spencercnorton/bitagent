@@ -318,6 +318,23 @@ AND EXISTS(SELECT 1 FROM llm_capture_dispatch_attempts WHERE state='prepared')`)
 		require.ErrorIs(t, err, ErrDispatchUnknown, "replay cannot strip its permanent source-case linkage")
 	})
 
+	t.Run("legacy unknown links its new case and remains held after restart", func(t *testing.T) {
+		ctx, pool, store, _, controller, req, binding := dispatchFixture(t)
+		binding.FreshCapture = false
+		_, _, err := controller.Prepare(ctx, binding)
+		require.ErrorIs(t, err, ErrDispatchUnknown)
+		binding.Case = dispatchCaseFixture(t, ctx, pool, req)
+		_, _, err = controller.Prepare(ctx, binding)
+		require.ErrorIs(t, err, ErrDispatchUnknown)
+		restarted := NewPostgresDispatchController(store, true)
+		recovery, err := restarted.TaskRecovery(ctx, binding.Case.TaskKey)
+		require.NoError(t, err)
+		require.Len(t, recovery, 1, "unknown linkage must not appear as a case with no provider attempts")
+		require.Equal(t, "unknown", recovery[0].State)
+		require.False(t, recovery[0].Replayable)
+		require.False(t, recovery[0].SafeToRetry)
+	})
+
 	t.Run("current source recheck and intent share locked evidence", func(t *testing.T) {
 		ctx, pool, _, _, controller, req, binding := dispatchFixture(t)
 		binding.Case = dispatchCaseFixture(t, ctx, pool, req)
