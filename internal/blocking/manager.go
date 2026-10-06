@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spencercnorton/bitagent/internal/bloom"
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
@@ -22,7 +23,25 @@ type Manager interface {
 	Flush(ctx context.Context) error
 }
 
+// WithRecovery attaches the explicit recovery transition before a manager is
+// used. No application factory calls this: operators must first qualify storage,
+// retention and all writers. Mixed legacy/recovery writers are unsupported.
+func WithRecovery(base Manager, recovery *cataloguerecovery.Store) (Manager, error) {
+	m, ok := base.(*manager)
+	if !ok || recovery == nil || !recovery.Enabled() || !recovery.UsesPool(m.pool) {
+		return nil, fmt.Errorf("blocking: enabled recovery and native manager required")
+	}
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	if m.filter != nil || len(m.buffer) != 0 || m.recovery != nil {
+		return nil, fmt.Errorf("blocking: attach recovery before manager use")
+	}
+	m.recovery = recovery
+	return m, nil
+}
+
 type manager struct {
+	recovery      *cataloguerecovery.Store
 	mutex         sync.Mutex
 	pool          *pgxpool.Pool
 	buffer        map[protocol.ID]struct{}
@@ -56,6 +75,26 @@ func (m *manager) Filter(ctx context.Context, hashes []protocol.ID) ([]protocol.
 		filtered = append(filtered, hash)
 	}
 
+	if m.recovery != nil {
+		all := make([][]byte, len(hashes))
+		kept := make([][]byte, len(filtered))
+		for i, h := range hashes {
+			all[i] = h.Bytes()
+		}
+		for i, h := range filtered {
+			kept[i] = h.Bytes()
+		}
+		recovered, err := m.recovery.Filter(ctx, all, kept)
+		if err != nil {
+			return nil, err
+		}
+		filtered = make([]protocol.ID, 0, len(recovered))
+		for _, h := range recovered {
+			var id protocol.ID
+			copy(id[:], h)
+			filtered = append(filtered, id)
+		}
+	}
 	return filtered, nil
 }
 
@@ -63,6 +102,15 @@ func (m *manager) Block(ctx context.Context, hashes []protocol.ID, flush bool) e
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
+	if m.recovery != nil {
+		raw := make([][]byte, len(hashes))
+		for i, h := range hashes {
+			raw[i] = h.Bytes()
+		}
+		if _, err := m.recovery.RemoveBatch(ctx, raw, "configured_block", time.Now().UTC()); err != nil {
+			return err
+		}
+	}
 	for _, hash := range hashes {
 		m.buffer[hash] = struct{}{}
 	}
@@ -103,7 +151,7 @@ func (m *manager) flush(ctx context.Context) error {
 		_ = tx.Rollback(ctx)
 	}()
 
-	if len(hashes) > 0 {
+	if len(hashes) > 0 && m.recovery == nil {
 		_, err = tx.Exec(ctx, "DELETE FROM torrents WHERE info_hash = any($1)", hashes)
 		if err != nil {
 			return fmt.Errorf("failed to delete from torrents table: %w", err)

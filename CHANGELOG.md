@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an unwired, disabled recovery foundation that atomically captures complete
+  catalogue sources, removal and a bound block receipt, with bounded storage
+  guards and qualified operator restoration through the native crawler bloom.
+
 - Add a bounded, local English and availability shadow-review command with
   source-bound receipts; preserve unknown track evidence and stale swarm data.
 - Stop labelling unnamed dual/multi audio as English, preserving uncertainty
