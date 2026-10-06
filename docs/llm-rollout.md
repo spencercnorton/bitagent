@@ -12,6 +12,20 @@ content policy. Other model categories remain unknown and record `policy_decline
 Keep ordinary content exclusions in place. Review applied types against later
 canonical references before expanding the allowed list.
 
+After an accepted new movie/TV type passes the content policy, the default
+workflow parses available release attributes once and checks the local mirror
+when `local_search_enabled` is true. Attachment requires an exact source title
+or stored alias, a compatible movie year and a unique local identity. Ambiguous,
+saturated or unavailable local results leave the type and available attributes
+usable without attachment. The `type-local-enriched` tag identifies these local
+attachments; they do not receive `llm-matched`. This continuation makes no API
+or additional model request. Custom workflows may use `enrich_type_fallback`
+after their type policy and must apply that policy again afterward.
+The reusable `EnrichTypeLocally` helper performs only this parsing and local
+lookup. A background caller must validate its retained source/type/policy
+evidence and persist with a transactional source check; it must not rerun the
+default workflow to apply optional enrichment.
+
 For language review, enable `CONTENT_FILTER_ENABLED` and
 `CONTENT_FILTER_LLM_ENABLED`, set
 `CONTENT_FILTER_LLM_ENFORCE=true` and `CONTENT_FILTER_LLM_ACTION=review`.

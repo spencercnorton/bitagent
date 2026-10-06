@@ -46,5 +46,6 @@ var defaultFeatures = newFeatures(
 		runWorkflowAction{},
 		setContentTypeAction{},
 		typeFallbackAction{},
+		enrichTypeFallbackAction{},
 	),
 )

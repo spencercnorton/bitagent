@@ -4,6 +4,9 @@
 
 - Parse explicit `WEB-DL`, `WEB.DL` and `WEBDL` source tokens consistently,
   preferring compound source aliases before their shorter prefixes.
+- Parse release attributes and resolve unique local identities after a new
+  movie/TV type fallback, within the existing content policy. The continuation
+  runs once and makes no additional model or metadata API request.
 
 - Bind matcher extraction cache entries to rendered file evidence and request
   routing. Group responses have a separate exact-request cache and cannot warm
