@@ -226,3 +226,25 @@ func TestTypeFallbackLocalContinuationLeavesExistingTypesAndNonVideoPredictionsA
 		})
 	}
 }
+
+func TestEnrichTypeLocallyIsReusableWithoutWorkflowOrTypeInference(t *testing.T) {
+	content := model.Content{Type: model.ContentTypeTvShow, Source: "tmdb", ID: "42", Title: "Amber Signal", ReleaseYear: 2019}
+	local := &typeEnrichmentSearch{candidates: []model.Content{content}}
+	tor := typeEnrichmentTorrent("Amber.Signal.S02E04.1080p.BluRay.x265-GROUP.mkv")
+	cl := classification.Result{ContentAttributes: classification.ContentAttributes{ContentType: model.NewNullContentType(model.ContentTypeTvShow)}}
+	ctx := WithTypeFallback(context.Background(), func(context.Context, classification.Result) (classification.Result, error) {
+		t.Fatal("the reusable local helper must not infer another type")
+		return classification.Result{}, nil
+	})
+	got, err := EnrichTypeLocally(ctx, tor, cl, local, LocalTypeEnrichmentOptions{LocalSearchEnabled: true})
+	require.NoError(t, err)
+	require.Equal(t, &content, got.Content)
+	require.Equal(t, model.Episodes{2: {4: {}}}, got.Episodes)
+	require.True(t, got.VideoCodec.Valid)
+	require.Equal(t, 1, local.calls)
+	again, err := EnrichTypeLocally(ctx, tor, got, local, LocalTypeEnrichmentOptions{LocalSearchEnabled: true})
+	require.NoError(t, err)
+	require.Equal(t, got, again)
+	require.Equal(t, 1, local.calls, "an attached result is already complete")
+	require.Nil(t, NewLocalSearch(nil, NewDefaultConfig()))
+}

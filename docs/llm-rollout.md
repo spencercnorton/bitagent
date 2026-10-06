@@ -21,6 +21,10 @@ usable without attachment. The `type-local-enriched` tag identifies these local
 attachments; they do not receive `llm-matched`. This continuation makes no API
 or additional model request. Custom workflows may use `enrich_type_fallback`
 after their type policy and must apply that policy again afterward.
+The reusable `EnrichTypeLocally` helper performs only this parsing and local
+lookup. A background caller must validate its retained source/type/policy
+evidence and persist with a transactional source check; it must not rerun the
+default workflow to apply optional enrichment.
 
 For language review, enable `CONTENT_FILTER_ENABLED` and
 `CONTENT_FILTER_LLM_ENABLED`, set
