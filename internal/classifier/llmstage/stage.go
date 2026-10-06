@@ -15,9 +15,11 @@ import (
 
 	"github.com/spencercnorton/bitagent/internal/classifier"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"go.uber.org/zap"
 )
@@ -45,16 +47,19 @@ type Decision struct {
 // result and error; live predictions continue through the workflow's policy.
 // Runners without that boundary can only contribute shadow observations.
 type Stage struct {
-	cfg        Config
-	inner      classifier.Runner
-	privacy    PrivacyStore
-	cache      *lruCache
-	metrics    *Metrics
-	logger     *zap.SugaredLogger
-	http       *http.Client
-	admission  Admission
-	slots      chan struct{}
-	retryAfter atomic.Int64
+	cfg         Config
+	inner       classifier.Runner
+	privacy     PrivacyStore
+	cache       *lruCache
+	metrics     *Metrics
+	logger      *zap.SugaredLogger
+	http        *http.Client
+	admission   Admission
+	slots       chan struct{}
+	retryAfter  atomic.Int64
+	work        *llmwork.Store
+	workPolicy  classifier.Config
+	matcherWork *llmmatch.Client
 }
 
 // NewStage constructs the stage. It does not perform I/O; the HTTP
@@ -128,6 +133,15 @@ func (s *Stage) Run(
 	flags classifier.Flags,
 	t model.Torrent,
 ) (classification.Result, error) {
+	ctx = context.WithValue(ctx, workRunKey{}, WorkPayload{Workflow: workflow, Flags: flags})
+	if llmwork.ExecutionFrom(ctx) == nil && s.work != nil && s.work.Enabled() {
+		p := WorkPayload{Workflow: workflow, Flags: flags}
+		if preserved, err := s.preserveWork(ctx, t, p); err != nil {
+			return classification.Result{}, err
+		} else if preserved != nil {
+			return preserved.Result(), nil
+		}
+	}
 	if enabled, ok := flags["llm_stage_enabled"].(bool); ok && !enabled {
 		s.metrics.gateRejectsTotal.WithLabelValues("runtime_flag").Inc()
 		return s.inner.Run(ctx, workflow, flags, t)
@@ -137,6 +151,7 @@ func (s *Stage) Run(
 	}
 
 	var reached, applied bool
+	var fallbackErr error
 	var category evidence.MediaType
 	var inferred model.NullContentType
 	policyCtx := classifier.WithTypeFallback(ctx, func(ctx context.Context, result classification.Result) (classification.Result, error) {
@@ -147,6 +162,10 @@ func (s *Stage) Run(
 		}
 		reached = true
 		updated, changed := s.fallback(ctx, t, result)
+		if deferred := llmwork.LastDeferral(ctx); deferred != nil {
+			fallbackErr = *deferred
+			return result, fallbackErr
+		}
 		applied = changed
 		if changed {
 			inferred = updated.ContentType
@@ -155,6 +174,9 @@ func (s *Stage) Run(
 		return updated, nil
 	})
 	innerResult, innerErr := s.inner.Run(policyCtx, workflow, flags, t)
+	if fallbackErr != nil {
+		return innerResult, fallbackErr
+	}
 	if reached {
 		if applied {
 			if innerErr == nil && innerResult.ContentType == inferred {
@@ -300,6 +322,13 @@ func (s *Stage) plausibleMedia(t model.Torrent) bool {
 // classify is the cache-check + HTTP call. Returns a Decision or
 // error. Callers map error to a gate-reject metric.
 func (s *Stage) classify(ctx context.Context, t model.Torrent) (Decision, error) {
+	if err := s.submitWork(ctx, t); err != nil {
+		if errors.Is(err, llmwork.ErrReplayOnly) {
+			ctx = llmwork.WithReplayOnly(ctx)
+		} else {
+			return Decision{}, err
+		}
+	}
 	if err := s.admissionReady(); err != nil {
 		return Decision{}, err
 	}
@@ -455,7 +484,7 @@ func renderUserPrompt(promptVersion string, t model.Torrent) string {
 	fmt.Fprintf(&sb, "%d", len(t.Files))
 	sb.WriteString("\nfiles:\n")
 	const maxFiles = 50
-	for i, f := range t.Files {
+	for i, f := range llmwork.OrderedFiles(t.Files) {
 		if i >= maxFiles {
 			sb.WriteString("... (truncated)\n")
 			break
@@ -591,7 +620,7 @@ func fileListHash(t model.Torrent) string {
 		return "no-files"
 	}
 	h := sha256.New()
-	for _, f := range t.Files {
+	for _, f := range llmwork.OrderedFiles(t.Files) {
 		fmt.Fprintf(h, "%d\t%s\n", f.Size, strings.ToLower(f.Path))
 	}
 	return hex.EncodeToString(h.Sum(nil)[:8])

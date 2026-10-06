@@ -23,8 +23,16 @@ func New() fx.Option {
 		),
 		fx.Provide(llmcapture.NewPostgresStore),
 		fx.Provide(provideRecorder),
+		fx.Provide(provideDispatchController),
 		fx.Provide(fx.Annotated{Group: "workers", Target: provideExpiryJanitorWorker}),
 	)
+}
+
+func provideDispatchController(cfg llmcapture.Config, store *llmcapture.PostgresStore) (llmcapture.DispatchControl, error) {
+	if cfg.DispatchControlEnabled && !cfg.Enabled {
+		return nil, llmcapture.ErrInvalidConfig("dispatch control requires enabled capture")
+	}
+	return llmcapture.NewPostgresDispatchController(store, cfg.DispatchControlEnabled && cfg.Enabled), nil
 }
 
 func provideRecorder(

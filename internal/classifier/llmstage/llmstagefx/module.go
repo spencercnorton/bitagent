@@ -23,6 +23,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -49,6 +50,13 @@ func WrapWithLLMStage(
 	logger *zap.SugaredLogger,
 	capture llmcapture.Capturer,
 	pool lazy.Lazy[*pgxpool.Pool],
+	policy classifier.Config,
+	optional struct {
+		fx.In
+		Matcher  *llmmatch.Client           `optional:"true"`
+		Work     *llmwork.Store             `optional:"true"`
+		Dispatch llmcapture.DispatchControl `optional:"true"`
+	},
 ) lazy.Lazy[classifier.Runner] {
 	return lazy.New(func() (classifier.Runner, error) {
 		if err := cfg.Validate(); err != nil {
@@ -58,9 +66,12 @@ func WrapWithLLMStage(
 		if err != nil {
 			return nil, err
 		}
-		return llmstage.NewStage(cfg, r, store, metrics, logger, llmstage.Admission{
-			Budget: llmmatch.NewPostgresTypeCallBudget(pool), Capture: capture,
-		}), nil
+		stage := llmstage.NewStage(cfg, r, store, metrics, logger, llmstage.Admission{
+			Budget: llmmatch.NewPostgresTypeCallBudget(pool), Capture: capture, Dispatch: optional.Dispatch,
+		})
+		stage.SetWork(optional.Work, policy)
+		stage.SetMatcherWork(optional.Matcher)
+		return stage, nil
 	})
 }
 

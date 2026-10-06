@@ -12,10 +12,12 @@ import (
 type pendingCaptureContextKey struct{}
 
 type pendingCapture struct {
-	key     []byte
-	task    llmcapture.Task
-	source  llmcapture.CandidateSource
-	outcome llmcapture.Outcome
+	key         []byte
+	task        llmcapture.Task
+	source      llmcapture.CandidateSource
+	outcome     llmcapture.Outcome
+	infoHash    []byte
+	semanticKey []byte
 }
 
 func withPendingCapture(ctx context.Context) context.Context {

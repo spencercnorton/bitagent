@@ -72,6 +72,41 @@ After deployment, check source/image identity, startup time, health, audit failu
 budget usage and actual application counters. A configured stage with no applied
 effects needs investigation.
 
+Durable request control is a separate opt-in:
+`LLM_EVALUATION_CAPTURE_DISPATCH_CONTROL_ENABLED=true` requires enabled capture
+and migration 56. Keep it off until all enabled model boundaries and the task
+worker have been qualified together. It preserves the existing daily and monthly
+scope limits; reservations are never automatically refunded. A confirmed denial
+before dispatch can resume after its stored retry time, and a confirmed
+cancellation before intent can reuse its same-day reservation. A legacy pending
+capture, an expired dispatch intent or a transport outcome with no HTTP receipt
+remains held. Process restart and raw capture cleanup do not authorize another
+request: a permanent digest-only fence survives ordinary retention.
+
+Build identity remains part of each evaluation capture and its original receipt.
+Dispatch ownership additionally binds the complete request semantics: task,
+candidate source, sampling origin, source and release family, complete rendered
+model/task inputs, provider, model, prompt and explicit policy contract. A build
+change alone resolves to the first permanent fence. A retained response keeps
+its original capture, build and immutable decision authority; replay never adds
+an HTTP observation to the newer build's cohort. Positively undispatched work
+can use the current build's admitted capture after its lease and retry boundary
+allow it, retaining the first fence and any reusable same-day reservation.
+Unknown intent, expired or missing original bodies, and legacy cross-build
+captures without dispatch proof remain held. Exact response observation time
+also prevents a replacement body after retention from renewing the first receipt,
+even when its bytes match. Semantic equality establishes replay identity; it
+does not establish model correctness or a canonical label.
+
+Replay uses the exact retained first HTTP response under the current request,
+privacy and policy boundary. It consumes no additional provider request or budget
+and is recorded as a cache replay. Missing or expired response bodies cannot be
+reconstructed by buying a second response. Queued requests additionally require a
+current owned task and a transactional source check that locks the compared
+source evidence through intent recording. Disabling request collection still
+allows its ordinary retention janitor to run; do not remove durable dispatch
+fences as a rollback procedure.
+
 Set `CLASSIFIER_LLM_ENABLE_LIVE=false`, `CONTENT_FILTER_LLM_ENFORCE=false`,
 `JUNKPURGE_ENABLE_PURGE=false` or `CLASSIFIER_LLM_MATCH_EMBEDDINGS_ENABLED=false`
 to stop the corresponding new action independently. Existing language review tags

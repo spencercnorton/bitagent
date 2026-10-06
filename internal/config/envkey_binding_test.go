@@ -18,12 +18,26 @@ import (
 	"github.com/spencercnorton/bitagent/internal/junkpurge"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/logging"
 	"github.com/spencercnorton/bitagent/internal/retention"
 	"github.com/spencercnorton/bitagent/internal/seeds"
 	"github.com/spencercnorton/bitagent/internal/tmdb"
 	"github.com/spencercnorton/bitagent/internal/torznab"
 )
+
+func TestEnvBinding_OptionalModelWorkCollectionAndExecutionAreIndependent(t *testing.T) {
+	cfg := resolveSectionFromEnv(t, "llm_work", llmwork.NewDefaultConfig(), map[string]string{
+		"LLM_WORK_ENABLED": "true", "LLM_WORK_WORKER_ENABLED": "false", "LLM_WORK_KINDS": "classifier_type,matcher",
+		"LLM_WORK_MAX_PENDING": "48", "LLM_WORK_TASK_TIMEOUT": "2m",
+	}).(llmwork.Config)
+	if !cfg.Enabled || cfg.WorkerEnabled || !cfg.Accepts(llmwork.Type) || !cfg.Accepts(llmwork.Matcher) || cfg.Accepts(llmwork.Language) || cfg.MaxPending != 48 || cfg.TaskTimeout != 2*time.Minute {
+		t.Fatalf("unexpected optional work config: %+v", cfg)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestEnvBinding_ChatBackendsAreExplicitAndIndependent(t *testing.T) {
 	for _, backend := range []string{"openai", "ollama", ""} {

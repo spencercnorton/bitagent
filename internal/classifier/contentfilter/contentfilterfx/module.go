@@ -36,6 +36,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -94,11 +95,13 @@ func New() fx.Option {
 // any consumer of *contentfilter.Filter sees the same instance.)
 type filterParams struct {
 	fx.In
-	Config  contentfilter.Config
-	Metrics *contentfilter.Metrics
-	Logger  *zap.SugaredLogger
-	Capture llmcapture.Capturer `optional:"true"`
-	Pool    lazy.Lazy[*pgxpool.Pool]
+	Config   contentfilter.Config
+	Metrics  *contentfilter.Metrics
+	Logger   *zap.SugaredLogger
+	Capture  llmcapture.Capturer `optional:"true"`
+	Pool     lazy.Lazy[*pgxpool.Pool]
+	Work     *llmwork.Store             `optional:"true"`
+	Dispatch llmcapture.DispatchControl `optional:"true"`
 }
 
 func provideFilter(p filterParams) (*contentfilter.Filter, error) {
@@ -109,7 +112,9 @@ func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 	}
 
 	if !cfg.LLMEnabled {
-		return contentfilter.New(cfg), nil
+		filter := contentfilter.New(cfg)
+		filter.SetWork(p.Work)
+		return filter, nil
 	}
 	if err := validateProductionLLMConfig(cfg); err != nil {
 		return nil, err
@@ -159,10 +164,13 @@ func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 		"min_confidence_for_drop", cfg.LLMMinConfidenceForDrop,
 		"prompt_version", cfg.LLMPromptVersion,
 	)
-	return contentfilter.NewWithLLMAdmission(cfg, llm, cb, contentfilter.Admission{
-		Budget:  llmmatch.NewPostgresContentFilterCallBudget(p.Pool),
-		Capture: p.Capture,
-	}), nil
+	filter := contentfilter.NewWithLLMAdmission(cfg, llm, cb, contentfilter.Admission{
+		Budget:   llmmatch.NewPostgresContentFilterCallBudget(p.Pool),
+		Capture:  p.Capture,
+		Dispatch: p.Dispatch,
+	})
+	filter.SetWork(p.Work)
+	return filter, nil
 }
 
 func validateEnforcementMode(cfg contentfilter.Config) error {

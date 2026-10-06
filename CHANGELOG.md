@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Apply deferred model receipts with source-bound compare-and-set transactions and retain committed facts across ordinary refreshes and response expiry.
+
+- Add an opt-in durable request dispatch fence and bounded replay of retained
+  first responses. Known pre-dispatch deferrals remain retryable; uncertain
+  dispatches stay held even after ordinary capture retention.
+
+- Add a disabled-by-default lifecycle for bounded optional model tasks, with
+  source/policy identities, paced time-stratum admission, completion priority,
+  owned worker leases and targeted transactional application. Ingestion retains
+  its deterministic result while optional work waits for unchanged allowances.
 - Add reversible adult-content exclusion for consumer APIs with
   `SERVING_EXCLUDE_ADULT`. Known XXX, positive attached adult metadata and the
   core classifier's vetted strong native evidence are excluded before search

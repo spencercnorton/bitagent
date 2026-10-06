@@ -144,6 +144,7 @@ chat model, API key or OpenAI data-sharing setting.
 | `CLASSIFIER_LLM_MATCH_EMBEDDINGS_MAX_DIMENSIONS` | `4096` | Maximum accepted vector length. |
 | `CLASSIFIER_LLM_MATCH_EMBEDDINGS_SHORTLIST_SIZE` | `3` | Number of candidates shown to chat, in `2..100`. |
 | `LLM_EVALUATION_CAPTURE_ENABLED` | `false` | Must be enabled for the embedding route's request, first response and final chat decision evidence. |
+| `LLM_EVALUATION_CAPTURE_DISPATCH_CONTROL_ENABLED` | `false` | Opt in to durable dispatch ownership and retained first-response replay after migration 56. Requires capture. Keep disabled until the worker and provider boundaries are qualified together. |
 
 For direct OpenAI, use `https://api.openai.com/v1/embeddings` and a model such
 as `text-embedding-3-small`. OpenAI supports the `dimensions` parameter on
@@ -336,6 +337,59 @@ liveness and outcome-prior settings. Source credentials belong in an ignored
 environment file or secret manager. Network tunnels and human account services
 are deployment choices rather than backend configuration.
 
+## Durable optional model work
+
+The `llm_work` worker is disabled by default. It collects bounded source cases
+for type inference, language review and identity matching without making
+ingestion wait for provider capacity. Each selected stage must already be
+enabled and evaluation capture plus dispatch control must be enabled. Language
+work requires `CONTENT_FILTER_LLM_ACTION=review`; the worker never runs the
+general classifier deletion pipeline.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LLM_WORK_ENABLED` | `false` | Admit source cases and permit owned execution |
+| `LLM_WORK_WORKER_ENABLED` | `true` | Execute admitted cases; `false` collects bounded cases only |
+| `LLM_WORK_KINDS` | `classifier_type,contentfilter,matcher` | Selected stages |
+| `LLM_WORK_POLL_INTERVAL` | `5s` | Owned worker cadence |
+| `LLM_WORK_LEASE_DURATION` | `5m` | Generation-fenced source-case lease |
+| `LLM_WORK_TASK_TIMEOUT` | `3m` | Maximum execution time, below the lease duration |
+| `LLM_WORK_ENQUEUE_TIMEOUT` | `100ms` | Maximum database wait during ingestion |
+| `LLM_WORK_MAX_PENDING` | `2400` | Pending capacity per selected stage |
+| `LLM_WORK_MAX_TASK_AGE` | `168h` | Proposal lifetime |
+| `LLM_WORK_TIME_BUCKETS` | `24` | UTC admission strata that reserve capacity for later traffic |
+| `LLM_WORK_SPREAD_ADMISSION` | `true` | Pace new cases under the existing stage allowance |
+| `LLM_EVALUATION_CAPTURE_DISPATCH_CONTROL_ENABLED` | `false` | Durable request dispatch and retained-response replay |
+
+Allowances and concurrency limits remain stage-owned. Started matcher cases
+receive completion priority. Exact retained first responses replay before a new
+allowance reservation. Only positively undispatched work can resume after a
+deferral or expired lease. An intent, unknown transport outcome or missing
+response body requires explicit reconciliation; it never authorizes automatic
+duplicate calls or allowance refunds.
+
+Task policies carry explicit semantic contract versions; advance the applicable
+`WorkPolicyVersion` when eligibility, interpretation or application semantics
+change. Evaluation captures remain bound to their original binary build. A
+build-only restart reuses a response only after the dispatch controller proves
+the complete source/group/input/prompt/route/model/task contract equivalent.
+Replay retains the original capture, response time and decision generation.
+An equivalent request with unknown outcome or an expired body remains held.
+
+`LLM_WORK_ENABLED=false` disables admission and execution.
+`LLM_WORK_WORKER_ENABLED=false` pauses execution while admission remains bounded.
+When the registered worker runs, proposal cleanup continues with an already
+initialized database pool even if execution is disabled. Expired raw payloads
+and lifecycle events are removed; committed application snapshots retain their
+source and policy bindings. Digest-only dispatch fences survive both task and
+capture cleanup. Snapshots describe committed model applications and cannot
+serve as canonical or independently reviewed labels.
+
+Metrics expose admission outcomes, worker cycles and task depth by stage/state
+under `bitagent_llm_work_*`, including overflow, sampling and expiry. Qualify
+restart, source/privacy mutations, cancellation and concurrent application in
+disposable state before enabling execution.
+
 ## Live config inspection
 
 Run `bitagent config show` against your running container to dump every config path, type, current value, default, and the source resolver that produced it (env var, default, file, etc.). This is the canonical way to verify a configuration override took effect:
@@ -356,3 +410,19 @@ See [reference/cli.md](reference/cli.md) for the full CLI surface.
 - [reference/metrics.md](reference/metrics.md)
 - [csam-defense.md](csam-defense.md)
 - [operations/security.md](operations/security.md)
+
+Deferred tasks apply through a narrow compare-and-set adapter. A type task can
+only enrich one still-unknown, unattached public row with a qualified movie/TV
+prediction and local metadata. A matcher task must retain the normal final
+identity, year, confidence and audit checks before attaching an identity. A
+language task can add the audited review tag; it cannot remove content. Current
+source files, hints, privacy, quarantine, policy, request and response receipts
+are rechecked before dispatch and in the transaction that writes the target,
+tags, application provenance and task completion.
+
+Committed application facts are retained separately from expiring provider
+bodies. Ordinary processing may preserve those facts after response retention
+ends, including after a restart, only while current source, policy, target and
+tags still match. A missing or changed fact holds processing for explicit
+reconciliation. Preservation does not authorize another provider request and
+is checked again inside the ordinary persistence transaction.
