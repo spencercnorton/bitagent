@@ -14,6 +14,7 @@ type fakeBackend struct {
 	claims        int
 	state, reason string
 	retry         time.Time
+	completed     bool
 }
 
 func (b *fakeBackend) Claim(context.Context, string) (*Lease, error) {
@@ -24,7 +25,8 @@ func (b *fakeBackend) Finish(_ context.Context, _ Lease, state, reason string, r
 	b.state, b.reason, b.retry = state, reason, retry
 	return nil
 }
-func (b *fakeBackend) Heartbeat(context.Context, Lease) error { return nil }
+func (b *fakeBackend) Heartbeat(context.Context, Lease) error         { return nil }
+func (b *fakeBackend) Completed(context.Context, Lease) (bool, error) { return b.completed, nil }
 
 type handlerFunc func(context.Context, Task) error
 
@@ -63,4 +65,21 @@ func TestDisabledWorkerDoesNotClaimOrRun(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, worked)
 	require.Zero(t, b.claims)
+}
+
+func TestEngineRequiresCommittedCompletion(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		b := &fakeBackend{completed: committed}
+		cfg := NewDefaultConfig()
+		cfg.Enabled = true
+		e := Engine{Backend: b, Config: cfg, Owner: "test", Handler: handlerFunc(func(context.Context, Task) error { return nil })}
+		worked, err := e.RunOne(context.Background())
+		require.NoError(t, err)
+		require.True(t, worked)
+		if committed {
+			require.Empty(t, b.state)
+		} else {
+			require.Equal(t, "held", b.state)
+		}
+	}
 }

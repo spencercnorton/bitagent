@@ -10,11 +10,13 @@ import (
 	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spencercnorton/bitagent/internal/classifier"
 	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
 	"github.com/spencercnorton/bitagent/internal/config/configfx"
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -38,12 +40,15 @@ func New() fx.Option {
 // privacy gate (never sends private-tracker names to the LLM).
 type clientParams struct {
 	fx.In
-	Config  llmmatch.Config
-	Store   *evidence.Store
-	Metrics *llmmatch.Metrics
-	Logger  *zap.SugaredLogger
-	Capture llmcapture.Capturer `optional:"true"`
-	Pool    lazy.Lazy[*pgxpool.Pool]
+	Config   llmmatch.Config
+	Store    *evidence.Store
+	Metrics  *llmmatch.Metrics
+	Logger   *zap.SugaredLogger
+	Capture  llmcapture.Capturer `optional:"true"`
+	Pool     lazy.Lazy[*pgxpool.Pool]
+	Policy   classifier.Config          `optional:"true"`
+	Work     *llmwork.Store             `optional:"true"`
+	Dispatch llmcapture.DispatchControl `optional:"true"`
 }
 
 func provideClient(p clientParams) (*llmmatch.Client, error) {
@@ -61,12 +66,14 @@ func provideClient(p clientParams) (*llmmatch.Client, error) {
 			return nil, fmt.Errorf("embeddings requires final match decision recording")
 		}
 	}
-	return llmmatch.NewClientWithBudget(
+	client := llmmatch.NewClientWithBudget(
 		p.Config,
 		p.Store,
 		p.Metrics,
 		p.Logger,
 		p.Capture,
 		llmmatch.NewPostgresCallBudget(p.Pool),
-	), nil
+	).WithDispatchControl(p.Dispatch)
+	client.SetWork(p.Work, p.Policy)
+	return client, nil
 }

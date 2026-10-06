@@ -10,21 +10,28 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/llmcapture"
 )
 
 type Store struct {
-	cfg  Config
-	pool lazy.Lazy[*pgxpool.Pool]
+	cfg      Config
+	pool     lazy.Lazy[*pgxpool.Pool]
+	dispatch llmcapture.DispatchControl
+	metrics  *Metrics
 }
 
 func NewStore(cfg Config, pool lazy.Lazy[*pgxpool.Pool]) (*Store, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &Store{cfg: cfg, pool: pool}, nil
+	return &Store{cfg: cfg, pool: pool, metrics: NewMetrics()}, nil
 }
 func (s *Store) Enabled() bool  { return s != nil && s.cfg.Enabled }
 func (s *Store) Config() Config { return s.cfg }
+
+// SetDispatch is startup-only wiring. Automatic lease recovery requires the
+// same controller that fences every provider boundary for these tasks.
+func (s *Store) SetDispatch(d llmcapture.DispatchControl) { s.dispatch = d }
 
 const publicSourceSQL = `EXISTS (
  SELECT 1 FROM torrents t WHERE t.info_hash=$1 AND t.private=false
@@ -35,10 +42,17 @@ const publicSourceSQL = `EXISTS (
 // Enqueue bounds both storage and database waiting. A full/unavailable queue
 // never asks ingestion to wait for model capacity or to repeat classification.
 // Time-bucket caps reserve space for traffic after the first hour of a day.
-func (s *Store) Enqueue(ctx context.Context, d Draft) (string, error) {
+func (s *Store) Enqueue(ctx context.Context, d Draft) (outcome string, retErr error) {
 	if !s.Enabled() {
 		return "disabled", nil
 	}
+	defer func() {
+		kind := d.Kind
+		if kind != Type && kind != Language && kind != Matcher {
+			kind = "unknown"
+		}
+		s.metrics.outcomes.WithLabelValues(string(kind), outcome).Inc()
+	}()
 	key, err := d.Key()
 	if err != nil {
 		return "invalid", err
@@ -73,8 +87,8 @@ func (s *Store) Enqueue(ctx context.Context, d Draft) (string, error) {
 		return "unavailable", err
 	}
 	if existing != "" {
-		if existing == "completed" {
-			return "completed", tx.Commit(ctx)
+		if existing == "completed" || existing == "held" || existing == "obsolete" || existing == "expired" {
+			return existing, tx.Commit(ctx)
 		}
 		return "duplicate", tx.Commit(ctx)
 	}
@@ -133,12 +147,7 @@ func (s *Store) Claim(ctx context.Context, owner string) (*Lease, error) {
 		return nil, err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
-	// Lease recovery must be preceded by the dispatch controller's uncertain-
-	// attempt reconciliation. Until then, an expired leased task is held rather
-	// than blindly allowing another model attempt.
-	if _, err = tx.Exec(ctx, `WITH changed AS(UPDATE llm_work_tasks SET state='held',reason='expired_lease_needs_reconcile',lease_owner=NULL,lease_until=NULL
- WHERE state='leased' AND lease_until<now() RETURNING task_key)
- INSERT INTO llm_work_events(task_key,state,reason) SELECT task_key,'held','expired_lease_needs_reconcile' FROM changed`); err != nil {
+	if err = s.recoverExpired(ctx, tx); err != nil {
 		return nil, err
 	}
 	if _, err = tx.Exec(ctx, `WITH changed AS(UPDATE llm_work_tasks SET state='expired',reason='task_age',lease_owner=NULL,lease_until=NULL

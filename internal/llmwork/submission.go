@@ -33,5 +33,11 @@ func (s *Store) Submit(ctx context.Context, kind Kind, t model.Torrent, policy, 
 	if outcome == "completed" {
 		return ErrReplayOnly
 	}
+	if outcome == "held" {
+		return ErrHeld
+	}
+	if outcome == "obsolete" {
+		return ErrObsolete
+	}
 	return ErrDeferred
 }

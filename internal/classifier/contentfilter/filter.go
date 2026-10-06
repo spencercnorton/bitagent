@@ -521,6 +521,9 @@ func (f *Filter) consultAudited(
 	if f.admission.Dispatch != nil && f.admission.Dispatch.Enabled() {
 		return f.consultControlled(ctx, in, source)
 	}
+	if llmwork.ExecutionFrom(ctx) != nil || llmwork.ReplayOnly(ctx) {
+		return ReasonNone, false, llmwork.ErrHeld
+	}
 	recorder, ok := f.admission.Capture.(llmcapture.ContentFilterResultRecorder)
 	client, clientOK := f.llm.(AuditedLLMClient)
 	if f.admission.Budget == nil || f.admission.Capture == nil ||

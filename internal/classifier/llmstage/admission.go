@@ -80,7 +80,7 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	}
 	req.Header.Set("Authorization", "Bearer "+s.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
-	if llmwork.ExecutionFrom(ctx) != nil && !controlled {
+	if (llmwork.ExecutionFrom(ctx) != nil || llmwork.ReplayOnly(ctx)) && !controlled {
 		return Decision{}, llmwork.ErrHeld
 	}
 	ok := true
@@ -146,6 +146,9 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 			return Decision{}, typeControlError(ctx, err)
 		}
 		if dispatchOutcome == llmcapture.DispatchReplay {
+			if err := llmwork.BeforeDispatch(ctx); err != nil {
+				return Decision{}, err
+			}
 			replay, err := s.admission.Dispatch.Replay(ctx, request)
 			if err != nil {
 				return Decision{}, err
