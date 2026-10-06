@@ -6,6 +6,7 @@ import (
 
 	"github.com/spencercnorton/bitagent/internal/classifier"
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
+	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
@@ -83,4 +84,24 @@ func (s *Stage) ValidateWork(p WorkPayload) error {
 		return fmt.Errorf("%w: deferred type requires the standard nondeleting adapter", llmwork.ErrObsolete)
 	}
 	return nil
+}
+
+// WorkInputDigest binds the exact bounded production request.
+func (s *Stage) WorkInputDigest(t model.Torrent) []byte {
+	return llmwork.Digest(buildBoundedRequestBody(s.cfg, t))
+}
+
+// SetMatcherWork allows the outer runner to retain a later committed identity
+// before ordinary workflow actions can replace it.
+func (s *Stage) SetMatcherWork(c *llmmatch.Client) { s.matcherWork = c }
+func (s *Stage) preserveWork(ctx context.Context, t model.Torrent, p WorkPayload) (*llmwork.ApplicationSnapshot, error) {
+	if s.matcherWork != nil {
+		a, err := s.work.PreservePolicy(ctx, llmwork.Matcher, t, func(a llmwork.ApplicationSnapshot) any {
+			return s.matcherWork.WorkPolicy(llmmatch.WorkPayload{Type: a.ContentType})
+		})
+		if err != nil || a != nil {
+			return a, err
+		}
+	}
+	return s.work.Preserve(ctx, llmwork.Type, t, s.WorkPolicy(p))
 }
