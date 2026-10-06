@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/spencercnorton/bitagent/internal/verdicts"
 )
 
 // batchWorkerClient is deliberately narrower than the HTTP client. It keeps
@@ -960,15 +959,14 @@ func (w *purgeWorker) observeBatchFinalization(
 		if days <= 0 {
 			days = 30
 		}
-		expiresAt := time.Now().Add(time.Duration(days) * 24 * time.Hour)
+		pool, err := w.pool.Get()
+		if err != nil {
+			w.logger.Warnw("junkpurge Batch verdict pool", "err", err)
+			return
+		}
 		for _, hash := range summary.QuarantinedHashes {
-			if err := w.verdicts.Record(ctx, verdicts.Event{
-				InfoHash:  hash,
-				Verdict:   verdicts.VerdictQuarantined,
-				Mechanism: verdicts.MechanismJunkpurge,
-				Reason:    "LLM Batch junk judgment past min-age; snapshot retained",
-				ExpiresAt: &expiresAt,
-			}); err != nil {
+			if err := recordQuarantineVerdict(ctx, pool, hash, days,
+				"LLM Batch junk judgment past min-age; snapshot retained"); err != nil {
 				w.logger.Warnw("junkpurge Batch verdict record", "err", err)
 			}
 		}

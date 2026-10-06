@@ -843,14 +843,9 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 		if days <= 0 {
 			days = 30
 		}
-		exp := time.Now().Add(time.Duration(days) * 24 * time.Hour)
 		for _, h := range quarantinedHashes {
-			if verr := w.verdicts.Record(ctx, verdicts.Event{
-				InfoHash: h, Verdict: verdicts.VerdictQuarantined,
-				Mechanism: verdicts.MechanismJunkpurge,
-				Reason:    "LLM junk judgment past min-age; snapshot retained",
-				ExpiresAt: &exp,
-			}); verr != nil {
+			if verr := recordQuarantineVerdict(ctx, pool, h, days,
+				"LLM junk judgment past min-age; snapshot retained"); verr != nil {
 				w.logger.Warnw("junkpurge verdict record", "err", verr)
 			}
 		}

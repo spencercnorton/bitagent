@@ -64,6 +64,9 @@ func NewStore(pool lazy.Lazy[*pgxpool.Pool]) *Store {
 // transaction. Best-effort callers (phase-A dual-writers) treat an error as
 // log-and-continue: the ledger must never break the mechanism it observes.
 func (s *Store) Record(ctx context.Context, ev Event) error {
+	if len(ev.InfoHash) == 0 || ev.Verdict == "" || ev.Mechanism == "" {
+		return fmt.Errorf("verdicts: incomplete event")
+	}
 	pool, err := s.pool.Get()
 	if err != nil {
 		return fmt.Errorf("verdicts: acquire pool: %w", err)

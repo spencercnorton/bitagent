@@ -1,6 +1,7 @@
 package junkpurge
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
@@ -66,6 +67,8 @@ LIMIT $2 OFFSET $3`, quarantineDays, limit, offset)
 // atomically with removing the snapshot. Legacy snapshots without sources work
 // too. The restore record uses the normal unknown-freshness window; it does not
 // override authoritative tracker zero or liveness/ledger exclusions.
+// A configured verdict ledger commits in that transaction too; ledger failure
+// retains the snapshot and rolls back the restored rows and queued work.
 // 'extension' is a generated column on both tables, so it is excluded from the
 // explicit column lists.
 func RestoreQuarantined(ctx context.Context, pool *pgxpool.Pool, vstore *verdicts.Store, logger *zap.SugaredLogger, infoHashHex string) error {
@@ -89,9 +92,10 @@ func RestoreQuarantined(ctx context.Context, pool *pgxpool.Pool, vstore *verdict
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var torrentSnap, filesSnap, sourcesSnap []byte
+	var quarantinedAt time.Time
 	if err := tx.QueryRow(ctx,
-		`SELECT torrent_snapshot, files_snapshot, sources_snapshot FROM junkpurge_quarantine WHERE info_hash = $1 FOR UPDATE`,
-		ihBytes).Scan(&torrentSnap, &filesSnap, &sourcesSnap); err != nil {
+		`SELECT torrent_snapshot, files_snapshot, sources_snapshot, quarantined_at FROM junkpurge_quarantine WHERE info_hash = $1`,
+		ihBytes).Scan(&torrentSnap, &filesSnap, &sourcesSnap, &quarantinedAt); err != nil {
 		return fmt.Errorf("quarantine entry not found: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -100,6 +104,25 @@ SELECT info_hash, name, size, private, created_at, updated_at, files_status, fil
 FROM jsonb_populate_record(null::torrents, $1::jsonb)
 ON CONFLICT (info_hash) DO NOTHING`, torrentSnap); err != nil {
 		return fmt.Errorf("restore torrent row: %w", err)
+	}
+	// Quarantine admission locks the raw torrent before its snapshot. Take the
+	// same order, including when the crawler has already recreated the raw row.
+	// The preliminary snapshot is only a proposal: lock and compare its complete
+	// version before restoring any dependent rows or deleting that snapshot.
+	var lockedHash []byte
+	if err := tx.QueryRow(ctx, `SELECT info_hash FROM torrents WHERE info_hash=$1 FOR UPDATE`, ihBytes).Scan(&lockedHash); err != nil {
+		return fmt.Errorf("lock restored torrent: %w", err)
+	}
+	var currentTorrent, currentFiles, currentSources []byte
+	var currentQuarantinedAt time.Time
+	if err := tx.QueryRow(ctx, `SELECT torrent_snapshot, files_snapshot, sources_snapshot, quarantined_at
+FROM junkpurge_quarantine WHERE info_hash=$1 FOR UPDATE`, ihBytes).
+		Scan(&currentTorrent, &currentFiles, &currentSources, &currentQuarantinedAt); err != nil {
+		return fmt.Errorf("quarantine entry not found: %w", err)
+	}
+	if !quarantinedAt.Equal(currentQuarantinedAt) || !bytes.Equal(torrentSnap, currentTorrent) ||
+		!bytes.Equal(filesSnap, currentFiles) || !bytes.Equal(sourcesSnap, currentSources) {
+		return fmt.Errorf("quarantine snapshot changed during restore; retry against its current version")
 	}
 	if len(filesSnap) > 0 {
 		if _, err := tx.Exec(ctx, `
@@ -175,6 +198,7 @@ ON CONFLICT (fingerprint) WHERE status IN ('pending', 'retry') DO NOTHING`, job.
 // DeleteQuarantinedNow permanently removes a quarantine entry immediately
 // (skipping the rest of the review window) and blacklists its info_hash so the
 // crawler can't bring it back.
+// When configured, its verdict state/event commit with the deletion and blacklist.
 func DeleteQuarantinedNow(ctx context.Context, pool *pgxpool.Pool, vstore *verdicts.Store, logger *zap.SugaredLogger, infoHashHex string) error {
 	ih, err := protocol.ParseID(infoHashHex)
 	if err != nil {

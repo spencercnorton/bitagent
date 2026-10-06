@@ -20,7 +20,7 @@ const (
 const quarantineExpiryCandidatesSQL = `
 SELECT info_hash FROM junkpurge_quarantine
 WHERE quarantined_at < now() - make_interval(days => $1) AND expired_at IS NULL
-ORDER BY info_hash
+ORDER BY quarantined_at, info_hash
 LIMIT $2
 FOR UPDATE SKIP LOCKED`
 
