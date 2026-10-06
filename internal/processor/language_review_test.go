@@ -73,6 +73,7 @@ func TestProcessLanguageReviewPersistsTagWithContentWithoutDeletionOrBlocking(t 
 			p.privacy = &fakePrivacy{}
 			if tc.auditErr == nil && tc.captureErr == nil {
 				mock.ExpectBegin()
+				expectReleaseAttributeReads(mock, hash, tc.title)
 				mock.ExpectQuery(`SELECT .*english_audio_source.* FROM "torrent_contents"`).WillReturnRows(sqlmock.NewRows([]string{"id", "english_audio", "english_audio_source"}))
 				mock.ExpectQuery(`INSERT INTO "torrent_contents"`).WillReturnRows(sqlmock.NewRows([]string{"published_at"}).AddRow(nil))
 				if tc.wantTag {

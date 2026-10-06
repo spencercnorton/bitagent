@@ -18,6 +18,7 @@ func (v VideoSource) Label() string {
 
 var videoSourceAliases = map[string]VideoSource{
 	"bdremux": VideoSourceBluRay,
+	"camrip":  VideoSourceCAM,
 	"bdrip":   VideoSourceBluRay,
 	"blu-ray": VideoSourceBluRay,
 	"brrip":   VideoSourceBluRay,

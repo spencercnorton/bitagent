@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/spencercnorton/bitagent/internal/database/search"
 	"github.com/spencercnorton/bitagent/internal/model"
@@ -219,6 +220,25 @@ func torrentContentResultItemToTorznabResultItem(item search.TorrentContentResul
 			AttrName:  torznab.AttrTeam,
 			AttrValue: item.ReleaseGroup.String,
 		})
+	}
+	if claims := item.ReleaseAttributes; claims != nil {
+		values := map[string]string{
+			torznab.AttrClaimedHDR:           strings.Join(claims.HDRFormats, ","),
+			torznab.AttrClaimedAudio:         strings.Join(claims.AudioFormats, ","),
+			torznab.AttrClaimedAudioFeatures: strings.Join(claims.AudioFeatures, ","),
+			torznab.AttrClaimedRevision:      strings.Join(claims.Revisions, ","),
+		}
+		if claims.AudioChannels != nil {
+			values[torznab.AttrClaimedAudioChannels] = *claims.AudioChannels
+		}
+		if claims.Encoder != nil {
+			values[torznab.AttrClaimedEncoder] = *claims.Encoder
+		}
+		for _, key := range []string{torznab.AttrClaimedHDR, torznab.AttrClaimedAudio, torznab.AttrClaimedAudioChannels, torznab.AttrClaimedAudioFeatures, torznab.AttrClaimedRevision, torznab.AttrClaimedEncoder} {
+			if value := values[key]; value != "" {
+				attrs = append(attrs, torznab.SearchResultItemTorznabAttr{AttrName: key, AttrValue: value})
+			}
+		}
 	}
 
 	if tmdbID, ok := item.Content.Identifier("tmdb"); ok {

@@ -25,7 +25,7 @@ func lockedDeferredTarget(ctx context.Context, tx pgx.Tx, t model.Torrent, requi
 	if !t.Hint.IsNil() {
 		return model.TorrentContent{}, llmwork.ErrObsolete
 	}
-	rows, err := tx.Query(ctx, `SELECT id,info_hash,content_type,content_source,content_id,languages,episodes,video_resolution,video_source,video_codec,video_3d,video_modifier,release_group,created_at,updated_at,english_audio,english_audio_source,release_date
+	rows, err := tx.Query(ctx, `SELECT id,info_hash,content_type,content_source,content_id,languages,episodes,video_resolution,video_source,video_codec,video_3d,video_modifier,release_group,created_at,updated_at,english_audio,english_audio_source,release_date,release_attributes
 FROM torrent_contents WHERE info_hash=$1 ORDER BY id FOR UPDATE`, t.InfoHash.Bytes())
 	if err != nil {
 		return model.TorrentContent{}, err
@@ -35,8 +35,8 @@ FROM torrent_contents WHERE info_hash=$1 ORDER BY id FOR UPDATE`, t.InfoHash.Byt
 	count := 0
 	for rows.Next() {
 		var tc model.TorrentContent
-		var languages, episodes []byte
-		err = rows.Scan(&tc.ID, &tc.InfoHash, &tc.ContentType, &tc.ContentSource, &tc.ContentID, &languages, &episodes, &tc.VideoResolution, &tc.VideoSource, &tc.VideoCodec, &tc.Video3D, &tc.VideoModifier, &tc.ReleaseGroup, &tc.CreatedAt, &tc.UpdatedAt, &tc.EnglishAudio, &tc.EnglishAudioSource, &tc.ReleaseDate)
+		var languages, episodes, claims []byte
+		err = rows.Scan(&tc.ID, &tc.InfoHash, &tc.ContentType, &tc.ContentSource, &tc.ContentID, &languages, &episodes, &tc.VideoResolution, &tc.VideoSource, &tc.VideoCodec, &tc.Video3D, &tc.VideoModifier, &tc.ReleaseGroup, &tc.CreatedAt, &tc.UpdatedAt, &tc.EnglishAudio, &tc.EnglishAudioSource, &tc.ReleaseDate, &claims)
 		if err != nil {
 			return selected, err
 		}
@@ -47,6 +47,11 @@ FROM torrent_contents WHERE info_hash=$1 ORDER BY id FOR UPDATE`, t.InfoHash.Byt
 		}
 		if len(episodes) > 0 {
 			if err = json.Unmarshal(episodes, &tc.Episodes); err != nil {
+				return selected, err
+			}
+		}
+		if len(claims) > 0 {
+			if err = json.Unmarshal(claims, &tc.ReleaseAttributes); err != nil {
 				return selected, err
 			}
 		}

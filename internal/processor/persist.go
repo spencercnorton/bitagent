@@ -3,7 +3,11 @@ package processor
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql/driver"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"sort"
@@ -90,7 +94,9 @@ func (c processor) persist(ctx context.Context, payload persistPayload) error {
 	torrentContentsPtr := make([]*model.TorrentContent, 0, len(payload.torrentContents))
 	torrentTagsPtr := make([]*model.TorrentTag, 0, len(payload.addTags))
 
+	sourceNames := map[protocol.ID]string{}
 	for _, tc := range payload.torrentContents {
+		sourceNames[tc.InfoHash] = tc.Torrent.Name
 		tcCopy := tc
 		tcCopy.Torrent = model.Torrent{}
 
@@ -139,6 +145,9 @@ func (c processor) persist(ctx context.Context, payload persistPayload) error {
 		// removes them — an ID-changing replacement (unmatched->matched) is
 		// exactly the case where the 'llm' value lives on a row about to die.
 		if len(torrentContentsPtr) > 0 {
+			if restoreErr := c.restoreReleaseAttributes(ctx, tx, torrentContentsPtr, sourceNames); restoreErr != nil {
+				return restoreErr
+			}
 			if restoreErr := c.restoreLLMEnglishAudio(ctx, tx, torrentContentsPtr); restoreErr != nil {
 				return restoreErr
 			}
@@ -186,6 +195,64 @@ func (c processor) persist(ctx context.Context, payload persistPayload) error {
 
 		return nil
 	})
+}
+
+var errReleaseAttributesChanged = errors.New("retained release attribute source or ownership changed")
+
+// Non-null advertised claims are name-owned retained facts. A later cycle that
+// skips parsing must not erase them, and automatic processing never overwrites
+// a retained value with another interpretation of the same name.
+func (c processor) restoreReleaseAttributes(ctx context.Context, tx *dao.Query, tcs []*model.TorrentContent, names map[protocol.ID]string) error {
+	byHash := map[protocol.ID][]*model.TorrentContent{}
+	for _, tc := range tcs {
+		byHash[tc.InfoHash] = append(byHash[tc.InfoHash], tc)
+	}
+	hashes := make([]protocol.ID, 0, len(byHash))
+	for hash := range byHash {
+		hashes = append(hashes, hash)
+	}
+	sort.Slice(hashes, func(i, j int) bool { return hashes[i].String() < hashes[j].String() })
+	for _, hash := range hashes {
+		raw, err := tx.Torrent.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where(tx.Torrent.InfoHash.Eq(hash)).First()
+		if err != nil {
+			return err
+		}
+		rows, err := tx.TorrentContent.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where(tx.TorrentContent.InfoHash.Eq(hash)).Find()
+		if err != nil {
+			return err
+		}
+		var retained *model.ReleaseAttributes
+		sum := sha256.Sum256([]byte(raw.Name))
+		nameHash := hex.EncodeToString(sum[:])
+		for _, row := range rows {
+			if row.ReleaseAttributes == nil {
+				continue
+			}
+			a := row.ReleaseAttributes
+			if a.Version != 1 || a.Parser != model.ReleaseAttributesParser || a.SourceNameSHA256 != nameHash {
+				return errReleaseAttributesChanged
+			}
+			if retained != nil {
+				left, _ := json.Marshal(retained)
+				right, _ := json.Marshal(a)
+				if string(left) != string(right) {
+					return errReleaseAttributesChanged
+				}
+			}
+			retained = a
+		}
+		for _, tc := range byHash[hash] {
+			if names[hash] != raw.Name {
+				return errReleaseAttributesChanged
+			}
+			if retained != nil {
+				tc.ReleaseAttributes = retained
+			} else if tc.ReleaseAttributes != nil && tc.ReleaseAttributes.SourceNameSHA256 != nameHash {
+				return errReleaseAttributesChanged
+			}
+		}
+	}
+	return nil
 }
 
 // Recheck normal refreshes in their writing transaction. This closes the gap

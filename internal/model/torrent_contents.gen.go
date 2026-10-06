@@ -42,6 +42,7 @@ type TorrentContent struct {
 	AnimeAbsoluteEpisode NullUint               `gorm:"column:anime_absolute_episode" json:"animeAbsoluteEpisode"`
 	EnglishAudio         NullEnglishAudio       `gorm:"column:english_audio" json:"englishAudio"`
 	EnglishAudioSource   NullString             `gorm:"column:english_audio_source" json:"englishAudioSource"`
+	ReleaseAttributes    *ReleaseAttributes     `gorm:"column:release_attributes;serializer:json" json:"releaseAttributes"`
 	Torrent              Torrent                `gorm:"foreignKey:InfoHash;references:InfoHash" json:"torrent"`
 	Content              Content                `gorm:"foreignKey:ContentType,ContentSource,ContentID;references:Type,Source,ID" json:"content"`
 }

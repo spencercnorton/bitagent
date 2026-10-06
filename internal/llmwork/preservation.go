@@ -35,6 +35,7 @@ type ApplicationSnapshot struct {
 	ReleaseGroup       model.NullString          `json:"releaseGroup"`
 	EnglishAudio       model.NullEnglishAudio    `json:"englishAudio"`
 	EnglishAudioSource model.NullString          `json:"englishAudioSource"`
+	ReleaseAttributes  *model.ReleaseAttributes  `json:"releaseAttributes,omitempty"`
 	ReleaseDate        model.Date                `json:"releaseDate"`
 	ContentCreatedAt   time.Time                 `json:"contentCreatedAt"`
 	Tags               []string                  `json:"tags"`
@@ -43,13 +44,12 @@ type ApplicationSnapshot struct {
 func NewApplicationSnapshot(kind Kind, tc model.TorrentContent, tags []string) ApplicationSnapshot {
 	sorted := append([]string(nil), tags...)
 	sort.Strings(sorted)
-	return ApplicationSnapshot{nil, &tc.Content, "llm-application-v1", kind, tc.ContentType, tc.ContentSource, tc.ContentID,
-		tc.Languages, tc.Episodes, tc.VideoResolution, tc.VideoSource, tc.VideoCodec, tc.Video3D, tc.VideoModifier,
-		tc.ReleaseGroup, tc.EnglishAudio, tc.EnglishAudioSource, tc.ReleaseDate, tc.Content.CreatedAt, sorted}
+	return ApplicationSnapshot{content: &tc.Content, Schema: "llm-application-v1", Kind: kind, ContentType: tc.ContentType, ContentSource: tc.ContentSource, ContentID: tc.ContentID,
+		Languages: tc.Languages, Episodes: tc.Episodes, VideoResolution: tc.VideoResolution, VideoSource: tc.VideoSource, VideoCodec: tc.VideoCodec, Video3D: tc.Video3D, VideoModifier: tc.VideoModifier, ReleaseGroup: tc.ReleaseGroup, EnglishAudio: tc.EnglishAudio, EnglishAudioSource: tc.EnglishAudioSource, ReleaseAttributes: tc.ReleaseAttributes, ReleaseDate: tc.ReleaseDate, ContentCreatedAt: tc.Content.CreatedAt, Tags: sorted}
 }
 
 func (a ApplicationSnapshot) Attributes() classification.ContentAttributes {
-	return classification.ContentAttributes{ContentType: a.ContentType, Date: a.ReleaseDate, Languages: a.Languages, Episodes: a.Episodes,
+	return classification.ContentAttributes{ContentType: a.ContentType, ReleaseAttributes: a.ReleaseAttributes, Date: a.ReleaseDate, Languages: a.Languages, Episodes: a.Episodes,
 		VideoResolution: a.VideoResolution, VideoSource: a.VideoSource, VideoCodec: a.VideoCodec,
 		Video3D: a.Video3D, VideoModifier: a.VideoModifier, ReleaseGroup: a.ReleaseGroup}
 }
@@ -136,8 +136,8 @@ func (s *Store) PreservePolicy(ctx context.Context, kind Kind, t model.Torrent, 
 		return nil, ErrHeld
 	}
 	var tc model.TorrentContent
-	var languages, episodes []byte
-	rows, err := tx.Query(ctx, `SELECT content_type,content_source,content_id,languages,episodes,video_resolution,video_source,video_codec,video_3d,video_modifier,release_group,english_audio,english_audio_source,release_date
+	var languages, episodes, claims []byte
+	rows, err := tx.Query(ctx, `SELECT content_type,content_source,content_id,languages,episodes,video_resolution,video_source,video_codec,video_3d,video_modifier,release_group,english_audio,english_audio_source,release_date,release_attributes
  FROM torrent_contents WHERE info_hash=$1 FOR SHARE`, t.InfoHash.Bytes())
 	if err != nil {
 		return nil, err
@@ -145,7 +145,7 @@ func (s *Store) PreservePolicy(ctx context.Context, kind Kind, t model.Torrent, 
 	n := 0
 	for rows.Next() {
 		n++
-		err = rows.Scan(&tc.ContentType, &tc.ContentSource, &tc.ContentID, &languages, &episodes, &tc.VideoResolution, &tc.VideoSource, &tc.VideoCodec, &tc.Video3D, &tc.VideoModifier, &tc.ReleaseGroup, &tc.EnglishAudio, &tc.EnglishAudioSource, &tc.ReleaseDate)
+		err = rows.Scan(&tc.ContentType, &tc.ContentSource, &tc.ContentID, &languages, &episodes, &tc.VideoResolution, &tc.VideoSource, &tc.VideoCodec, &tc.Video3D, &tc.VideoModifier, &tc.ReleaseGroup, &tc.EnglishAudio, &tc.EnglishAudioSource, &tc.ReleaseDate, &claims)
 		if err != nil {
 			rows.Close()
 			return nil, err
@@ -159,6 +159,12 @@ func (s *Store) PreservePolicy(ctx context.Context, kind Kind, t model.Torrent, 
 	}
 	if len(episodes) > 0 {
 		if err = json.Unmarshal(episodes, &tc.Episodes); err != nil {
+			rows.Close()
+			return nil, err
+		}
+	}
+	if len(claims) > 0 {
+		if err = json.Unmarshal(claims, &tc.ReleaseAttributes); err != nil {
 			rows.Close()
 			return nil, err
 		}

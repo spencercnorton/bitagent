@@ -30,18 +30,19 @@ func (r *Result) AttachContent(content *model.Content) {
 }
 
 type ContentAttributes struct {
-	ContentType     model.NullContentType
-	BaseTitle       model.NullString
-	Date            model.Date
-	Languages       model.Languages
-	LanguageMulti   bool
-	Episodes        model.Episodes
-	VideoResolution model.NullVideoResolution
-	VideoSource     model.NullVideoSource
-	VideoCodec      model.NullVideoCodec
-	Video3D         model.NullVideo3D
-	VideoModifier   model.NullVideoModifier
-	ReleaseGroup    model.NullString
+	ContentType       model.NullContentType
+	BaseTitle         model.NullString
+	Date              model.Date
+	Languages         model.Languages
+	LanguageMulti     bool
+	Episodes          model.Episodes
+	VideoResolution   model.NullVideoResolution
+	VideoSource       model.NullVideoSource
+	VideoCodec        model.NullVideoCodec
+	Video3D           model.NullVideo3D
+	VideoModifier     model.NullVideoModifier
+	ReleaseGroup      model.NullString
+	ReleaseAttributes *model.ReleaseAttributes
 }
 
 func (a *ContentAttributes) Merge(other ContentAttributes) {
@@ -89,6 +90,9 @@ func (a *ContentAttributes) Merge(other ContentAttributes) {
 	if !a.ReleaseGroup.Valid {
 		a.ReleaseGroup = other.ReleaseGroup
 	}
+	if a.ReleaseAttributes == nil {
+		a.ReleaseAttributes = other.ReleaseAttributes
+	}
 }
 
 func (a *ContentAttributes) ApplyHint(h model.TorrentHint) {
@@ -125,10 +129,15 @@ func (a *ContentAttributes) ApplyHint(h model.TorrentHint) {
 	}
 }
 
-func (a *ContentAttributes) InferVideoAttributes(input string) {
+func (a *ContentAttributes) InferVideoAttributes(input string, sourceName ...string) {
 	a.VideoResolution = model.InferVideoResolution(input)
 	a.VideoSource = model.InferVideoSource(input)
 	a.VideoCodec, a.ReleaseGroup = model.InferVideoCodecAndReleaseGroup(input)
 	a.Video3D = model.InferVideo3D(input)
 	a.VideoModifier = model.InferVideoModifier(input)
+	name := input
+	if len(sourceName) > 0 {
+		name = sourceName[0]
+	}
+	a.ReleaseAttributes = model.InferReleaseAttributes(name, input)
 }

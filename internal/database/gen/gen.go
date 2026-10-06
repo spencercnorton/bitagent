@@ -375,6 +375,11 @@ func BuildGenerator(db *gorm.DB) *gen.Generator {
 				gen.FieldType("anime_absolute_episode", "NullUint"),
 				gen.FieldType("english_audio", "NullEnglishAudio"),
 				gen.FieldType("english_audio_source", "NullString"),
+				gen.FieldType("release_attributes", "*ReleaseAttributes"),
+				gen.FieldGORMTag("release_attributes", func(tag field.GormTag) field.GormTag {
+					tag.Set("serializer", "json")
+					return tag
+				}),
 			},
 			torrentContentBaseOptions...,
 		)...,

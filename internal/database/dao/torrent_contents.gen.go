@@ -54,6 +54,7 @@ func newTorrentContent(db *gorm.DB, opts ...gen.DOOption) torrentContent {
 	_torrentContent.AnimeAbsoluteEpisode = field.NewField(tableName, "anime_absolute_episode")
 	_torrentContent.EnglishAudio = field.NewString(tableName, "english_audio")
 	_torrentContent.EnglishAudioSource = field.NewString(tableName, "english_audio_source")
+	_torrentContent.ReleaseAttributes = field.NewField(tableName, "release_attributes")
 	_torrentContent.Torrent = torrentContentBelongsToTorrent{
 		db: db.Session(&gorm.Session{}),
 
@@ -171,6 +172,7 @@ type torrentContent struct {
 	AnimeAbsoluteEpisode field.Field
 	EnglishAudio         field.String
 	EnglishAudioSource   field.String
+	ReleaseAttributes    field.Field
 	Torrent              torrentContentBelongsToTorrent
 
 	Content torrentContentBelongsToContent
@@ -217,6 +219,7 @@ func (t *torrentContent) updateTableName(table string) *torrentContent {
 	t.AnimeAbsoluteEpisode = field.NewField(table, "anime_absolute_episode")
 	t.EnglishAudio = field.NewString(table, "english_audio")
 	t.EnglishAudioSource = field.NewString(table, "english_audio_source")
+	t.ReleaseAttributes = field.NewField(table, "release_attributes")
 
 	t.fillFieldMap()
 
@@ -261,6 +264,7 @@ func (t *torrentContent) fillFieldMap() {
 	t.fieldMap["anime_absolute_episode"] = t.AnimeAbsoluteEpisode
 	t.fieldMap["english_audio"] = t.EnglishAudio
 	t.fieldMap["english_audio_source"] = t.EnglishAudioSource
+	t.fieldMap["release_attributes"] = t.ReleaseAttributes
 
 }
 

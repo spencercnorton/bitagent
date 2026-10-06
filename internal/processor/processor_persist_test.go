@@ -177,6 +177,7 @@ func expectTorrentDelete(mock sqlmock.Sqlmock, hash protocol.ID) {
 
 func expectTorrentContentInsertAndTorrentDelete(mock sqlmock.Sqlmock, deleteHash protocol.ID) {
 	mock.ExpectBegin()
+	expectReleaseAttributeReads(mock, processTestHash(3), "kept movie 2026")
 	// restoreLLMEnglishAudio: the kept row carries no english_audio signal, so
 	// persist first looks for an existing 'llm'-sourced value to preserve.
 	mock.ExpectQuery(`SELECT .*english_audio_source.* FROM "torrent_contents"`).
@@ -379,4 +380,9 @@ func TestProcessNoPersistenceWorkAvoidsTransaction(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unexpected SQL: %v", err)
 	}
+}
+
+func expectReleaseAttributeReads(mock sqlmock.Sqlmock, hash protocol.ID, name string) {
+	mock.ExpectQuery(`SELECT .* FROM "torrents".*FOR UPDATE`).WithArgs(hash.Bytes(), 1).WillReturnRows(sqlmock.NewRows([]string{"info_hash", "name"}).AddRow(hash.Bytes(), name))
+	mock.ExpectQuery(`SELECT .* FROM "torrent_contents".*FOR UPDATE`).WithArgs(hash.Bytes()).WillReturnRows(sqlmock.NewRows([]string{"info_hash", "release_attributes"}))
 }
