@@ -18,6 +18,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/database/query"
 	"github.com/spencercnorton/bitagent/internal/database/search"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
@@ -280,7 +281,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 							"%s\x00%s\x00%s", cl.Content.Type, cl.Content.Source, cl.Content.ID,
 						))
 					}
-					d, filterErr := c.contentFilter.DecideAudited(ctx, fi, contentfilter.AuditSource{
+					d, filterErr := c.contentFilter.DecideAudited(llmwork.WithSourceTorrent(ctx, torrent), fi, contentfilter.AuditSource{
 						InfoHash: torrent.InfoHash.Bytes(), GroupKey: groupKey,
 					})
 					if filterErr != nil {

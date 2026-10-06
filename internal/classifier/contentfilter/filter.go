@@ -12,6 +12,7 @@ import (
 
 	"github.com/spencercnorton/bitagent/internal/anime"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 )
 
 // Decision is what Filter.Decide returns for one torrent.
@@ -103,6 +104,7 @@ type Filter struct {
 	llmCb     LLMCallbacks // optional metrics+logging hooks
 	budget    *dailyBudget
 	admission Admission
+	work      *llmwork.Store
 	slots     chan struct{}
 }
 
@@ -505,6 +507,12 @@ func (f *Filter) consultAudited(
 	in Input,
 	source AuditSource,
 ) (DropReason, bool, error) {
+	if err := f.SubmitWork(ctx, in, source); err != nil {
+		if errors.Is(err, llmwork.ErrDeferred) {
+			return ReasonNone, false, nil
+		}
+		return ReasonNone, false, err
+	}
 	recorder, ok := f.admission.Capture.(llmcapture.ContentFilterResultRecorder)
 	client, clientOK := f.llm.(AuditedLLMClient)
 	if f.admission.Budget == nil || f.admission.Capture == nil ||

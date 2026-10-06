@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
+	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/model"
 )
 
@@ -22,10 +24,11 @@ const (
 )
 
 var (
-	ErrDeferred = errors.New("optional model work deferred")
-	ErrHeld     = errors.New("optional model work requires explicit reconciliation")
-	ErrObsolete = errors.New("optional model work source or policy changed")
-	ErrLease    = errors.New("optional model work lease is not owned")
+	ErrDeferred   = errors.New("optional model work deferred")
+	ErrHeld       = errors.New("optional model work requires explicit reconciliation")
+	ErrObsolete   = errors.New("optional model work source or policy changed")
+	ErrLease      = errors.New("optional model work lease is not owned")
+	ErrReplayOnly = errors.New("completed optional model work may replay only")
 )
 
 type Draft struct {
@@ -105,13 +108,83 @@ type Lease struct {
 }
 
 type executionKey struct{}
+type replayOnlyKey struct{}
+
+func WithReplayOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, replayOnlyKey{}, true)
+}
+func ReplayOnly(ctx context.Context) bool { v, _ := ctx.Value(replayOnlyKey{}).(bool); return v }
+
 type Execution struct {
-	Store *Store
-	Lease Lease
+	Store        *Store
+	Lease        Lease
+	mu           sync.Mutex
+	recheck      func(context.Context) error
+	lastDeferred *DeferredError
 }
 
 func WithExecution(ctx context.Context, store *Store, lease Lease) context.Context {
 	return context.WithValue(ctx, executionKey{}, &Execution{Store: store, Lease: lease})
+}
+
+func CaseFence(ctx context.Context) *llmcapture.CaseFence {
+	e := ExecutionFrom(ctx)
+	if e == nil {
+		return nil
+	}
+	return &llmcapture.CaseFence{TaskKey: e.Lease.Task.Key, LeaseOwner: e.Lease.Owner, LeaseGeneration: e.Lease.Generation, SourceDigest: e.Lease.Task.SourceDigest, PolicyDigest: e.Lease.Task.PolicyDigest}
+}
+func SetSourceRecheck(ctx context.Context, check func(context.Context) error) error {
+	e := ExecutionFrom(ctx)
+	if e == nil || check == nil {
+		return ErrLease
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.recheck = check
+	return nil
+}
+func BeforeDispatch(ctx context.Context) error {
+	e := ExecutionFrom(ctx)
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	check := e.recheck
+	e.mu.Unlock()
+	if check == nil {
+		return ErrLease
+	}
+	return check(ctx)
+}
+func RecordDeferral(ctx context.Context, reason string, retryAt time.Time) error {
+	d := DeferredError{Reason: reason, RetryAfter: retryAt}
+	if e := ExecutionFrom(ctx); e != nil {
+		e.mu.Lock()
+		e.lastDeferred = &d
+		e.mu.Unlock()
+	}
+	return d
+}
+func LastDeferral(ctx context.Context) *DeferredError {
+	e := ExecutionFrom(ctx)
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.lastDeferred == nil {
+		return nil
+	}
+	d := *e.lastDeferred
+	return &d
+}
+func RecordProgress(ctx context.Context) error {
+	e := ExecutionFrom(ctx)
+	if e == nil || e.Store == nil || e.Lease.Task.Kind != Matcher {
+		return nil
+	}
+	return e.Store.MarkProgress(ctx, e.Lease)
 }
 
 func ExecutionFrom(ctx context.Context) *Execution {

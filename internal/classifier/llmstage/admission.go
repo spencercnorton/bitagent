@@ -13,6 +13,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
 )
 
@@ -25,8 +26,9 @@ type CallBudget interface {
 // Admission is mandatory for enabled stages, including shadow mode. There is
 // deliberately no in-memory production fallback when durable storage fails.
 type Admission struct {
-	Budget  CallBudget
-	Capture llmcapture.Capturer
+	Budget   CallBudget
+	Capture  llmcapture.Capturer
+	Dispatch llmcapture.DispatchControl
 }
 
 func (s *Stage) admissionReady() error {
@@ -50,6 +52,9 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	}
 	if time.Now().UnixNano() < s.retryAfter.Load() {
 		s.metrics.gateRejectsTotal.WithLabelValues("budget_cooldown").Inc()
+		if llmwork.ExecutionFrom(ctx) != nil {
+			return Decision{}, llmwork.RecordDeferral(ctx, "cooldown", time.Unix(0, s.retryAfter.Load()).UTC())
+		}
 		return Decision{}, errors.New("type call allowance cooldown")
 	}
 	select {
@@ -57,6 +62,9 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 		defer func() { <-s.slots }()
 	default:
 		s.metrics.gateRejectsTotal.WithLabelValues("concurrency").Inc()
+		if llmwork.ExecutionFrom(ctx) != nil {
+			return Decision{}, llmwork.RecordDeferral(ctx, "concurrency", time.Now().UTC().Add(time.Second))
+		}
 		return Decision{}, errors.New("type concurrency allowance exhausted")
 	}
 	// Bound DB admission, privacy checks and HTTP together; response persistence
@@ -69,8 +77,15 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	}
 	req.Header.Set("Authorization", "Bearer "+s.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
-	ok, err := s.admission.Budget.Reserve(ctx, s.cfg.DailyCallLimit, s.cfg.MonthlyCallLimit)
-	if err != nil || !ok {
+	controlled := s.admission.Dispatch != nil && s.admission.Dispatch.Enabled()
+	if llmwork.ExecutionFrom(ctx) != nil && !controlled {
+		return Decision{}, llmwork.ErrHeld
+	}
+	ok := true
+	if !controlled {
+		ok, err = s.admission.Budget.Reserve(ctx, s.cfg.DailyCallLimit, s.cfg.MonthlyCallLimit)
+	}
+	if !controlled && (err != nil || !ok) {
 		reason := "budget_exhausted"
 		if err != nil {
 			reason = "budget_unavailable"
@@ -112,13 +127,53 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	}
 	// Only the first response is retained. A cold cache or failed attempt must
 	// not buy an unrecordable second response for the same source/request/policy.
-	if outcome == llmcapture.OutcomeDuplicate {
+	if !controlled && outcome == llmcapture.OutcomeDuplicate {
 		s.metrics.gateRejectsTotal.WithLabelValues("already_captured").Inc()
 		return Decision{}, llmcapture.ErrCaptureUnavailable
 	}
 	key, err := llmcapture.KeyForRequest(capture)
 	if err != nil {
 		return Decision{}, err
+	}
+	var dispatchLease llmcapture.DispatchLease
+	if controlled {
+		request := llmcapture.DispatchRequest{CaptureKey: key, Task: llmcapture.TaskClassifierType, InfoHash: t.InfoHash.Bytes(), FreshCapture: outcome == llmcapture.OutcomeRecorded, Case: llmwork.CaseFence(ctx), LeaseDuration: time.Minute}
+		var dispatchOutcome llmcapture.DispatchOutcome
+		dispatchLease, dispatchOutcome, err = s.admission.Dispatch.Prepare(ctx, request)
+		if err != nil {
+			return Decision{}, err
+		}
+		if dispatchOutcome == llmcapture.DispatchReplay {
+			replay, err := s.admission.Dispatch.Replay(ctx, request)
+			if err != nil {
+				return Decision{}, err
+			}
+			decision, err := parseResponse(replay.Result.Body)
+			decision.receipt = replay.Receipt
+			if replay.Result.StatusCode != 200 || replay.Result.ErrorClass != "none" {
+				return Decision{}, llmwork.ErrHeld
+			}
+			return decision, err
+		}
+		if dispatchOutcome == llmcapture.DispatchBusy {
+			return Decision{}, llmwork.RecordDeferral(ctx, "request_owned", time.Now().UTC().Add(time.Minute))
+		}
+		if dispatchOutcome != llmcapture.DispatchPrepared {
+			return Decision{}, llmwork.ErrHeld
+		}
+		if llmwork.ReplayOnly(ctx) {
+			return Decision{}, llmwork.ErrHeld
+		}
+		ok, err = s.admission.Dispatch.Reserve(ctx, dispatchLease, "classifier_type", s.cfg.DailyCallLimit, s.cfg.MonthlyCallLimit)
+		if err != nil {
+			return Decision{}, err
+		}
+		if !ok {
+			now := time.Now().UTC()
+			renewal := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+			_ = s.admission.Dispatch.DeferNoDispatch(ctx, dispatchLease, "allowance", renewal)
+			return Decision{}, llmwork.RecordDeferral(ctx, "allowance", renewal)
+		}
 	}
 	// Repeat evidence privacy at the final outbound boundary, after potentially
 	// slow admission writes. Native privacy is also checked by Capture's SQL.
@@ -133,6 +188,15 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	if err := s.admission.Capture.(llmcapture.TypeResultRecorder).RecheckTypeRequest(ctx, key, t.InfoHash.Bytes()); err != nil {
 		s.metrics.gateRejectsTotal.WithLabelValues("privacy").Inc()
 		return Decision{}, llmcapture.ErrCaptureUnavailable
+	}
+	if controlled {
+		if err := llmwork.BeforeDispatch(ctx); err != nil {
+			_ = s.admission.Dispatch.DeferNoDispatch(ctx, dispatchLease, "source_changed", time.Now().UTC())
+			return Decision{}, err
+		}
+		if err := s.admission.Dispatch.BeginDispatch(ctx, dispatchLease); err != nil {
+			return Decision{}, err
+		}
 	}
 	s.metrics.callsTotal.WithLabelValues(s.cfg.Model).Inc()
 	started := time.Now()
@@ -166,6 +230,14 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	if recordErr != nil {
 		s.metrics.auditTotal.WithLabelValues("result_error").Inc()
 		return Decision{}, llmcapture.ErrCaptureUnavailable
+	}
+	if controlled {
+		observeCtx, observeCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		err := s.admission.Dispatch.ObserveResult(observeCtx, dispatchLease, receipt)
+		observeCancel()
+		if err != nil {
+			return Decision{}, err
+		}
 	}
 	s.metrics.auditTotal.WithLabelValues("result_recorded").Inc()
 	if requestErr != nil {

@@ -17,6 +17,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"go.uber.org/zap"
 )
@@ -45,6 +46,9 @@ type Client struct {
 	budget             CallBudget
 	slots              chan struct{}
 	budgetBlockedUntil atomic.Int64
+	work               *llmwork.Store
+	workPolicy         any
+	dispatch           llmcapture.DispatchControl
 }
 
 func NewClient(cfg Config, privacy PrivacyStore, metrics *Metrics, logger *zap.SugaredLogger) *Client {
@@ -245,6 +249,13 @@ func extractionModelFiles(t model.Torrent) []string {
 func (c *Client) Extract(ctx context.Context, t model.Torrent) (Extraction, error) {
 	if c.nativePrivateBlocked(t) {
 		return Extraction{}, nil
+	}
+	if err := c.submitWork(ctx, t); err != nil {
+		if errors.Is(err, llmwork.ErrReplayOnly) {
+			ctx = llmwork.WithReplayOnly(ctx)
+		} else {
+			return Extraction{}, err
+		}
 	}
 	key := c.extractKey(t)
 	if v, ok := c.cache.Get(key); ok {
