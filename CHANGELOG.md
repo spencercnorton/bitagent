@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a disabled-by-default lifecycle for bounded optional model tasks, with
+  source/policy identities, time-stratum capacity and owned worker leases.
+  Provider dispatch fencing and targeted application are qualified separately
+  before this worker can be enabled.
+
 - Parse explicit `WEB-DL`, `WEB.DL` and `WEBDL` source tokens consistently,
   preferring compound source aliases before their shorter prefixes.
 
