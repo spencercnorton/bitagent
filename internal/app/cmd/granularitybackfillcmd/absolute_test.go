@@ -92,11 +92,11 @@ func TestEnglishAudioChanges(t *testing.T) {
 	tv := model.NewNullContentType(model.ContentTypeTvShow)
 	rows := []*model.TorrentContent{
 		{ID: "dub", ContentType: tv,
-			Torrent: model.Torrent{Name: "[Judas] Show - 12 [Dual-Audio][1080p]"}},
+			Torrent: model.Torrent{Name: "[Judas] Show - 12 [English Dub][1080p]"}},
 		{ID: "sub", ContentType: tv,
 			Torrent: model.Torrent{Name: "[SubsPlease] Show - 09 (1080p) [Multi-Subs]"}},
 		{ID: "correct", ContentType: tv,
-			Torrent:            model.Torrent{Name: "[Judas] Show - 12 [Dual-Audio]"},
+			Torrent:            model.Torrent{Name: "[Judas] Show - 12 [English Dub]"},
 			EnglishAudio:       model.NewNullEnglishAudio(model.EnglishAudioDub),
 			EnglishAudioSource: model.NewNullString(model.EnglishAudioSourceName)},
 		{ID: "stale-clear", ContentType: tv,

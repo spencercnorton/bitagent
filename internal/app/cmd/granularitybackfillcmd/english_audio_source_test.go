@@ -21,7 +21,7 @@ func TestEnglishAudioChanges_SourcePrecedence(t *testing.T) {
 	rows := []*model.TorrentContent{
 		{ // fresh deterministic signal, empty row -> stamped (value+source)
 			ID:      "a",
-			Torrent: model.Torrent{Name: "[Anime Time] Naruto Dual Audio 1080p"},
+			Torrent: model.Torrent{Name: "[Anime Time] Naruto Dual Audio [ENG+JPN] 1080p"},
 		},
 		{ // llm row, no deterministic signal -> UNTOUCHED (the tripwire case)
 			ID:                 "b",
@@ -31,7 +31,7 @@ func TestEnglishAudioChanges_SourcePrecedence(t *testing.T) {
 		},
 		{ // llm row, fresh deterministic signal -> overwritten ('name' outranks)
 			ID:                 "c",
-			Torrent:            model.Torrent{Name: "[Anime Time] Bleach Dual Audio 1080p"},
+			Torrent:            model.Torrent{Name: "[Anime Time] Bleach Dual Audio [ENG+JPN] 1080p"},
 			EnglishAudio:       model.NewNullEnglishAudio(model.EnglishAudioNone),
 			EnglishAudioSource: llm,
 		},
@@ -43,12 +43,12 @@ func TestEnglishAudioChanges_SourcePrecedence(t *testing.T) {
 		},
 		{ // legacy pre-00044 row missed by the stamp (value, NULL source) -> source converges to 'name'
 			ID:           "e",
-			Torrent:      model.Torrent{Name: "[Anime Time] One Piece Dual Audio 1080p"},
+			Torrent:      model.Torrent{Name: "[Anime Time] One Piece Dual Audio [ENG+JPN] 1080p"},
 			EnglishAudio: model.NewNullEnglishAudio(model.EnglishAudioDub),
 		},
 		{ // correct name row -> untouched
 			ID:                 "f",
-			Torrent:            model.Torrent{Name: "[Anime Time] Frieren Dual Audio 1080p"},
+			Torrent:            model.Torrent{Name: "[Anime Time] Frieren Dual Audio [ENG+JPN] 1080p"},
 			EnglishAudio:       model.NewNullEnglishAudio(model.EnglishAudioDub),
 			EnglishAudioSource: name,
 		},

@@ -24,7 +24,7 @@ func TestNewTorrentContent_EnglishAudioPrecedence(t *testing.T) {
 		notes      string
 	}{
 		{
-			name:       "[Anime Time] Naruto Dual Audio 1080p",
+			name:       "[Anime Time] Naruto Dual Audio [ENG+JPN] 1080p",
 			llm:        llmNone,
 			wantAudio:  model.NewNullEnglishAudio(model.EnglishAudioDub),
 			wantSource: model.NewNullString(model.EnglishAudioSourceName),
