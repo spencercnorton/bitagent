@@ -7,6 +7,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/query"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/protocol"
+	"gorm.io/gen"
 	"gorm.io/gen/field"
 	"gorm.io/gorm/clause"
 )
@@ -34,8 +35,17 @@ func (s search) Torrents(ctx context.Context, options ...query.Option) (Torrents
 		query.Options(append([]query.Option{query.SelectAll()}, options...)...),
 		model.TableNameTorrent,
 		func(ctx context.Context, q *dao.Query) query.SubQuery {
+			base := q.Torrent.WithContext(ctx).ReadDB()
+			if s.adultPolicy != nil {
+				predicate := s.adultPolicy.TorrentCondition(model.TableNameTorrent)
+				base = base.Scopes(func(d gen.Dao) gen.Dao {
+					do := d.(*gen.DO)
+					do.ReplaceDB(do.UnderlyingDB().Where(predicate))
+					return d
+				})
+			}
 			return query.GenericSubQuery[dao.ITorrentDo]{
-				SubQuery: q.Torrent.WithContext(ctx).ReadDB(),
+				SubQuery: base,
 			}
 		},
 	)
@@ -159,8 +169,17 @@ func (s search) TorrentSuggestTags(
 		}, options...)...),
 		model.TableNameTorrentTag,
 		func(ctx context.Context, q *dao.Query) query.SubQuery {
+			base := q.TorrentTag.WithContext(ctx).ReadDB()
+			if s.adultPolicy != nil {
+				predicate := s.adultPolicy.TorrentCondition(model.TableNameTorrentTag)
+				base = base.Scopes(func(d gen.Dao) gen.Dao {
+					do := d.(*gen.DO)
+					do.ReplaceDB(do.UnderlyingDB().Where(predicate))
+					return d
+				})
+			}
 			return query.GenericSubQuery[dao.ITorrentTagDo]{
-				SubQuery: q.TorrentTag.WithContext(ctx).ReadDB(),
+				SubQuery: base,
 			}
 		},
 	)

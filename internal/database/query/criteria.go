@@ -75,7 +75,7 @@ type DaoCriteria struct {
 
 func (c DaoCriteria) Raw(ctx DBContext) (RawCriteria, error) {
 	// todo Don't reference model
-	sq := ctx.Query().Torrent.UnderlyingDB()
+	sq := ctx.Query().Torrent.UnderlyingDB().Session(&gorm.Session{Initialized: true})
 
 	conditions, conditionsErr := c.Conditions(ctx)
 	if conditionsErr != nil {
@@ -87,7 +87,7 @@ func (c DaoCriteria) Raw(ctx DBContext) (RawCriteria, error) {
 	}
 
 	return RawCriteria{
-		Query: sq,
+		Query: whereExpression(sq),
 		Joins: c.Joins,
 	}, nil
 }
@@ -98,7 +98,7 @@ type OrCriteria struct {
 
 func (c OrCriteria) Raw(ctx DBContext) (RawCriteria, error) {
 	joins := maps.NewInsertMap[string, struct{}]()
-	sq := ctx.Query().Torrent.UnderlyingDB()
+	sq := ctx.Query().Torrent.UnderlyingDB().Session(&gorm.Session{Initialized: true})
 
 	for _, c := range c.Criteria {
 		rc, rawCriteriaErr := c.Raw(ctx)
@@ -112,7 +112,7 @@ func (c OrCriteria) Raw(ctx DBContext) (RawCriteria, error) {
 
 	return RawCriteria{
 		Joins: joins,
-		Query: sq,
+		Query: whereExpression(sq),
 	}, nil
 }
 
@@ -122,7 +122,7 @@ type AndCriteria struct {
 
 func (c AndCriteria) Raw(ctx DBContext) (RawCriteria, error) {
 	joins := maps.NewInsertMap[string, struct{}]()
-	sq := ctx.Query().Torrent.UnderlyingDB()
+	sq := ctx.Query().Torrent.UnderlyingDB().Session(&gorm.Session{Initialized: true})
 
 	for _, c := range c.Criteria {
 		rc, rawCriteriaErr := c.Raw(ctx)
@@ -136,7 +136,7 @@ func (c AndCriteria) Raw(ctx DBContext) (RawCriteria, error) {
 
 	return RawCriteria{
 		Joins: joins,
-		Query: sq,
+		Query: whereExpression(sq),
 	}, nil
 }
 
@@ -146,7 +146,7 @@ type NotCriteria struct {
 
 func (c NotCriteria) Raw(ctx DBContext) (RawCriteria, error) {
 	joins := maps.NewInsertMap[string, struct{}]()
-	sq := ctx.Query().Torrent.UnderlyingDB()
+	sq := ctx.Query().Torrent.UnderlyingDB().Session(&gorm.Session{Initialized: true})
 
 	for _, cr := range c.Criteria {
 		rc, rawCriteriaErr := cr.Raw(ctx)
@@ -160,8 +160,18 @@ func (c NotCriteria) Raw(ctx DBContext) (RawCriteria, error) {
 
 	return RawCriteria{
 		Joins: joins,
-		Query: sq,
+		Query: whereExpression(sq),
 	}, nil
+}
+
+// Freeze criteria before the item/count/facet goroutines consume them. Passing
+// a shared *gorm.DB to Where executes and mutates its scopes during each build.
+func whereExpression(db *gorm.DB) interface{} {
+	// Resolve deferred scopes before freezing their WHERE expression. The dry
+	// run builds SQL without dispatching a query or sharing mutable scopes.
+	db = db.Session(&gorm.Session{DryRun: true, Initialized: true})
+	db.Find(&[]interface{}{})
+	return db.Statement.Clauses["WHERE"].Expression
 }
 
 type DBCriteria struct {
