@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/model"
 )
@@ -120,6 +121,7 @@ type Execution struct {
 	Lease        Lease
 	mu           sync.Mutex
 	recheck      func(context.Context) error
+	txRecheck    func(context.Context, pgx.Tx) error
 	lastDeferred *DeferredError
 }
 
@@ -142,6 +144,20 @@ func SetSourceRecheck(ctx context.Context, check func(context.Context) error) er
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.recheck = check
+	return nil
+}
+
+// SetTransactionalSourceRecheck binds an exact current-source comparator to
+// owned dispatch transactions. The callback retains its source locks until the
+// controller commits and cannot invoke a provider or change the catalogue.
+func SetTransactionalSourceRecheck(ctx context.Context, check func(context.Context, pgx.Tx) error) error {
+	e := ExecutionFrom(ctx)
+	if e == nil || check == nil {
+		return ErrLease
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.txRecheck = check
 	return nil
 }
 func BeforeDispatch(ctx context.Context) error {

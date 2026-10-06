@@ -45,11 +45,21 @@ func provideStore(p storeParams) (*llmwork.Store, error) {
 		if p.Config.Accepts(llmwork.Type) && (!p.Type.Enabled || p.Classifier.Workflow != "default") {
 			return nil, fmt.Errorf("llm_work classifier_type requires enabled type inference and the default policy adapter")
 		}
+		if p.Config.Accepts(llmwork.Type) {
+			if err := p.Type.Validate(); err != nil {
+				return nil, err
+			}
+		}
 		if p.Config.Accepts(llmwork.Language) && (!p.Language.Enabled || !p.Language.LLMEnabled || p.Language.EffectiveLLMAction() != contentfilter.LLMActionReview) {
 			return nil, fmt.Errorf("llm_work contentfilter requires enabled review-only language inference")
 		}
 		if p.Config.Accepts(llmwork.Matcher) && !p.Matcher.Enabled {
 			return nil, fmt.Errorf("llm_work matcher requires enabled identity inference")
+		}
+		if p.Config.Accepts(llmwork.Matcher) {
+			if err := p.Matcher.Validate(); err != nil {
+				return nil, err
+			}
 		}
 	}
 	store, err := llmwork.NewStore(p.Config, p.Pool)

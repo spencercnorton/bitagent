@@ -2,9 +2,12 @@ package llmwork
 
 import (
 	"context"
-	"github.com/jackc/pgx/v5"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/stretchr/testify/require"
 )
@@ -17,6 +20,42 @@ type recoveryControl struct {
 func (recoveryControl) Enabled() bool { return true }
 func (r recoveryControl) TaskRecovery(context.Context, []byte) ([]llmcapture.DispatchRecovery, error) {
 	return r.attempts, nil
+}
+
+type queryingRecovery struct {
+	recoveryControl
+	pool *pgxpool.Pool
+}
+
+func (r queryingRecovery) TaskRecovery(ctx context.Context, _ []byte) ([]llmcapture.DispatchRecovery, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `SELECT count(*) FROM llm_capture_dispatch_attempts`).Scan(&n)
+	return nil, err
+}
+
+func TestLeaseRecoveryUsesAOneConnectionPool(t *testing.T) {
+	s, pool := workFixture(t)
+	ctx := context.Background()
+	d := draftFor(1)
+	putPublic(t, pool, d)
+	_, err := s.Enqueue(ctx, d)
+	require.NoError(t, err)
+	old, err := s.Claim(ctx, "crash")
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE llm_work_tasks SET lease_until=now()-interval '1 second' WHERE task_key=$1`, old.Task.Key)
+	require.NoError(t, err)
+	cfg := pool.Config().Copy()
+	cfg.MaxConns = 1
+	single, err := pgxpool.NewWithConfig(ctx, cfg)
+	require.NoError(t, err)
+	defer single.Close()
+	s.pool = lazy.New(func() (*pgxpool.Pool, error) { return single, nil })
+	s.SetDispatch(queryingRecovery{pool: single})
+	deadline, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	recovered, err := s.Claim(deadline, "resume")
+	require.NoError(t, err)
+	require.NotNil(t, recovered)
 }
 
 func TestExpiredTaskRecoveryAllowsOnlyProvenDispatchStates(t *testing.T) {
