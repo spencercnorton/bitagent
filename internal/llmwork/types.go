@@ -91,7 +91,7 @@ func SourceDigest(t model.Torrent) []byte {
 	for _, f := range files {
 		fileEvidence = append(fileEvidence, []any{f.Index, f.Path, f.Size, f.Extension})
 	}
-	return Digest([]any{t.InfoHash.Bytes(), t.Name, t.Size, t.Private, t.FilesStatus, t.Extension, t.FilesCount, t.Hint, fileEvidence})
+	return Digest([]any{t.InfoHash.Bytes(), t.Name, t.Size, t.Private, t.FilesStatus, t.Extension, t.FilesCount, []any{t.Hint.ContentType, t.Hint.ContentSource, t.Hint.ContentID, t.Hint.Title, t.Hint.ReleaseYear, t.Hint.Languages, t.Hint.Episodes, t.Hint.VideoResolution, t.Hint.VideoSource, t.Hint.VideoCodec, t.Hint.Video3D, t.Hint.VideoModifier, t.Hint.ReleaseGroup}, fileEvidence})
 }
 
 type Task struct {

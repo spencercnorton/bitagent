@@ -27,7 +27,7 @@ JOIN llm_evaluation_capture_admissions a USING(capture_key)
 JOIN llm_evaluation_capture_results r USING(capture_key)
 JOIN llm_capture_dispatch_attempts d USING(capture_key)
 WHERE c.capture_key=$1 AND a.info_hash=$2 AND c.task=$3
-AND c.expires_at>now() AND a.expires_at>now()
+AND c.expires_at>clock_timestamp() AND a.expires_at>clock_timestamp()
 AND c.privacy_status='verified_native_public_qb_rechecked'
 AND d.task_key=$4 AND d.task=c.task AND d.state='result' AND d.response_sha256=r.response_sha256
 AND r.decided_at IS NOT NULL FOR SHARE OF c,a,r,d`, receipt.CaptureKey, task.InfoHash, string(kind), task.Key).Scan(&digest, &status, &errorClass, &decision)

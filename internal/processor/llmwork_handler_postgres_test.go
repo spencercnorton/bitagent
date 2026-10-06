@@ -120,6 +120,8 @@ func TestPostgresDeferredTypeApplyExactlyOnceAndPreserveAfterReceiptExpiry(t *te
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, `UPDATE llm_work_tasks SET payload='{}'::jsonb WHERE state='completed'`)
 	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `UPDATE torrents SET updated_at=now() WHERE info_hash=$1`, source.InfoHash.Bytes())
+	require.NoError(t, err)
 	result, err := stage.Run(ctx, "default", classifier.Flags{"local_search_enabled": false}, source)
 	require.NoError(t, err)
 	require.Equal(t, model.ContentTypeMovie, result.ContentType.ContentType)
@@ -238,4 +240,43 @@ func TestPostgresDeferredLocalAttachTagFailureRollbackAndPreservation(t *testing
 	require.NoError(t, err)
 	_, err = stage.Run(ctx, "default", classifier.Flags{"local_search_enabled": true}, source)
 	require.ErrorIs(t, err, llmwork.ErrHeld)
+}
+
+func TestPostgresDeferredReceiptRejectsWrongIdentityHashAndExpiry(t *testing.T) {
+	h, work, lease, _, pool, _, _ := deferredTypeHarness(t, nil, false)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `CREATE FUNCTION reject_receipt_test() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'synthetic hold';END$$;CREATE TRIGGER reject_receipt_test BEFORE UPDATE ON torrent_contents FOR EACH ROW EXECUTE FUNCTION reject_receipt_test()`)
+	require.NoError(t, err)
+	require.Error(t, h.Handle(llmwork.WithExecution(ctx, work, *lease), lease.Task))
+	var receipt llmcapture.ResultReceipt
+	receipt.StatusCode = 200
+	receipt.ErrorClass = "none"
+	require.NoError(t, pool.QueryRow(ctx, `SELECT capture_key,response_sha256 FROM llm_evaluation_capture_results`).Scan(&receipt.CaptureKey, &receipt.ResponseSHA256))
+	check := func(task llmwork.Task, r llmcapture.ResultReceipt, want bool) {
+		tx, e := pool.Begin(ctx)
+		require.NoError(t, e)
+		defer tx.Rollback(ctx)
+		_, e = deferredReceiptDecision(ctx, tx, task, r, llmcapture.TaskClassifierType)
+		if want {
+			require.NoError(t, e)
+		} else {
+			require.ErrorIs(t, e, llmwork.ErrObsolete)
+		}
+	}
+	check(lease.Task, receipt, true)
+	wrong := receipt
+	wrong.ResponseSHA256 = make([]byte, 32)
+	check(lease.Task, wrong, false)
+	task := lease.Task
+	task.Key = llmwork.Digest("another source case")
+	check(task, receipt, false)
+	task = lease.Task
+	task.InfoHash = make([]byte, 20)
+	check(task, receipt, false)
+	_, err = pool.Exec(ctx, `UPDATE llm_evaluation_captures SET captured_at=now()-interval '2 hours',expires_at=now()-interval '1 hour'`)
+	require.NoError(t, err)
+	check(lease.Task, receipt, false)
+	_, err = pool.Exec(ctx, `DELETE FROM llm_evaluation_captures`)
+	require.NoError(t, err)
+	check(lease.Task, receipt, false)
 }

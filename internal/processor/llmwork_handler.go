@@ -225,7 +225,7 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 		if err = decodeDeferredPayload(task.Payload, &p); err != nil {
 			return err
 		}
-		if !p.Type.Valid || !deferredContentTypeAllowed(p.Type, h.Classifier, nil) || target.ContentType != p.Type {
+		if !p.Type.Valid || !deferredContentTypeAllowed(p.Type, h.Classifier, nil) || (target.ContentType.Valid != p.Type.Valid || target.ContentType.ContentType != p.Type.ContentType) {
 			return llmwork.ErrObsolete
 		}
 		policy = h.Matcher.WorkPolicy(p)
@@ -321,7 +321,7 @@ release_granularity=$15,release_date=$16,anime_absolute_episode=$17,is_anime=$18
 }
 
 func sameDeferredTarget(a, b model.TorrentContent) bool {
-	return bytes.Equal(llmwork.Digest(llmwork.NewApplicationSnapshot(llmwork.Language, a, nil)), llmwork.Digest(llmwork.NewApplicationSnapshot(llmwork.Language, b, nil))) && a.ID == b.ID
+	return bytes.Equal(llmwork.Digest(llmwork.NewApplicationSnapshot(llmwork.Language, a, nil)), llmwork.Digest(llmwork.NewApplicationSnapshot(llmwork.Language, b, nil))) && a.ID == b.ID && bytes.Equal(llmwork.Digest([]any{a.Content.Type, a.Content.Source, a.Content.ID, a.Content.Title, a.Content.ReleaseYear, a.Content.OriginalLanguage, a.Content.OriginalTitle, a.Content.Adult}), llmwork.Digest([]any{b.Content.Type, b.Content.Source, b.Content.ID, b.Content.Title, b.Content.ReleaseYear, b.Content.OriginalLanguage, b.Content.OriginalTitle, b.Content.Adult}))
 }
 func deferredContentTypeAllowed(ct model.NullContentType, cfg classifier.Config, flags classifier.Flags) bool {
 	if !ct.Valid || (ct.ContentType != model.ContentTypeMovie && ct.ContentType != model.ContentTypeTvShow) {

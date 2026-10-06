@@ -134,3 +134,38 @@ func TestPostgresDeferredSourceAndTargetGuardRejectChangedPrivateBlockedAndManua
 	_, err = lockedUnknownDeferredTarget(ctx, tx, current, true)
 	require.ErrorIs(t, err, llmwork.ErrObsolete, "a known type cannot be replaced by deferred type output")
 }
+
+func TestPostgresAbsentHintInsertIsFencedUntilSourceCommit(t *testing.T) {
+	pool, backend := deferredApplyFixture(t)
+	ctx := context.Background()
+	hash := protocol.ID{27}
+	_, err := pool.Exec(ctx, `INSERT INTO torrents(info_hash,name,size,private,files_status,created_at,updated_at)VALUES($1,'Source.Public.mkv',73400320,false,'single',now(),now())`, hash.Bytes())
+	require.NoError(t, err)
+	source := deferredTaskSource(t, backend, hash)
+	task := llmwork.Task{Draft: llmwork.Draft{InfoHash: hash.Bytes(), SourceDigest: llmwork.SourceDigest(source)}}
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	_, err = lockedDeferredSource(ctx, tx, task)
+	require.NoError(t, err)
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		_, e := pool.Exec(ctx, `INSERT INTO torrent_hints(info_hash,content_type,created_at,updated_at)VALUES($1,'movie',now(),now())`, hash.Bytes())
+		done <- e
+	}()
+	<-started
+	select {
+	case e := <-done:
+		t.Fatalf("hint insertion crossed source lock: %v", e)
+	case <-time.After(100 * time.Millisecond):
+	}
+	require.NoError(t, tx.Commit(ctx))
+	require.NoError(t, <-done)
+	next, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer next.Rollback(ctx)
+	_, err = lockedDeferredSource(ctx, next, task)
+	require.ErrorIs(t, err, llmwork.ErrObsolete)
+}
