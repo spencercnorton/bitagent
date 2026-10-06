@@ -25,7 +25,10 @@ capacity; rollback never silently relaxes a cap.
 ## Caller contract
 
 Construct the store only with explicit reviewed limits. `RemoveBatch` accepts
-1–32 distinct hashes and a bounded reason. It owns a repeatable-read transaction:
+1–32 distinct hashes and a bounded reason. Mutations have a 30-second overall
+deadline, 15-second statement timeout and 2-second lock timeout; filtering has a
+5-second deadline. Child locks/counts stop at the remaining row cap plus one.
+It owns a repeatable-read transaction:
 locks budget, then ordered hash/raw/dependent rows; captures every column and
 its schema; removes raw rows; appends a bound blocking verdict and recovery
 transition events; and commits all of these together. Missing tables, unknown raw

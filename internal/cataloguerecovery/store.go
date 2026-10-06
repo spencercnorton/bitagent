@@ -145,11 +145,16 @@ func (s *Store) RemoveBatch(ctx context.Context, hashes [][]byte, reason string,
 			return nil, fmt.Errorf("catalogue recovery: duplicate hash")
 		}
 	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err = tx.Exec(ctx, `set local statement_timeout='15s'; set local lock_timeout='2s'`); err != nil {
+		return nil, err
+	}
 	// Serialize budgets before hash locks; competing removers share this order.
 	var used, count int64
 	if err = tx.QueryRow(ctx, `select payload_bytes,snapshots from catalogue_recovery_budget where singleton=true for update`).Scan(&used, &count); err != nil {
@@ -221,22 +226,27 @@ func (s *Store) removeTx(ctx context.Context, tx pgx.Tx, hash []byte, reason str
 		name := pgx.Identifier{table}.Sanitize()
 		// Locks existing children and shared source definitions before reading; the
 		// raw FOR UPDATE also blocks new FK children until this transition ends.
-		rows, e := tx.Query(ctx, `select 1 from `+name+` where `+where+` for share`, hash)
+		rows, e := tx.Query(ctx, `select 1 from `+name+` where `+where+` limit $2 for share`, hash, s.cfg.MaxRowsPerSnapshot-rowCount+1)
 		if e != nil {
 			return out, e
 		}
+		var n int64
 		for rows.Next() {
+			n++
 		}
 		e = rows.Err()
 		rows.Close()
 		if e != nil {
 			return out, e
 		}
-		var n, bytesEstimate int64
-		if e = tx.QueryRow(ctx, `select count(*),coalesce(sum(octet_length(to_jsonb(r)::text)),0) from `+name+` r where `+where, hash).Scan(&n, &bytesEstimate); e != nil {
+		rowCount += n
+		if rowCount > s.cfg.MaxRowsPerSnapshot {
+			return out, ErrCapacity
+		}
+		var bytesEstimate int64
+		if e = tx.QueryRow(ctx, `select coalesce(sum(octet_length(to_jsonb(r)::text)),0) from `+name+` r where `+where, hash).Scan(&bytesEstimate); e != nil {
 			return out, e
 		}
-		rowCount += n
 		size += bytesEstimate
 		if rowCount > s.cfg.MaxRowsPerSnapshot || size > s.cfg.MaxSnapshotBytes {
 			return out, ErrCapacity
@@ -368,11 +378,16 @@ func (s *Store) Restore(ctx context.Context, id int64, now time.Time) (bool, err
 	if err := validateNow(now); err != nil {
 		return false, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err = tx.Exec(ctx, `set local statement_timeout='15s'; set local lock_timeout='2s'`); err != nil {
+		return false, err
+	}
 	var budgetLock bool
 	if err = tx.QueryRow(ctx, `select singleton from catalogue_recovery_budget where singleton=true for update`).Scan(&budgetLock); err != nil {
 		return false, err
@@ -476,6 +491,8 @@ func (s *Store) Filter(ctx context.Context, all, bloomKept [][]byte) ([][]byte, 
 	if len(all) > 1024 {
 		return nil, fmt.Errorf("catalogue recovery: filter batch exceeds 1024")
 	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	kept := map[string]bool{}
 	for _, h := range bloomKept {
 		kept[string(h)] = true
