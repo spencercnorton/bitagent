@@ -20,7 +20,10 @@ type CaseFence struct {
 }
 
 type DispatchRequest struct {
-	CaptureKey      []byte
+	CaptureKey []byte
+	// SemanticKey is the complete build-independent request digest. The
+	// controller derives it again from the admitted capture before using it.
+	SemanticKey     []byte
 	Task            Task
 	CandidateSource CandidateSource
 	InfoHash        []byte // admission-only; never retained in the dispatch fence
@@ -60,6 +63,9 @@ var (
 // DispatchLease is a token-fenced request attempt. Tokens must not be logged.
 type DispatchLease struct {
 	CaptureKey []byte
+	// FenceKey identifies the permanent first semantic fence; CaptureKey is
+	// the current positively undispatched capture for any new HTTP result.
+	FenceKey   []byte
 	Owner      string
 	Generation int64
 	Case       *CaseFence
