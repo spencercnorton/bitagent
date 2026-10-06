@@ -134,7 +134,10 @@ func CaseFence(ctx context.Context) *llmcapture.CaseFence {
 	if e == nil {
 		return nil
 	}
-	return &llmcapture.CaseFence{TaskKey: e.Lease.Task.Key, LeaseOwner: e.Lease.Owner, LeaseGeneration: e.Lease.Generation, SourceDigest: e.Lease.Task.SourceDigest, PolicyDigest: e.Lease.Task.PolicyDigest}
+	e.mu.Lock()
+	check := e.txRecheck
+	e.mu.Unlock()
+	return &llmcapture.CaseFence{TaskKey: e.Lease.Task.Key, LeaseOwner: e.Lease.Owner, LeaseGeneration: e.Lease.Generation, SourceDigest: e.Lease.Task.SourceDigest, PolicyDigest: e.Lease.Task.PolicyDigest, SourceRecheck: check}
 }
 func SetSourceRecheck(ctx context.Context, check func(context.Context) error) error {
 	e := ExecutionFrom(ctx)
