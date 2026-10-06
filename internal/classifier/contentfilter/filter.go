@@ -115,8 +115,9 @@ type CallBudget interface {
 // Admission is mandatory in production: every possible billed dispatch must
 // reserve durable capacity and retain an exact request/result/decision chain.
 type Admission struct {
-	Budget  CallBudget
-	Capture llmcapture.Capturer
+	Budget   CallBudget
+	Capture  llmcapture.Capturer
+	Dispatch llmcapture.DispatchControl
 }
 
 type AuditSource struct {
@@ -511,7 +512,14 @@ func (f *Filter) consultAudited(
 		if errors.Is(err, llmwork.ErrDeferred) {
 			return ReasonNone, false, nil
 		}
-		return ReasonNone, false, err
+		if errors.Is(err, llmwork.ErrReplayOnly) {
+			ctx = llmwork.WithReplayOnly(ctx)
+		} else {
+			return ReasonNone, false, err
+		}
+	}
+	if f.admission.Dispatch != nil && f.admission.Dispatch.Enabled() {
+		return f.consultControlled(ctx, in, source)
 	}
 	recorder, ok := f.admission.Capture.(llmcapture.ContentFilterResultRecorder)
 	client, clientOK := f.llm.(AuditedLLMClient)

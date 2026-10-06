@@ -50,22 +50,25 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	if err := ctx.Err(); err != nil {
 		return Decision{}, err
 	}
-	if time.Now().UnixNano() < s.retryAfter.Load() {
+	controlled := s.admission.Dispatch != nil && s.admission.Dispatch.Enabled()
+	if !controlled && time.Now().UnixNano() < s.retryAfter.Load() {
 		s.metrics.gateRejectsTotal.WithLabelValues("budget_cooldown").Inc()
 		if llmwork.ExecutionFrom(ctx) != nil {
 			return Decision{}, llmwork.RecordDeferral(ctx, "cooldown", time.Unix(0, s.retryAfter.Load()).UTC())
 		}
 		return Decision{}, errors.New("type call allowance cooldown")
 	}
-	select {
-	case s.slots <- struct{}{}:
-		defer func() { <-s.slots }()
-	default:
-		s.metrics.gateRejectsTotal.WithLabelValues("concurrency").Inc()
-		if llmwork.ExecutionFrom(ctx) != nil {
-			return Decision{}, llmwork.RecordDeferral(ctx, "concurrency", time.Now().UTC().Add(time.Second))
+	if !controlled {
+		select {
+		case s.slots <- struct{}{}:
+			defer func() { <-s.slots }()
+		default:
+			s.metrics.gateRejectsTotal.WithLabelValues("concurrency").Inc()
+			if llmwork.ExecutionFrom(ctx) != nil {
+				return Decision{}, llmwork.RecordDeferral(ctx, "concurrency", time.Now().UTC().Add(time.Second))
+			}
+			return Decision{}, errors.New("type concurrency allowance exhausted")
 		}
-		return Decision{}, errors.New("type concurrency allowance exhausted")
 	}
 	// Bound DB admission, privacy checks and HTTP together; response persistence
 	// gets a separate short cleanup deadline if dispatch consumed this context.
@@ -77,7 +80,6 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	}
 	req.Header.Set("Authorization", "Bearer "+s.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
-	controlled := s.admission.Dispatch != nil && s.admission.Dispatch.Enabled()
 	if llmwork.ExecutionFrom(ctx) != nil && !controlled {
 		return Decision{}, llmwork.ErrHeld
 	}
@@ -141,7 +143,7 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 		var dispatchOutcome llmcapture.DispatchOutcome
 		dispatchLease, dispatchOutcome, err = s.admission.Dispatch.Prepare(ctx, request)
 		if err != nil {
-			return Decision{}, err
+			return Decision{}, typeControlError(ctx, err)
 		}
 		if dispatchOutcome == llmcapture.DispatchReplay {
 			replay, err := s.admission.Dispatch.Replay(ctx, request)
@@ -164,15 +166,22 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 		if llmwork.ReplayOnly(ctx) {
 			return Decision{}, llmwork.ErrHeld
 		}
+		select {
+		case s.slots <- struct{}{}:
+			defer func() { <-s.slots }()
+		default:
+			retry := time.Now().UTC().Add(time.Second)
+			if err = s.admission.Dispatch.DeferNoDispatch(ctx, dispatchLease, "concurrency", retry); err != nil {
+				return Decision{}, err
+			}
+			return Decision{}, llmwork.RecordDeferral(ctx, "concurrency", retry)
+		}
 		ok, err = s.admission.Dispatch.Reserve(ctx, dispatchLease, "classifier_type", s.cfg.DailyCallLimit, s.cfg.MonthlyCallLimit)
 		if err != nil {
-			return Decision{}, err
+			return Decision{}, typeControlError(ctx, err)
 		}
 		if !ok {
-			now := time.Now().UTC()
-			renewal := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
-			_ = s.admission.Dispatch.DeferNoDispatch(ctx, dispatchLease, "allowance", renewal)
-			return Decision{}, llmwork.RecordDeferral(ctx, "allowance", renewal)
+			return Decision{}, llmwork.ErrHeld
 		}
 	}
 	// Repeat evidence privacy at the final outbound boundary, after potentially
@@ -257,6 +266,14 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 		return Decision{}, err
 	}
 	return decision, nil
+}
+
+func typeControlError(ctx context.Context, err error) error {
+	var d *llmcapture.DispatchDeferredError
+	if errors.As(err, &d) {
+		return llmwork.RecordDeferral(ctx, d.Reason, d.RetryAfterUTC)
+	}
+	return err
 }
 
 func typeContractID(cfg Config) string {

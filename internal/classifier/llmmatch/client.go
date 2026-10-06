@@ -894,6 +894,7 @@ func (c *Client) captureEnvelope(ctx context.Context, req llmcapture.Request) er
 		}
 		pending.key, pending.task, pending.source = key, req.Task, req.CandidateSource
 		pending.outcome = outcome
+		pending.infoHash = append([]byte(nil), req.InfoHash...)
 	}
 	return nil
 }
@@ -907,15 +908,18 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, u
 	if err := c.cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if c.budgetCoolingDown() {
-		return nil, ErrCallBudget
-	}
 	req := c.newChatRequest(system, user, maxTokens)
 	body, _ := json.Marshal(req)
 	if c.cfg.MaxRequestBytes <= 0 || len(body) > c.cfg.MaxRequestBytes ||
 		maxTokens <= 0 || maxTokens > c.cfg.MaxOutputTokens {
 		c.metrics.gateRejects.WithLabelValues("request_size").Inc()
 		return nil, fmt.Errorf("matcher request exceeds input/output limit")
+	}
+	if c.dispatch != nil && c.dispatch.Enabled() {
+		return c.callControlledWith(ctx, hc, stage, body)
+	}
+	if c.budgetCoolingDown() {
+		return nil, ErrCallBudget
 	}
 	// Skip instead of waiting for another LLM call: ingestion must not queue
 	// behind the optional matcher. Retry can happen on a later reprocess pass.
