@@ -139,7 +139,11 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	}
 	var dispatchLease llmcapture.DispatchLease
 	if controlled {
-		request := llmcapture.DispatchRequest{CaptureKey: key, Task: llmcapture.TaskClassifierType, InfoHash: t.InfoHash.Bytes(), FreshCapture: outcome == llmcapture.OutcomeRecorded, Case: llmwork.CaseFence(ctx), LeaseDuration: time.Minute}
+		semantic, err := llmcapture.SemanticKeyForRequest(capture)
+		if err != nil {
+			return Decision{}, err
+		}
+		request := llmcapture.DispatchRequest{CaptureKey: key, SemanticKey: semantic, Task: llmcapture.TaskClassifierType, InfoHash: t.InfoHash.Bytes(), FreshCapture: outcome == llmcapture.OutcomeRecorded, Case: llmwork.CaseFence(ctx), LeaseDuration: time.Minute}
 		var dispatchOutcome llmcapture.DispatchOutcome
 		dispatchLease, dispatchOutcome, err = s.admission.Dispatch.Prepare(ctx, request)
 		if err != nil {
@@ -164,6 +168,9 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 			return Decision{}, llmwork.RecordDeferral(ctx, "request_owned", time.Now().UTC().Add(time.Minute))
 		}
 		if dispatchOutcome != llmcapture.DispatchPrepared {
+			return Decision{}, llmwork.ErrHeld
+		}
+		if !bytes.Equal(dispatchLease.CaptureKey, key) {
 			return Decision{}, llmwork.ErrHeld
 		}
 		if llmwork.ReplayOnly(ctx) {

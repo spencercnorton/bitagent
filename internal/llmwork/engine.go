@@ -15,6 +15,13 @@ type DeferredError struct {
 func (e DeferredError) Error() string { return ErrDeferred.Error() + ": " + e.Reason }
 func (e DeferredError) Unwrap() error { return ErrDeferred }
 
+// DeclinedError is a terminal policy/model abstention. It records why no
+// application was qualified without misreporting a changed source or buying
+// another response for the same semantic request.
+type DeclinedError struct{ Reason string }
+
+func (e DeclinedError) Error() string { return "optional model work declined: " + e.Reason }
+
 // Handler performs current source/policy validation and a narrow transaction.
 // It must not invoke the generic reprocess/delete pipeline. Dispatch control is
 // independently mandatory at every provider boundary, even during replay.
@@ -93,11 +100,14 @@ func (e Engine) RunOne(ctx context.Context) (bool, error) {
 	retry := time.Now().UTC()
 	var d DeferredError
 	var deferred *DeferredError
+	var declined DeclinedError
 	switch {
 	case errors.As(err, &deferred):
 		state, reason, retry = "deferred", deferred.Reason, deferred.RetryAfter
 	case errors.As(err, &d):
 		state, reason, retry = "deferred", d.Reason, d.RetryAfter
+	case errors.As(err, &declined):
+		state, reason = "obsolete", declined.Reason
 	case errors.Is(err, ErrObsolete):
 		state, reason = "obsolete", "source_or_policy_changed"
 	case err != nil:

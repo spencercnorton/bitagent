@@ -136,8 +136,11 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 		if x != nil {
 			return x
 		}
-		if !prediction.Qualified || !deferredContentTypeAllowed(prediction.Type, h.Classifier, p.Flags) {
-			return llmwork.ErrObsolete
+		if !prediction.Qualified {
+			return llmwork.DeclinedError{Reason: "type_not_qualified"}
+		}
+		if !deferredContentTypeAllowed(prediction.Type, h.Classifier, p.Flags) {
+			return llmwork.DeclinedError{Reason: "content_policy"}
 		}
 		result = llmwork.NewApplicationSnapshot(llmwork.Type, target, nil).Result()
 		result.ContentType = prediction.Type
@@ -204,7 +207,7 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 			return x
 		}
 		if !decision.Allow || !decision.Review || !decision.WouldReview || decision.WouldDrop || decision.Defer {
-			return llmwork.ErrObsolete
+			return llmwork.DeclinedError{Reason: "language_review_not_qualified"}
 		}
 		var ok bool
 		receipt, ok = trace.Result(llmcapture.TaskContentFilter, llmcapture.CandidateSourceNone)
@@ -239,13 +242,16 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 			return x
 		}
 		dec, x := runner.EvalMatch(traced, source, p.Type)
+		if deferred := llmwork.LastDeferral(traced); deferred != nil {
+			return deferred
+		}
 		if x != nil {
 			return x
 		}
 		result, x = classifier.FinalizeDeferredMatch(traced, source, result, dec, h.Matcher, h.Observer)
 		if x != nil {
 			if errors.Is(x, classification.ErrUnmatched) {
-				return llmwork.ErrObsolete
+				return llmwork.DeclinedError{Reason: "match_not_qualified"}
 			}
 			return x
 		}

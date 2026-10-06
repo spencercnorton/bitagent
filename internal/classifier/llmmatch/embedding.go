@@ -151,7 +151,7 @@ func (c *Client) embeddingShortlist(ctx context.Context, t model.Torrent, ext Ex
 		if dispatchPending == nil {
 			return nil, nil, llmcapture.ErrCaptureUnavailable
 		}
-		binding := llmcapture.DispatchRequest{CaptureKey: dispatchPending.key, Task: llmcapture.TaskMatcherEmbedding,
+		binding := llmcapture.DispatchRequest{CaptureKey: dispatchPending.key, SemanticKey: dispatchPending.semanticKey, Task: llmcapture.TaskMatcherEmbedding,
 			CandidateSource: source, InfoHash: t.InfoHash.Bytes(), FreshCapture: dispatchPending.outcome == llmcapture.OutcomeRecorded,
 			Case: llmwork.CaseFence(ctx)}
 		lease, outcome, prepareErr := c.dispatch.Prepare(ctx, binding)
@@ -175,6 +175,7 @@ func (c *Client) embeddingShortlist(ctx context.Context, t model.Torrent, ext Ex
 				return nil, nil, replayErr
 			}
 			llmcapture.ResultTraceFrom(ctx).RecordResult(llmcapture.TaskMatcherEmbedding, source, response.Receipt)
+			dispatchPending.key = append([]byte(nil), response.Receipt.CaptureKey...)
 			if response.Result.StatusCode == http.StatusOK && response.Result.ErrorClass == "none" {
 				vectors, err = decodeEmbeddingVectors(response.Result.Body, len(request.Input), cfg)
 			} else {
@@ -182,6 +183,9 @@ func (c *Client) embeddingShortlist(ctx context.Context, t model.Torrent, ext Ex
 			}
 			replayed = true
 		} else if outcome == llmcapture.DispatchPrepared {
+			if !bytes.Equal(lease.CaptureKey, dispatchPending.key) {
+				return nil, nil, llmwork.ErrHeld
+			}
 			ctx = context.WithValue(ctx, embeddingDispatchKey{}, lease)
 		} else {
 			return nil, nil, llmcapture.ErrCaptureUnavailable

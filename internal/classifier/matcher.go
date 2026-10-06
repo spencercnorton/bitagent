@@ -13,6 +13,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
 	"github.com/spencercnorton/bitagent/internal/classifier/llmsignal"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/tmdb"
 )
@@ -144,6 +145,9 @@ func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullC
 
 	// Stage 1 — extract canonical identity.
 	ext, err := lm.Extract(ctx, t)
+	if err != nil && llmwork.ExecutionFrom(ctx) != nil {
+		return MatchDecision{}, err
+	}
 	if errors.Is(err, llmcapture.ErrPrivacyBlocked) {
 		return MatchDecision{Outcome: OutcomeGated}, nil
 	}
@@ -299,6 +303,9 @@ func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullC
 				cands,
 				llmcapture.CandidateSourceLocal,
 			)
+			if rerr != nil && llmwork.ExecutionFrom(ctx) != nil {
+				return MatchDecision{}, rerr
+			}
 			if errors.Is(rerr, llmcapture.ErrPrivacyBlocked) {
 				return MatchDecision{Outcome: OutcomeGated, Extract: ext}, nil
 			}
@@ -365,6 +372,9 @@ func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullC
 		cands,
 		llmcapture.CandidateSourceAPI,
 	)
+	if rerr != nil && llmwork.ExecutionFrom(ctx) != nil {
+		return MatchDecision{}, rerr
+	}
 	if errors.Is(rerr, llmcapture.ErrPrivacyBlocked) {
 		return MatchDecision{Outcome: OutcomeGated, Extract: ext}, nil
 	}

@@ -1,6 +1,7 @@
 package contentfilter
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
@@ -29,7 +30,11 @@ func (f *Filter) consultControlled(ctx context.Context, in Input, source AuditSo
 	if err != nil {
 		return ReasonNone, false, err
 	}
-	dreq := llmcapture.DispatchRequest{CaptureKey: key, Task: request.Task, InfoHash: source.InfoHash, FreshCapture: outcome == llmcapture.OutcomeRecorded, Case: llmwork.CaseFence(ctx), LeaseDuration: time.Minute}
+	semantic, err := llmcapture.SemanticKeyForRequest(request)
+	if err != nil {
+		return ReasonNone, false, err
+	}
+	dreq := llmcapture.DispatchRequest{CaptureKey: key, SemanticKey: semantic, Task: request.Task, InfoHash: source.InfoHash, FreshCapture: outcome == llmcapture.OutcomeRecorded, Case: llmwork.CaseFence(ctx), LeaseDuration: time.Minute}
 	lease, state, err := f.admission.Dispatch.Prepare(ctx, dreq)
 	if err != nil {
 		return ReasonNone, false, controlledFilterError(ctx, err)
@@ -53,6 +58,9 @@ func (f *Filter) consultControlled(ctx context.Context, in Input, source AuditSo
 		}
 	} else {
 		if state != llmcapture.DispatchPrepared || llmwork.ReplayOnly(ctx) {
+			return ReasonNone, false, llmwork.ErrHeld
+		}
+		if !bytes.Equal(lease.CaptureKey, key) {
 			return ReasonNone, false, llmwork.ErrHeld
 		}
 		select {

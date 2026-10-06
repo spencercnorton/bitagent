@@ -368,6 +368,14 @@ deferral or expired lease. An intent, unknown transport outcome or missing
 response body requires explicit reconciliation; it never authorizes automatic
 duplicate calls or allowance refunds.
 
+Task policies carry explicit semantic contract versions; advance the applicable
+`WorkPolicyVersion` when eligibility, interpretation or application semantics
+change. Evaluation captures remain bound to their original binary build. A
+build-only restart reuses a response only after the dispatch controller proves
+the complete source/group/input/prompt/route/model/task contract equivalent.
+Replay retains the original capture, response time and decision generation.
+An equivalent request with unknown outcome or an expired body remains held.
+
 `LLM_WORK_ENABLED=false` disables admission and execution.
 `LLM_WORK_WORKER_ENABLED=false` pauses execution while admission remains bounded.
 When the registered worker runs, proposal cleanup continues with an already

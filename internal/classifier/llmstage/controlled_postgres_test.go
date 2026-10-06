@@ -14,11 +14,15 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/version"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
 func TestControlledTypeReplaysAcrossRestartBeforeAllowanceOrCooldown(t *testing.T) {
+	previous := version.GitTag
+	version.GitTag = "synthetic-build-a"
+	defer func() { version.GitTag = previous }()
 	pool, recorder := newTypeAdmissionPostgresFixture(t)
 	raw, err := os.ReadFile("../../../migrations/00056_llm_work_lifecycle.sql")
 	require.NoError(t, err)
@@ -55,6 +59,20 @@ func TestControlledTypeReplaysAcrossRestartBeforeAllowanceOrCooldown(t *testing.
 	var used int
 	require.NoError(t, pool.QueryRow(context.Background(), `SELECT daily_calls FROM llm_request_budgets WHERE scope='classifier_type'`).Scan(&used))
 	require.Equal(t, 1, used)
+	// Only the binary generation changes. The exact semantic request must
+	// replay its original first result and cannot become another observation.
+	version.GitTag = "synthetic-build-b"
+	nextBuild, err := newStage().classify(context.Background(), tor)
+	require.NoError(t, err)
+	require.True(t, nextBuild.receipt.FromCache)
+	require.Equal(t, first.receipt.CaptureKey, nextBuild.receipt.CaptureKey)
+	require.Equal(t, int32(1), calls.Load())
+	var responseCount int
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT count(*) FROM llm_evaluation_capture_results`).Scan(&responseCount))
+	require.Equal(t, 1, responseCount)
+	var originalBuild string
+	require.NoError(t, pool.QueryRow(context.Background(), `SELECT build_identity FROM llm_evaluation_captures WHERE capture_key=$1`, nextBuild.receipt.CaptureKey).Scan(&originalBuild))
+	require.Equal(t, "synthetic-build-a", originalBuild)
 	_, err = pool.Exec(context.Background(), `UPDATE torrents SET private=true WHERE info_hash=$1`, tor.InfoHash.Bytes())
 	require.NoError(t, err)
 	_, err = newStage().classify(context.Background(), tor)

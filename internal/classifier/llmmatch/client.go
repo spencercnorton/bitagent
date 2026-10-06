@@ -893,6 +893,10 @@ func (c *Client) captureEnvelope(ctx context.Context, req llmcapture.Request) er
 			return fmt.Errorf("%w: capture result identity: %v", llmcapture.ErrCaptureUnavailable, keyErr)
 		}
 		pending.key, pending.task, pending.source = key, req.Task, req.CandidateSource
+		pending.semanticKey, err = llmcapture.SemanticKeyForRequest(req)
+		if err != nil {
+			return err
+		}
 		pending.outcome = outcome
 		pending.infoHash = append([]byte(nil), req.InfoHash...)
 	}

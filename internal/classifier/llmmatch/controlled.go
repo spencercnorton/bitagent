@@ -19,7 +19,7 @@ func (c *Client) callControlledWith(ctx context.Context, hc *http.Client, stage 
 	if c.work != nil && c.work.Config().Accepts(llmwork.Matcher) && llmwork.ExecutionFrom(ctx) == nil && !llmwork.ReplayOnly(ctx) {
 		return nil, llmwork.ErrHeld
 	}
-	request := llmcapture.DispatchRequest{CaptureKey: p.key, Task: p.task, CandidateSource: p.source, InfoHash: p.infoHash,
+	request := llmcapture.DispatchRequest{CaptureKey: p.key, SemanticKey: p.semanticKey, Task: p.task, CandidateSource: p.source, InfoHash: p.infoHash,
 		FreshCapture: p.outcome == llmcapture.OutcomeRecorded, Case: llmwork.CaseFence(ctx), LeaseDuration: time.Minute}
 	lease, outcome, err := c.dispatch.Prepare(ctx, request)
 	if err != nil {
@@ -38,10 +38,14 @@ func (c *Client) callControlledWith(ctx context.Context, hc *http.Client, stage 
 			return nil, err
 		}
 		llmcapture.ResultTraceFrom(ctx).RecordResult(p.task, p.source, r.Receipt)
+		p.key = append([]byte(nil), r.Receipt.CaptureKey...)
 		c.metrics.cacheHits.Inc()
 		return content, llmwork.RecordProgress(ctx)
 	}
 	if outcome != llmcapture.DispatchPrepared {
+		return nil, llmwork.ErrHeld
+	}
+	if !bytes.Equal(lease.CaptureKey, p.key) {
 		return nil, llmwork.ErrHeld
 	}
 	if llmwork.ReplayOnly(ctx) {
