@@ -30,7 +30,7 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
-func deferredTypeHarness(t *testing.T, beforeResponse func(*pgxpool.Pool, protocol.ID)) (*DeferredApplyHandler, *llmwork.Store, *llmwork.Lease, *llmstage.Stage, *pgxpool.Pool, model.Torrent, *atomic.Int32) {
+func deferredTypeHarness(t *testing.T, beforeResponse func(*pgxpool.Pool, protocol.ID), local bool) (*DeferredApplyHandler, *llmwork.Store, *llmwork.Lease, *llmstage.Stage, *pgxpool.Pool, model.Torrent, *atomic.Int32) {
 	t.Helper()
 	pool, backend := deferredApplyFixture(t)
 	ctx := context.Background()
@@ -79,7 +79,7 @@ func deferredTypeHarness(t *testing.T, beforeResponse func(*pgxpool.Pool, protoc
 	inner := processRunnerStub{run: func(model.Torrent) (classification.Result, error) { panic("generic workflow must never execute") }}
 	stage := llmstage.NewStage(stageCfg, inner, typeEnrichmentPublicPrivacy{}, llmstage.NewMetrics(), zap.NewNop().Sugar(), llmstage.Admission{Budget: llmmatch.NewPostgresTypeCallBudget(pg), Capture: recorder, Dispatch: dispatch})
 	stage.SetWork(work, classifierCfg)
-	p := llmstage.WorkPayload{Workflow: "default", Flags: classifier.Flags{"local_search_enabled": false}}
+	p := llmstage.WorkPayload{Workflow: "default", Flags: classifier.Flags{"local_search_enabled": local}}
 	body, err := json.Marshal(p)
 	require.NoError(t, err)
 	_, err = work.Enqueue(ctx, llmwork.Draft{Kind: llmwork.Type, InfoHash: hash.Bytes(), SourceDigest: llmwork.SourceDigest(source), PolicyDigest: llmwork.Digest(stage.WorkPolicy(p)), InputDigest: stage.WorkInputDigest(source), FamilyDigest: llmwork.Digest("synthetic"), Payload: body, DailyLimit: 20, MonthlyLimit: 20})
@@ -92,7 +92,7 @@ func deferredTypeHarness(t *testing.T, beforeResponse func(*pgxpool.Pool, protoc
 }
 
 func TestPostgresDeferredTypeApplyExactlyOnceAndPreserveAfterReceiptExpiry(t *testing.T) {
-	h, work, lease, stage, pool, source, calls := deferredTypeHarness(t, nil)
+	h, work, lease, stage, pool, source, calls := deferredTypeHarness(t, nil, false)
 	ctx := context.Background()
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
@@ -147,7 +147,7 @@ func TestPostgresDeferredApplyDeclinesChangedSourceAfterResponse(t *testing.T) {
 	h, work, lease, _, pool, _, calls := deferredTypeHarness(t, func(pool *pgxpool.Pool, hash protocol.ID) {
 		_, err := pool.Exec(context.Background(), `UPDATE torrent_files SET path='Source.Changed.mkv' WHERE info_hash=$1`, hash.Bytes())
 		require.NoError(t, err)
-	})
+	}, false)
 	err := h.Handle(llmwork.WithExecution(context.Background(), work, *lease), lease.Task)
 	require.ErrorIs(t, err, llmwork.ErrObsolete)
 	require.EqualValues(t, 1, calls.Load())
@@ -171,7 +171,7 @@ func TestPostgresDeferredApplyDeclinesLatePrivacyHintAndTargetEdits(t *testing.T
 			h, work, lease, _, pool, _, calls := deferredTypeHarness(t, func(pool *pgxpool.Pool, hash protocol.ID) {
 				_, err := pool.Exec(context.Background(), mutation, hash.Bytes())
 				require.NoError(t, err)
-			})
+			}, false)
 			require.Error(t, h.Handle(llmwork.WithExecution(context.Background(), work, *lease), lease.Task))
 			require.EqualValues(t, 1, calls.Load())
 			var n int
@@ -185,7 +185,7 @@ func TestPostgresDeferredApplyDeclinesLatePrivacyHintAndTargetEdits(t *testing.T
 }
 
 func TestPostgresDeferredApplyRollsBackFailedTargetWrite(t *testing.T) {
-	h, work, lease, _, pool, _, calls := deferredTypeHarness(t, nil)
+	h, work, lease, _, pool, _, calls := deferredTypeHarness(t, nil, false)
 	ctx := context.Background()
 	_, err := pool.Exec(ctx, `CREATE FUNCTION reject_deferred_update() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'synthetic persistence failure';END$$; CREATE TRIGGER reject_deferred BEFORE UPDATE ON torrent_contents FOR EACH ROW EXECUTE FUNCTION reject_deferred_update()`)
 	require.NoError(t, err)
@@ -201,4 +201,41 @@ func TestPostgresDeferredApplyRollsBackFailedTargetWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Handle(llmwork.WithExecution(ctx, work, *lease), lease.Task))
 	require.EqualValues(t, 1, calls.Load(), "a known response replays after local rollback without redispatch")
+}
+
+func TestPostgresDeferredLocalAttachTagFailureRollbackAndPreservation(t *testing.T) {
+	h, work, lease, stage, pool, source, calls := deferredTypeHarness(t, nil, true)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `INSERT INTO content(type,source,id,title,release_year,release_date,tsv,created_at,updated_at)VALUES('movie','tmdb','42','Amber Signal',2026,make_date(2026,1,1),to_tsvector('simple','Amber Signal'),now(),now()); CREATE FUNCTION reject_deferred_tag() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'synthetic tag failure';END$$;CREATE TRIGGER reject_deferred_tag BEFORE INSERT ON torrent_tags FOR EACH ROW EXECUTE FUNCTION reject_deferred_tag()`)
+	require.NoError(t, err)
+	require.ErrorContains(t, h.Handle(llmwork.WithExecution(ctx, work, *lease), lease.Task), "synthetic tag failure")
+	var n int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM llm_work_applications`).Scan(&n))
+	require.Zero(t, n)
+	var id model.NullString
+	require.NoError(t, pool.QueryRow(ctx, `SELECT content_id FROM torrent_contents`).Scan(&id))
+	require.False(t, id.Valid)
+	_, err = pool.Exec(ctx, `DROP TRIGGER reject_deferred_tag ON torrent_tags`)
+	require.NoError(t, err)
+	require.NoError(t, h.Handle(llmwork.WithExecution(ctx, work, *lease), lease.Task))
+	require.EqualValues(t, 1, calls.Load())
+	_, err = pool.Exec(ctx, `DELETE FROM llm_evaluation_captures`)
+	require.NoError(t, err)
+	result, err := stage.Run(ctx, "default", classifier.Flags{"local_search_enabled": true}, source)
+	require.NoError(t, err)
+	require.NotNil(t, result.Content)
+	require.Equal(t, "42", result.Content.ID)
+	sqlDB := stdlib.OpenDB(*pool.Config().ConnConfig)
+	defer sqlDB.Close()
+	gdb, x := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{Logger: gormlogger.Discard})
+	require.NoError(t, x)
+	backend, x := h.Search.Get()
+	require.NoError(t, x)
+	ordinary := processor{dao: dao.Use(gdb), search: backend, runner: stage, defaultWorkflow: "default", logger: zap.NewNop().Sugar()}
+	require.NoError(t, ordinary.Process(ctx, MessageParams{InfoHashes: []protocol.ID{source.InfoHash}, ClassifierFlags: classifier.Flags{"local_search_enabled": true}, SkipContentFilter: true}))
+	require.EqualValues(t, 1, calls.Load())
+	_, err = pool.Exec(ctx, `DELETE FROM torrent_tags WHERE name='type-local-enriched'`)
+	require.NoError(t, err)
+	_, err = stage.Run(ctx, "default", classifier.Flags{"local_search_enabled": true}, source)
+	require.ErrorIs(t, err, llmwork.ErrHeld)
 }
