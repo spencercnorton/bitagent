@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Recognize explicit HEVC/H.265 and AV1 codec claims while preserving existing
+  serialized codec values. Infer supported scene groups independently of codec
+  recognition and retain unknown or contradictory metadata as unknown.
+
 - Parse explicit `WEB-DL`, `WEB.DL` and `WEBDL` source tokens consistently,
   preferring compound source aliases before their shorter prefixes.
 
