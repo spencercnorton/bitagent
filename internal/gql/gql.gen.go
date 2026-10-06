@@ -2603,11 +2603,6 @@ enum Language {
   zu
 }
 
-"""
-English availability of an anime release: an English audio dub, English
-subtitles over Japanese audio, or a raw with neither. Null = unknown or not
-anime (Western releases are English-audio by convention).
-"""
 enum EnglishAudio {
   dub
   sub
@@ -2628,6 +2623,8 @@ enum VideoCodec {
   DivX
   MPEG2
   MPEG4
+  HEVC
+  AV1
 }
 
 enum VideoModifier {
