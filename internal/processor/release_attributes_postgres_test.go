@@ -125,12 +125,12 @@ func mustReleaseJSON(t *testing.T, v any) []byte {
 }
 
 func TestPostgresReleaseFieldRepairPreservesDeferredApplicationAfterTTL(t *testing.T) {
-	h, work, lease, stage, pool, source, calls := deferredTypeHarness(t, nil, false, "Amber.Signal.2026.2160p.WEB-DL.HDR10.DDP5.1.Atmos.REPACK.mkv")
+	h, work, lease, stage, pool, source, calls := deferredTypeHarness(t, nil, false, "Amber.Signal.2026.2160p.WEB-DL.HEVC.HDR10.DDP5.1.Atmos.REPACK.mkv")
 	ctx := context.Background()
 	require.NoError(t, h.Handle(llmwork.WithExecution(ctx, work, *lease), lease.Task))
 	// Model the field facts of the previous parser without changing the type
 	// receipt, source inputs, catalogue identity or application generation.
-	_, err := pool.Exec(ctx, `UPDATE torrent_contents SET video_source='WEBRip',release_attributes=NULL,updated_at=clock_timestamp();UPDATE llm_work_applications SET applied_snapshot=jsonb_set(applied_snapshot-'releaseAttributes','{videoSource}','"WEBRip"'::jsonb)`)
+	_, err := pool.Exec(ctx, `UPDATE torrent_contents SET video_source='WEBRip',video_codec=NULL,release_attributes=NULL,updated_at=clock_timestamp();UPDATE llm_work_applications SET applied_snapshot=jsonb_set(jsonb_set(applied_snapshot-'releaseAttributes','{videoSource}','"WEBRip"'::jsonb),'{videoCodec}','null'::jsonb)`)
 	require.NoError(t, err)
 	plan, err := releasefields.Freeze(ctx, pool, []protocol.ID{source.InfoHash}, false)
 	require.NoError(t, err)
@@ -144,8 +144,24 @@ func TestPostgresReleaseFieldRepairPreservesDeferredApplicationAfterTTL(t *testi
 	require.NoError(t, err)
 	require.NotNil(t, a)
 	require.Equal(t, model.VideoSourceWEBDL, a.VideoSource.VideoSource)
+	require.True(t, a.VideoCodec.Valid)
+	require.Equal(t, model.VideoCodecHEVC, a.VideoCodec.VideoCodec)
 	require.NotNil(t, a.ReleaseAttributes)
 	require.Equal(t, []string{"HDR10"}, a.ReleaseAttributes.HDRFormats)
+	// A repair rollback restores the application fact as well as the column,
+	// even after the original HTTP body and task input have expired.
+	_, err = releasefields.Rollback(ctx, pool, plan, true)
+	require.NoError(t, err)
+	a, err = work.Preserve(ctx, llmwork.Type, source, stage.WorkPolicy(p))
+	require.NoError(t, err)
+	require.False(t, a.VideoCodec.Valid)
+	require.Equal(t, model.VideoSourceWEBRip, a.VideoSource.VideoSource)
+	require.Nil(t, a.ReleaseAttributes)
+	plan, err = releasefields.Freeze(ctx, pool, []protocol.ID{source.InfoHash}, false)
+	require.NoError(t, err)
+	plan.Entries[0].SourceOwnershipEvidence = "reviewed synthetic legacy parser canary"
+	_, err = releasefields.Apply(ctx, pool, plan, true)
+	require.NoError(t, err)
 	sqlDB := stdlib.OpenDB(*pool.Config().ConnConfig)
 	defer sqlDB.Close()
 	gdb, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{Logger: logger.Discard})
@@ -158,6 +174,8 @@ func TestPostgresReleaseFieldRepairPreservesDeferredApplicationAfterTTL(t *testi
 	a, err = work.Preserve(ctx, llmwork.Type, source, stage.WorkPolicy(p))
 	require.NoError(t, err)
 	require.NotNil(t, a.ReleaseAttributes)
+	require.True(t, a.VideoCodec.Valid)
+	require.Equal(t, model.VideoCodecHEVC, a.VideoCodec.VideoCodec)
 	_, err = releasefields.Rollback(ctx, pool, plan, true)
 	require.ErrorIs(t, err, releasefields.ErrChanged, "a later ordinary refresh changes the frozen target revision")
 }

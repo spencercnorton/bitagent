@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ var ErrChanged = errors.New("frozen release repair source, version or ownership 
 type Fields struct {
 	Tsv               *string                  `json:"tsv"`
 	VideoSource       model.NullVideoSource    `json:"videoSource"`
+	VideoCodec        model.NullVideoCodec     `json:"videoCodec"`
 	ReleaseAttributes *model.ReleaseAttributes `json:"releaseAttributes"`
 }
 type Entry struct {
@@ -98,9 +100,17 @@ func Freeze(ctx context.Context, pool *pgxpool.Pool, hashes []protocol.ID, noise
 		if attrs.VideoSource.Valid {
 			after.VideoSource = attrs.VideoSource
 		}
-		if !equal(before.VideoSource, after.VideoSource) {
+		if !before.VideoCodec.Valid && attrs.VideoCodec.Valid {
+			if err = codecFilesAllow(t, attrs.VideoCodec); err != nil {
+				tx.Rollback(ctx)
+				return plan, err
+			}
+			after.VideoCodec = attrs.VideoCodec
+		}
+		if !equal(before.VideoSource, after.VideoSource) || !equal(before.VideoCodec, after.VideoCodec) {
 			projected := tc
 			projected.VideoSource = after.VideoSource
+			projected.VideoCodec = after.VideoCodec
 			projected.UpdateTsv()
 			after.Tsv = tsv(projected)
 		}
@@ -110,6 +120,34 @@ func Freeze(ctx context.Context, pool *pgxpool.Pool, hashes []protocol.ID, noise
 		}
 	}
 	return plan, nil
+}
+
+// codecFilesAllow only vetoes a filename proposal. It does not derive a codec
+// from files, inspect tracks or replace the ordinary video parser. Known media
+// filenames may advertise compatible aliases (HEVC/H265/x265); sidecars,
+// directory names and file extensions are not codec evidence.
+func codecFilesAllow(t model.Torrent, proposed model.NullVideoCodec) error {
+	if !proposed.Valid {
+		return nil
+	}
+	for _, file := range t.Files {
+		name := path.Base(strings.ReplaceAll(file.Path, `\`, "/"))
+		ext := model.FileExtensionFromPath(name)
+		ft := (model.TorrentFile{Path: name}).FileType()
+		media := ft.Valid && ft.FileType == model.FileTypeVideo
+		switch ext.String {
+		case "m2ts", "webm", "ogm", "rmvb":
+			media = true
+		}
+		if !media {
+			continue
+		}
+		stem := strings.TrimSuffix(name, path.Ext(name))
+		if !model.InferVideoCodec(proposed.VideoCodec.String() + " " + stem).Valid {
+			return fmt.Errorf("%w: media filename contradicts codec proposal", ErrChanged)
+		}
+	}
+	return nil
 }
 
 func current(ctx context.Context, tx pgx.Tx, hash protocol.ID) (model.Torrent, model.TorrentContent, error) {
@@ -242,6 +280,9 @@ func validate(plan Plan) error {
 		if !equal(e.Before.VideoSource, e.After.VideoSource) && e.Before.VideoSource.Valid && strings.TrimSpace(e.SourceOwnershipEvidence) == "" {
 			return fmt.Errorf("%w: non-null source repair requires reviewed ownership evidence", ErrChanged)
 		}
+		if e.Before.VideoCodec.Valid && !equal(e.Before.VideoCodec, e.After.VideoCodec) {
+			return fmt.Errorf("%w: non-null codec is immutable", ErrChanged)
+		}
 	}
 	return nil
 }
@@ -303,9 +344,18 @@ func applyEntry(ctx context.Context, tx pgx.Tx, key []byte, e Entry, noise, writ
 	if !equal(e.Before.VideoSource, e.After.VideoSource) && !equal(attrs.VideoSource, e.After.VideoSource) {
 		return "", ErrChanged
 	}
+	if !equal(e.Before.VideoCodec, e.After.VideoCodec) && !equal(attrs.VideoCodec, e.After.VideoCodec) {
+		return "", ErrChanged
+	}
+	if !equal(e.Before.VideoCodec, e.After.VideoCodec) {
+		if err = codecFilesAllow(t, e.After.VideoCodec); err != nil {
+			return "", err
+		}
+	}
 	projected := tc
-	if !equal(e.Before.VideoSource, e.After.VideoSource) {
+	if !equal(e.Before.VideoSource, e.After.VideoSource) || !equal(e.Before.VideoCodec, e.After.VideoCodec) {
 		projected.VideoSource = e.After.VideoSource
+		projected.VideoCodec = e.After.VideoCodec
 		projected.UpdateTsv()
 	}
 	if !equal(tsv(projected), e.After.Tsv) {
@@ -329,7 +379,7 @@ func applyEntry(ctx context.Context, tx pgx.Tx, key []byte, e Entry, noise, writ
 		raw = string(body)
 	}
 	var appliedAt time.Time
-	err = tx.QueryRow(ctx, `UPDATE torrent_contents SET video_source=$2,release_attributes=$3::jsonb,tsv=$5::tsvector,updated_at=clock_timestamp() WHERE id=$1 AND updated_at=$4 RETURNING updated_at`, e.TargetID, e.After.VideoSource, raw, e.UpdatedAt, e.After.Tsv).Scan(&appliedAt)
+	err = tx.QueryRow(ctx, `UPDATE torrent_contents SET video_source=$2,release_attributes=$3::jsonb,tsv=$5::tsvector,video_codec=$6,updated_at=clock_timestamp() WHERE id=$1 AND updated_at=$4 RETURNING updated_at`, e.TargetID, e.After.VideoSource, raw, e.UpdatedAt, e.After.Tsv, e.After.VideoCodec).Scan(&appliedAt)
 	if err != nil {
 		return "", err
 	}
@@ -361,6 +411,19 @@ func repairApplications(ctx context.Context, tx pgx.Tx, hash protocol.ID, old, n
 				rows.Close()
 				return nil, nil, ErrChanged
 			}
+			var codec model.NullVideoCodec
+			// Historical snapshots may omit this nullable field, which means
+			// unknown. A stored conflicting codec is never rewritten.
+			if value := snapshot["videoCodec"]; len(value) > 0 {
+				if json.Unmarshal(value, &codec) != nil {
+					rows.Close()
+					return nil, nil, ErrChanged
+				}
+			}
+			if !equal(codec, old.VideoCodec) {
+				rows.Close()
+				return nil, nil, ErrChanged
+			}
 			before[hex.EncodeToString(key)] = raw
 			var oldAttributes *model.ReleaseAttributes
 			if value := snapshot["releaseAttributes"]; len(value) > 0 {
@@ -375,6 +438,8 @@ func repairApplications(ctx context.Context, tx pgx.Tx, hash protocol.ID, old, n
 			}
 			value, _ := json.Marshal(new.VideoSource)
 			snapshot["videoSource"] = value
+			value, _ = json.Marshal(new.VideoCodec)
+			snapshot["videoCodec"] = value
 			if new.ReleaseAttributes == nil {
 				delete(snapshot, "releaseAttributes")
 			} else {
@@ -471,7 +536,7 @@ func rollbackEntry(ctx context.Context, tx pgx.Tx, key []byte, e Entry, write bo
 		body, _ := json.Marshal(e.Before.ReleaseAttributes)
 		raw = string(body)
 	}
-	_, err = tx.Exec(ctx, `UPDATE torrent_contents SET video_source=$2,release_attributes=$3::jsonb,tsv=$4::tsvector,updated_at=clock_timestamp() WHERE id=$1`, e.TargetID, e.Before.VideoSource, raw, e.Before.Tsv)
+	_, err = tx.Exec(ctx, `UPDATE torrent_contents SET video_source=$2,release_attributes=$3::jsonb,tsv=$4::tsvector,video_codec=$5,updated_at=clock_timestamp() WHERE id=$1`, e.TargetID, e.Before.VideoSource, raw, e.Before.Tsv, e.Before.VideoCodec)
 	if err != nil {
 		return "", err
 	}
@@ -480,7 +545,7 @@ func rollbackEntry(ctx context.Context, tx pgx.Tx, key []byte, e Entry, write bo
 }
 
 func fields(tc model.TorrentContent) Fields {
-	return Fields{Tsv: tsv(tc), VideoSource: tc.VideoSource, ReleaseAttributes: tc.ReleaseAttributes}
+	return Fields{Tsv: tsv(tc), VideoSource: tc.VideoSource, VideoCodec: tc.VideoCodec, ReleaseAttributes: tc.ReleaseAttributes}
 }
 
 func tsv(tc model.TorrentContent) *string {

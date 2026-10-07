@@ -182,6 +182,9 @@ func TestPostgresRepairJournalFailureRollsBackFields(t *testing.T) {
 	var raw []byte
 	require.NoError(t, pool.QueryRow(ctx, `SELECT release_attributes FROM torrent_contents`).Scan(&raw))
 	require.Empty(t, raw)
+	var codec model.NullVideoCodec
+	require.NoError(t, pool.QueryRow(ctx, `SELECT video_codec FROM torrent_contents`).Scan(&codec))
+	require.False(t, codec.Valid, "journal failure must roll back the codec too")
 }
 
 func TestPostgresRepairQualifiedProtectionRefusesFreezeAndInterveningApply(t *testing.T) {
