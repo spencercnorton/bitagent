@@ -46,6 +46,7 @@ func TestPostgresNamePredicateMatchesPureDecision(t *testing.T) {
 	p, err := New(Config{Enabled: true, ExcludedInfoHashes: []string{excluded.String()}})
 	require.NoError(t, err)
 	names := []string{"Synthetic.Ordinary.2026", "Amélie.2001", "テスト.2026", "테스트.2026", "Άλφα.2026", "Synthetic.测试.2026", "Synthetic.Фильм.2026", "English.Dub.中字.2026", "", "\u3000\u0085", "Fetish.XXX.2026", "F.E.T.I.S.H_X-X-X.2026", "Fetish.p0rn", "Fetish.S3X", "Fetish.Fetish.2026", "xXx.2002.1080p", "Sex.and.The.City.2008", "Fetish.2005.Drama", "Sussex.Hardcore.2026", "Fetishé.XXX", "ſex.Fetish", "Analytical.XXX", "Porn.Porno.2026", "Fetish/XXX", "Fetish\u3000XXX"}
+	names = append(names, "FetishXXX", "FetishPorn", "PornXXX", "PornoXXX", "South.Park.Cartman.Anal.Probe.XXX", "MILF.Adult.Comedy.2018", "Porno.Adult.Comedy.2019", "Hentai.Documentary.XXX", "GapingAnal.XXX")
 	spec := p.Specification()
 	for _, spans := range [][]RuneRange{spec.Han, spec.Cyrillic} {
 		for _, span := range spans {

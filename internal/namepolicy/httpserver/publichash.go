@@ -96,6 +96,7 @@ AND lower(btrim(public_privacy.source,?))='qbittorrent' AND lower(btrim(public_p
 		if decision, ok := allowed[hash]; ok {
 			results[i].Eligible, results[i].Reason = decision.Eligible, decision.Reason
 		}
+		b.policy.Observe("public_hash_check", namepolicy.Decision{Eligible: results[i].Eligible, Reason: results[i].Reason, Version: namepolicy.Version})
 	}
 	// Result positions alone bind responses to the caller's request. Names and
 	// hashes, including missing or suppressed records, are never echoed.

@@ -35,6 +35,15 @@ func (p *Policy) AllowsSQL(nameColumn, hashColumn string) (string, []any) {
 	spec := p.Specification()
 	name := "(" + nameColumn + ` COLLATE "C")`
 	args := []any{spec.Whitespace, runeClass(append(spec.Han, spec.Cyrillic...))}
+	patterns := make(map[string]string, len(spec.AdultTerms))
+	for _, term := range spec.AdultTerms {
+		patterns[term.Name] = term.Pattern
+	}
+	pairs := make([]string, 0, len(spec.ExplicitAdultPairs))
+	for _, pair := range spec.ExplicitAdultPairs {
+		pairs = append(pairs, "("+name+" ~ ? AND "+name+" ~ ?)")
+		args = append(args, patterns[pair[0]], patterns[pair[1]])
+	}
 	strong := make([]string, 0, len(spec.AdultTerms))
 	for _, term := range spec.AdultTerms {
 		if term.Strong {
@@ -50,7 +59,11 @@ func (p *Policy) AllowsSQL(nameColumn, hashColumn string) (string, []any) {
 	// Only scalar name predicates are in CASE. The independent serving joins
 	// remain outside it. Missing/script cases avoid every composite-token regex;
 	// ordinary names with no strong anchor avoid the distinct-term tally.
-	sql := "CASE WHEN COALESCE(btrim(" + nameColumn + ",?), '')='' THEN FALSE WHEN " + name + " ~ ? THEN FALSE WHEN (" +
+	sql := "CASE WHEN COALESCE(btrim(" + nameColumn + ",?), '')='' THEN FALSE WHEN " + name + " ~ ? THEN FALSE"
+	if len(pairs) > 0 {
+		sql += " WHEN (" + strings.Join(pairs, " OR ") + ") THEN FALSE"
+	}
+	sql += " WHEN (" +
 		strings.Join(strong, " OR ") + ") THEN (" + strings.Join(counts, " + ") + ") < " +
 		fmt.Sprint(spec.MinimumDistinctAdultTerms) + " ELSE TRUE END"
 	if excluded := p.ExcludedHashes(); len(excluded) > 0 {
