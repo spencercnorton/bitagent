@@ -14,7 +14,7 @@ func (p *Policy) Observe(stage string, d Decision) {
 		return
 	}
 	switch stage {
-	case "crawler_acquisition", "crawler_existing", "import", "processor", "classifier", "model", "model_dispatch", "task_enqueue", "model_apply", "private_name_check", "public_hash_check", "public_grab":
+	case "crawler_acquisition", "crawler_existing", "import", "processor", "classifier", "model", "model_dispatch", "task_enqueue", "model_apply", "private_name_check", "public_hash_check", "public_grab", "seeds_dispatch", "seeds_persist":
 	default:
 		stage = "other"
 	}

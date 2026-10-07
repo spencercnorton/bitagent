@@ -71,6 +71,8 @@ type Scraper struct {
 	cfg     Config
 	metrics *Metrics
 	logger  *zap.SugaredLogger
+	admit   func(context.Context, [][]byte, func([][]byte) error) error
+	scrape  func(context.Context, string, []infohash.T) ([]scrapeItem, error)
 }
 
 // NewScraper builds a Scraper. metrics may be nil (the CLI path constructs its
@@ -81,9 +83,11 @@ func NewScraper(cfg Config, metrics *Metrics, logger *zap.SugaredLogger) *Scrape
 
 // ScrapeBatch scrapes hashes across the tracker pool concurrently and returns
 // the best outcome per hash, keyed by the raw 20-byte info_hash string. Every
-// input hash gets an entry (unknown outcomes included) so the caller can record
-// a checked_at for all of them.
-func (s *Scraper) ScrapeBatch(ctx context.Context, hashes [][]byte) map[string]*ScrapeOutcome {
+// admitted input hash gets an entry (unknown outcomes included). Denied hashes
+// are omitted, and failed admission is an error instead of a new unknown fact.
+func (s *Scraper) ScrapeBatch(ctx context.Context, hashes [][]byte) (map[string]*ScrapeOutcome, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	ihs := make([]infohash.T, len(hashes))
 	for i, h := range hashes {
 		var t infohash.T
@@ -99,23 +103,39 @@ func (s *Scraper) ScrapeBatch(ctx context.Context, hashes [][]byte) map[string]*
 	var mu sync.Mutex
 	sem := make(chan struct{}, max(1, s.cfg.Concurrency))
 	var wg sync.WaitGroup
+	var admissionErr error
+	withheld := make(map[string]bool)
+	reportAdmissionError := func(err error) {
+		mu.Lock()
+		if admissionErr == nil {
+			admissionErr = err
+		}
+		mu.Unlock()
+		cancel()
+	}
 
 	for _, url := range s.cfg.TrackerUrls {
 		select {
 		case <-ctx.Done():
 			wg.Wait()
-			return out
+			if admissionErr == nil {
+				admissionErr = ctx.Err()
+			}
+			return out, admissionErr
 		case sem <- struct{}{}:
 		}
 		wg.Add(1)
 		go func(trackerURL string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s.scrapeOneTracker(ctx, trackerURL, ihs, hashes, out, &mu)
+			s.scrapeOneTracker(ctx, trackerURL, ihs, hashes, out, &mu, packetAdmission{fail: reportAdmissionError, withheld: withheld})
 		}(url)
 	}
 	wg.Wait()
-	return out
+	if admissionErr == nil {
+		admissionErr = ctx.Err()
+	}
+	return out, admissionErr
 }
 
 // scrapeOneTracker connects to a single tracker and scrapes every chunk of the
@@ -129,33 +149,53 @@ func (s *Scraper) scrapeOneTracker(
 	hashes [][]byte,
 	out map[string]*ScrapeOutcome,
 	mu *sync.Mutex,
+	admission packetAdmission,
 ) {
-	cl, err := tracker.NewClient(trackerURL, tracker.NewClientOpts{})
-	if err != nil {
-		s.trackerResult(trackerURL, "error")
-		s.logger.Debugw("seeds: tracker client init failed", "tracker", trackerURL, "err", err)
-		return
-	}
-	defer cl.Close()
-
+	var connected chunkScrapeFunc
+	var closeClient func()
+	defer func() {
+		if closeClient != nil {
+			closeClient()
+		}
+	}()
 	// scrape wraps the anacrolix client with our per-packet timeout and adapts
 	// its result into the network-free scrapeItem slice, so the chunk loop's
 	// retry / continue / abandon policy lives in the testable
 	// scrapeTrackerChunks.
 	scrape := func(ctx context.Context, chunk []infohash.T) ([]scrapeItem, error) {
+		if s.scrape != nil {
+			return s.scrape(ctx, trackerURL, chunk)
+		}
 		cctx, cancel := context.WithTimeout(ctx, s.cfg.ScrapeTimeout)
 		defer cancel()
-		resp, err := cl.Scrape(cctx, chunk)
-		if err != nil {
-			return nil, err
+		if connected == nil {
+			cl, err := tracker.NewClient(trackerURL, tracker.NewClientOpts{})
+			if err != nil {
+				return nil, err
+			}
+			closeClient = func() { _ = cl.Close() }
+			connected = func(ctx context.Context, chunk []infohash.T) ([]scrapeItem, error) {
+				resp, err := cl.Scrape(ctx, chunk)
+				if err != nil {
+					return nil, err
+				}
+				items := make([]scrapeItem, len(resp))
+				for i := range resp {
+					items[i] = scrapeItem{Seeders: resp[i].Seeders, Leechers: resp[i].Leechers, Completed: resp[i].Completed}
+				}
+				return items, nil
+			}
 		}
-		items := make([]scrapeItem, len(resp))
-		for i := range resp {
-			items[i] = scrapeItem{Seeders: resp[i].Seeders, Leechers: resp[i].Leechers, Completed: resp[i].Completed}
-		}
-		return items, nil
+		return connected(cctx, chunk)
 	}
-	s.scrapeTrackerChunks(ctx, trackerURL, ihs, hashes, out, mu, scrape)
+	s.scrapeTrackerChunks(ctx, trackerURL, ihs, hashes, out, mu, scrape, admission)
+}
+
+// A denial is monotonic within one batch. A delayed earlier tracker response
+// cannot recreate a withheld hash; a later ordinary batch may recheck it.
+type packetAdmission struct {
+	fail     func(error)
+	withheld map[string]bool
 }
 
 const (
@@ -202,7 +242,12 @@ func (s *Scraper) scrapeTrackerChunks(
 	out map[string]*ScrapeOutcome,
 	mu *sync.Mutex,
 	scrape chunkScrapeFunc,
+	admissions ...packetAdmission,
 ) {
+	var admission packetAdmission
+	if len(admissions) > 0 {
+		admission = admissions[0]
+	}
 	limit := s.cfg.MaxHashesPerPacket
 	if limit <= 0 {
 		limit = 70
@@ -215,15 +260,65 @@ func (s *Scraper) scrapeTrackerChunks(
 			return
 		}
 		end := min(start+limit, len(ihs))
-		chunk := ihs[start:end]
 
 		var items []scrapeItem
 		var err error
+		var admitted [][]byte
 		for attempt := 0; attempt <= chunkScrapeRetries; attempt++ {
 			if ctx.Err() != nil {
 				return
 			}
-			items, err = scrape(ctx, chunk)
+			call := func(allowed [][]byte) error {
+				allowedSet := map[string]bool{}
+				for _, h := range allowed {
+					allowedSet[string(h)] = true
+				}
+				mu.Lock()
+				for _, h := range hashes[start:end] {
+					if !allowedSet[string(h)] {
+						if admission.withheld != nil {
+							admission.withheld[string(h)] = true
+						}
+						delete(out, string(h))
+					}
+				}
+				admitted = nil
+				filtered := make([]infohash.T, 0, len(allowed))
+				for _, h := range allowed {
+					if admission.withheld[string(h)] {
+						continue
+					}
+					admitted = append(admitted, h)
+					var id infohash.T
+					copy(id[:], h)
+					filtered = append(filtered, id)
+				}
+				mu.Unlock()
+				if len(filtered) == 0 {
+					return nil
+				}
+				items, err = scrape(ctx, filtered)
+				return err
+			}
+			if s.admit == nil {
+				err = call(hashes[start:end])
+			} else {
+				// Source locks serialize overlapping hashes across tracker fanout.
+				// Allow their bounded queue to drain; each actual network call still
+				// has the unchanged ScrapeTimeout, concurrency and retry limits.
+				queueBudget := s.cfg.ScrapeTimeout*time.Duration(max(1, s.cfg.Concurrency)+1) + 2*time.Second
+				packetCtx, packetCancel := context.WithTimeout(ctx, queueBudget)
+				var networkErr error
+				gateErr := s.admit(packetCtx, hashes[start:end], func(allowed [][]byte) error { networkErr = call(allowed); return networkErr })
+				packetCancel()
+				if gateErr != nil && networkErr == nil {
+					if admission.fail != nil {
+						admission.fail(gateErr)
+					}
+					return
+				}
+				err = networkErr
+			}
 			if err == nil {
 				break
 			}
@@ -247,14 +342,24 @@ func (s *Scraper) scrapeTrackerChunks(
 			continue
 		}
 
+		if len(admitted) == 0 {
+			continue
+		}
 		consecutiveFails = 0
 		scrapedAny = true
 		s.trackerResult(trackerURL, "ok")
 
 		mu.Lock()
-		for i := 0; i < len(items) && i < len(chunk); i++ {
+		for i := 0; i < len(items) && i < len(admitted); i++ {
 			it := items[i]
-			mergeResult(out[string(hashes[start+i])], trackerURL, it.Seeders, it.Leechers, it.Completed)
+			key := string(admitted[i])
+			if admission.withheld[key] {
+				continue
+			}
+			if out[key] == nil {
+				out[key] = &ScrapeOutcome{}
+			}
+			mergeResult(out[key], trackerURL, it.Seeders, it.Leechers, it.Completed)
 		}
 		mu.Unlock()
 

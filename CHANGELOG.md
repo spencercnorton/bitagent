@@ -9,6 +9,10 @@
   responses/fences after denial, and offer a bounded internal name-only check.
 - Normalize independent qB privacy source/category facts consistently at
   direct, queued and final application gates, including padded Unicode space.
+- Keep known private hashes out of public tracker requests. Apply the opt-in
+  release-name and current XXX policy before seed selection, each bounded
+  packet and atomic ledger/source/count/liveness persistence, including CLI
+  refreshes. Retain public wanted eligibility and existing scrape limits.
 
 - Preserve tracker-positive history and standing coverage for leechers-only
   swarms, matching the existing seeder-or-leecher live signal. Keep known zero

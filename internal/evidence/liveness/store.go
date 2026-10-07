@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 )
@@ -418,6 +419,23 @@ func (s *Store) MarkAliveBatch(ctx context.Context, infoHashes [][]byte, observe
 	if err != nil {
 		return 0, fmt.Errorf("liveness: acquire pool: %w", err)
 	}
+	return markAliveBatch(ctx, pool, infoHashes, observedAt, source)
+}
+
+// MarkAliveBatchTx retains the existing revival transition in the caller's
+// source-admission transaction; no separate post-commit fact can escape it.
+func (s *Store) MarkAliveBatchTx(ctx context.Context, tx pgx.Tx, hashes [][]byte, observedAt time.Time, source string) (int64, error) {
+	if len(hashes) == 0 {
+		return 0, nil
+	}
+	return markAliveBatch(ctx, tx, hashes, observedAt, source)
+}
+
+type batchExecer interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func markAliveBatch(ctx context.Context, db batchExecer, infoHashes [][]byte, observedAt time.Time, source string) (int64, error) {
 	const q = `
 update torrent_liveness set
   status                = 'alive',
@@ -431,7 +449,7 @@ update torrent_liveness set
 where info_hash = any($1)
   and status <> 'alive'
   and not (status = 'dead' and next_revalidate_at is null)`
-	ct, err := pool.Exec(ctx, q, infoHashes, observedAt, source)
+	ct, err := db.Exec(ctx, q, infoHashes, observedAt, source)
 	if err != nil {
 		return 0, fmt.Errorf("liveness: mark alive batch: %w", err)
 	}
@@ -460,6 +478,19 @@ func (s *Store) RecordSuspectBatch(ctx context.Context, infoHashes [][]byte, obs
 	if err != nil {
 		return 0, fmt.Errorf("liveness: acquire pool: %w", err)
 	}
+	return recordSuspectBatch(ctx, pool, infoHashes, observedAt)
+}
+
+// RecordSuspectBatchTx retains only the existing remote-observation transition
+// in the same source-admission transaction as the seed ledger and counts.
+func (s *Store) RecordSuspectBatchTx(ctx context.Context, tx pgx.Tx, hashes [][]byte, observedAt time.Time) (int64, error) {
+	if len(hashes) == 0 {
+		return 0, nil
+	}
+	return recordSuspectBatch(ctx, tx, hashes, observedAt)
+}
+
+func recordSuspectBatch(ctx context.Context, db batchExecer, infoHashes [][]byte, observedAt time.Time) (int64, error) {
 	const q = `
 insert into torrent_liveness (
   info_hash, status, suspect_first_seen_at,
@@ -485,7 +516,7 @@ on conflict (info_hash) do update set
 where torrent_liveness.last_qb_state is null
   and not (torrent_liveness.status = 'alive'
 	and coalesce(torrent_liveness.alive_source, '') in ('qb_state', 'arr_webhook_import'))`
-	ct, err := pool.Exec(ctx, q, infoHashes, observedAt)
+	ct, err := db.Exec(ctx, q, infoHashes, observedAt)
 	if err != nil {
 		return 0, fmt.Errorf("liveness: record suspect batch: %w", err)
 	}

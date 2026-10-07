@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spencercnorton/bitagent/internal/evidence/liveness"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -21,7 +22,8 @@ type Params struct {
 	Config   Config
 	Pool     lazy.Lazy[*pgxpool.Pool]
 	Metrics  *Metrics
-	Liveness *liveness.Store `optional:"true"`
+	Liveness *liveness.Store    `optional:"true"`
+	Names    *namepolicy.Policy `optional:"true"`
 	Logger   *zap.SugaredLogger
 }
 
@@ -39,7 +41,7 @@ func New(p Params) Result {
 	}
 	w := &seedsWorker{
 		cfg:     p.Config,
-		runner:  NewRunner(p.Config, p.Pool, p.Metrics, livenessRec, p.Logger.Named("seeds")),
+		runner:  NewRunner(p.Config, p.Pool, p.Metrics, livenessRec, p.Logger.Named("seeds"), p.Names),
 		metrics: p.Metrics,
 		logger:  p.Logger.Named("seeds"),
 	}
