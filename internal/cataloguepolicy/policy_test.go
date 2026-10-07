@@ -1,6 +1,7 @@
 package cataloguepolicy
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -25,6 +26,14 @@ func TestEnglishClaimsSeparateTitleOriginalAndTracks(t *testing.T) {
 		{"Film.2031.1080p.[English Subs]", false, true, "unknown"},
 		{"Show.S01E01.1080p.[Audio only: Japanese; No English subtitles]", true, true, "ineligible_review"},
 		{"Film.2031.1080p.[No English audio]", false, false, "ineligible_review"},
+		{"Film.2031.1080p.No.English.Dub", false, false, "ineligible_review"},
+		{"Film.2031.1080p.No.English.Dubbed", false, false, "ineligible_review"},
+		{"Film.2031.1080p.[Audio: no English]", false, false, "ineligible_review"},
+		{"Film.2031.1080p.[Audio: without English]", false, false, "ineligible_review"},
+		{"Film.2031.1080p.[Audio: English unavailable]", false, false, "ineligible_review"},
+		{"Show.S01E01.1080p.[Subtitles: no English]", true, true, "unknown"},
+		{"Show.S01E01.1080p.[Audio only: Japanese; Subtitles: no English]", true, true, "ineligible_review"},
+		{"Film.2031.1080p.[Audio: no English, English]", false, false, "conflicting"},
 		{"Film.2031.1080p.[English Audio; No English audio]", false, false, "conflicting"},
 		{"English Audio", false, false, "unknown"},
 		{"Show.S01E01.1080p.Dubbed.Multi.Sub", true, true, "unknown"},
@@ -97,4 +106,41 @@ func TestObservationHistoryIsBoundedAndSourceDeduplicated(t *testing.T) {
 	got := mergeObservations(all, all, now, cfg)
 	require.Len(t, got, maxObservations)
 	require.Equal(t, all[0].ID, got[0].ID)
+}
+
+func TestBoundedHistoryPreservesRecentPositiveVeto(t *testing.T) {
+	now := time.Date(2031, 1, 8, 12, 0, 0, 0, time.UTC)
+	cfg := DefaultAvailabilityConfig()
+	negative := make([]Observation, 100)
+	for i := range negative {
+		negative[i] = newObservation("tracker", now.Add(-time.Duration(i+1)*5*time.Minute), "zero", true, cfg)
+		negative[i].ID = fmt.Sprintf("negative:%d", i)
+	}
+	positive := newObservation("public_qb", now.Add(-36*time.Hour), "positive", true, cfg)
+	for _, fromPrevious := range []bool{false, true} {
+		t.Run(fmt.Sprint(fromPrevious), func(t *testing.T) {
+			current := append([]Observation(nil), negative...)
+			var previous []Observation
+			if fromPrevious {
+				previous = []Observation{positive}
+			} else {
+				current = append(current, positive)
+			}
+			got := mergeObservations(current, previous, now, cfg)
+			require.Len(t, got, maxObservations)
+			require.Equal(t, negative[0].ID, got[0].ID)
+			require.Equal(t, positive.ID, got[maxObservations-1].ID)
+			d := EvaluateAvailability(got, now, cfg)
+			require.Equal(t, "fresh_known_zero", d.State)
+			require.Equal(t, "recent_positive_history_protects", d.Reason)
+		})
+	}
+	for _, rejected := range []Observation{
+		newObservation("public_qb", now.Add(-8*24*time.Hour), "positive", true, cfg),
+		newObservation("public_qb", now.Add(time.Hour), "positive", true, cfg),
+		newObservation("public_qb", now.Add(-36*time.Hour), "positive", false, cfg),
+	} {
+		got := mergeObservations(negative, []Observation{rejected}, now, cfg)
+		require.Equal(t, "suspected_unavailable", EvaluateAvailability(got, now, cfg).State)
+	}
 }

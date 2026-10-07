@@ -29,7 +29,10 @@ prove English in this contract. Explicit English audio qualifies movies and
 shows. The optional anime subtitle preference is a draft input; it is disabled
 unless the flag is supplied. Missing, contradictory and mixed pack evidence
 remains unknown or reviewable. Multi-member packs require member evidence and
-file lists over 256 members abstain. An explicit negative requires an advertised
+include every supported video format. Original header/member claims remain in
+the receipt; an explicit negative or contradictory header can veto a member
+positive, while a positive header cannot supply missing pack-member evidence.
+File lists over 256 members abstain. An explicit negative requires an advertised
 absence or an audio-only list; a foreign-language dub alone cannot prove that
 another English track is absent. No result authorizes language enforcement.
 
@@ -49,6 +52,8 @@ protection, at least two observations separated by at least one hour over at
 least four hours. These are shadow inputs, not an accepted production risk
 budget. At most 64 original observations are retained per hash, with a seven-day
 history horizon. Duplicate reads do not manufacture repeated observations.
+The newest qualified recent positive is preserved within that cap, including
+when later client stalls fill the newest-observation window.
 Re-evaluation after negative evidence expires returns unknown; a stored receipt
 is historical evidence and must never be treated as a permanent exclusion.
 

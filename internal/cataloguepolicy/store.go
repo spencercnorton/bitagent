@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/model"
 )
 
 const maxFiles = 256
@@ -115,7 +116,7 @@ func (s *Store) Evaluate(ctx context.Context, hash []byte, write, allowAnimeSubs
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return zero, err
 	}
-	in, err := loadInput(ctx, tx, hash, cfg)
+	in, err := loadInput(ctx, tx, hash, now, cfg)
 	if err != nil {
 		return zero, err
 	}
@@ -140,25 +141,30 @@ func (s *Store) Evaluate(ctx context.Context, hash []byte, write, allowAnimeSubs
 	evidence := []EnglishEvidence{ParseEnglishClaims(in.Name, "release_name", in.UpdatedAt)}
 	media := []EnglishEvidence{}
 	for _, f := range in.Files {
-		lower := strings.ToLower(f.Path)
-		if strings.HasSuffix(lower, ".mkv") || strings.HasSuffix(lower, ".mp4") || strings.HasSuffix(lower, ".avi") || strings.HasSuffix(lower, ".ts") || strings.HasSuffix(lower, ".m2ts") {
+		ft := (model.TorrentFile{Path: f.Path}).FileType()
+		if (ft.Valid && ft.FileType == model.FileTypeVideo) || strings.HasSuffix(strings.ToLower(f.Path), ".m2ts") {
 			media = append(media, ParseEnglishClaims(f.Path, "media_file_name", f.UpdatedAt))
 		}
 	}
 	// Multi-member packs require evidence for each member. For a single media
 	// file the release claim and member claim form one advertised release.
-	if len(media) > 1 {
-		evidence = media
-	} else if len(media) == 1 {
-		media[0].Audio = combine(evidence[0].Audio, media[0].Audio)
-		media[0].Subtitles = combine(evidence[0].Subtitles, media[0].Subtitles)
-		media[0].Claims = append(evidence[0].Claims, media[0].Claims...)
-		evidence = append(evidence, media[0])
-		// Keep both original provenance receipts; evaluate the combined member.
-	}
+	evidence = append(evidence, media...)
 	eng := EvaluateEnglish(evidence, in.IsAnime, allowAnimeSubs, in.IncompleteFiles)
-	if len(media) == 1 {
-		eng = EvaluateEnglish(media, in.IsAnime, allowAnimeSubs, in.IncompleteFiles)
+	if len(media) > 0 {
+		combined := append([]EnglishEvidence(nil), media...)
+		for i := range combined {
+			if len(media) == 1 {
+				combined[i].Audio = combine(evidence[0].Audio, media[i].Audio)
+				combined[i].Subtitles = combine(evidence[0].Subtitles, media[i].Subtitles)
+			} else {
+				// A positive pack header cannot qualify an unadvertised member.
+				// Explicit absence or contradiction in the header still vetoes
+				// conflicting member claims, with original provenance retained.
+				combined[i].Audio = packHeaderVeto(evidence[0].Audio, media[i].Audio)
+				combined[i].Subtitles = packHeaderVeto(evidence[0].Subtitles, media[i].Subtitles)
+			}
+		}
+		eng = EvaluateEnglish(combined, in.IsAnime, allowAnimeSubs, in.IncompleteFiles)
 		eng.Evidence = evidence
 	}
 	availability := EvaluateAvailability(in.Observations, now, cfg)
@@ -182,7 +188,14 @@ func (s *Store) Evaluate(ctx context.Context, hash []byte, write, allowAnimeSubs
 	return receipt, nil
 }
 
-func loadInput(ctx context.Context, tx pgx.Tx, hash []byte, cfg AvailabilityConfig) (Input, error) {
+func packHeaderVeto(header, member Track) Track {
+	if header == TrackConflict || (header == TrackNo && member == TrackYes) {
+		return TrackConflict
+	}
+	return member
+}
+
+func loadInput(ctx context.Context, tx pgx.Tx, hash []byte, now time.Time, cfg AvailabilityConfig) (Input, error) {
 	in := Input{InfoHash: hash, Files: []fileInput{}, Observations: []Observation{}}
 	var private bool
 	var count int
@@ -260,8 +273,17 @@ func loadInput(ctx context.Context, tx pgx.Tx, hash []byte, cfg AvailabilityConf
 	if err != nil {
 		return in, err
 	}
-	rows, err = tx.Query(ctx, `select id,observed_at,coalesce(raw_payload->>'state',''),coalesce(raw_payload->>'network_healthy','false') from label_evidence
-where info_hash=$1 and source='qbittorrent' and source_kind='qb_state_observation' and lower(trim(coalesce(category,''))) not in ('private','bitgrab') order by observed_at desc,id desc limit $2`, hash, maxObservations)
+	// Reserve source access to the latest recent public positive even when a
+	// noisy client fills the newest-N history with later stalled observations.
+	// Both branches are bounded; mergeObservations deduplicates and caps the
+	// retained receipt while preserving this positive veto.
+	rows, err = tx.Query(ctx, `(select id,observed_at,coalesce(raw_payload->>'state',''),coalesce(raw_payload->>'network_healthy','false') from label_evidence
+where info_hash=$1 and source='qbittorrent' and source_kind='qb_state_observation' and lower(trim(coalesce(category,''))) not in ('private','bitgrab') order by observed_at desc,id desc limit $2)
+union
+(select id,observed_at,coalesce(raw_payload->>'state',''),coalesce(raw_payload->>'network_healthy','false') from label_evidence
+where info_hash=$1 and source='qbittorrent' and source_kind='qb_state_observation' and lower(trim(coalesce(category,''))) not in ('private','bitgrab')
+and lower(coalesce(raw_payload->>'state','')) in ('seeding','uploading','downloading','forcedup','stalledup') and observed_at <= $3 and observed_at > $4
+order by observed_at desc,id desc limit 1)`, hash, maxObservations, now, now.Add(-cfg.RecentPositiveFor))
 	if err != nil {
 		return in, err
 	}
@@ -317,6 +339,16 @@ func mergeObservations(current, previous []Observation, now time.Time, cfg Avail
 		return out[i].ObservedAt.After(out[j].ObservedAt)
 	})
 	if len(out) > maxObservations {
+		positive := -1
+		for i, o := range out {
+			if o.Class == "positive" && o.Qualified && o.ID != "" && o.Source != "" && !o.ObservedAt.IsZero() && o.ExpiresAt.After(o.ObservedAt) && now.Sub(o.ObservedAt) < cfg.RecentPositiveFor {
+				positive = i
+				break
+			}
+		}
+		if positive >= maxObservations {
+			out[maxObservations-1] = out[positive]
+		}
 		out = out[:maxObservations]
 	}
 	return out

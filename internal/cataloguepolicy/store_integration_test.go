@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/model"
 	migrationssql "github.com/spencercnorton/bitagent/migrations"
 	"github.com/stretchr/testify/require"
 )
@@ -174,4 +175,67 @@ insert into label_evidence(info_hash,source,source_kind,category,observed_at,raw
 	require.Len(t, candidates, 1)
 	_, err = store.Candidates(ctx, []byte{}, 129)
 	require.Error(t, err)
+}
+
+func TestPostgresPackIncludesSupportedVideoMembersAndHeaderVeto(t *testing.T) {
+	pool := policyTestPool(t)
+	ctx := context.Background()
+	store := NewStore(pool)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	extensions := append(append([]string(nil), model.FileTypeVideo.Extensions()...), "m2ts")
+	for i, ext := range extensions {
+		t.Run(ext, func(t *testing.T) {
+			hash := make([]byte, 20)
+			hash[19] = byte(i + 20)
+			_, err := pool.Exec(ctx, `insert into torrents values($1,'Synthetic.Pack.2031.1080p.English.Audio',$2,false,2);
+insert into torrent_files values($1,0,$3,$2),($1,1,$4,$2)`, hash, now, "A.2031.1080p.English.Audio."+ext, "B.2031.1080p.Japanese.Audio.Only."+ext)
+			require.NoError(t, err)
+			r, err := store.Evaluate(ctx, hash, false, false, now, DefaultAvailabilityConfig())
+			require.NoError(t, err)
+			require.Equal(t, "mixed_review", r.English.State)
+			require.Len(t, r.English.Evidence, 3, "retain header and both original member claims")
+			_, err = pool.Exec(ctx, `update torrents set name='Synthetic.Pack.2031.1080p.No.English.Audio' where info_hash=$1;
+update torrent_files set path=$2 where info_hash=$1 and index=1`, hash, "B.2031.1080p.English.Audio."+ext)
+			require.NoError(t, err)
+			r, err = store.Evaluate(ctx, hash, false, false, now, DefaultAvailabilityConfig())
+			require.NoError(t, err)
+			require.Equal(t, "conflicting", r.English.State)
+			require.Equal(t, TrackNo, r.English.Evidence[0].Audio)
+			require.Equal(t, TrackYes, r.English.Evidence[1].Audio)
+			_, err = pool.Exec(ctx, `update torrents set name='Synthetic.Pack.2031.1080p.English.Audio' where info_hash=$1;
+update torrent_files set path=$2 where info_hash=$1`, hash, "Unadvertised.2031.1080p."+ext)
+			require.NoError(t, err)
+			r, err = store.Evaluate(ctx, hash, false, false, now, DefaultAvailabilityConfig())
+			require.NoError(t, err)
+			require.Equal(t, "unknown", r.English.State, "a positive header cannot qualify missing member evidence")
+		})
+	}
+}
+
+func TestPostgresRecentPublicPositiveSurvivesHistoryCapAndReceiptMerge(t *testing.T) {
+	pool := policyTestPool(t)
+	ctx := context.Background()
+	store := NewStore(pool)
+	cfg := DefaultAvailabilityConfig()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	hash := make([]byte, 20)
+	hash[19] = 90
+	_, err := pool.Exec(ctx, `insert into torrents values($1,'Synthetic.Film.2031.1080p',$2,false,1);
+insert into label_evidence(info_hash,source,source_kind,category,observed_at,raw_payload) values
+($1,'qbittorrent','qb_state_observation','movie',$3,'{"state":"seeding"}'),
+($1,'qbittorrent','qb_state_observation','private',$4,'{"state":"seeding"}'),
+($1,'qbittorrent','qb_state_observation','movie',$5,'{"state":"seeding"}');
+insert into label_evidence(info_hash,source,source_kind,category,observed_at,raw_payload)
+select $1,'qbittorrent','qb_state_observation','movie',$2::timestamptz - (i*interval '5 minutes' + interval '1 minute'),'{"state":"stalledDL","network_healthy":true}'::jsonb from generate_series(0,63) as s(i)`, hash, now, now.Add(-36*time.Hour), now.Add(-time.Hour), now.Add(time.Hour))
+	require.NoError(t, err)
+	for i := 0; i < 2; i++ {
+		r, err := store.Evaluate(ctx, hash, true, false, now.Add(time.Duration(i)*time.Minute), cfg)
+		require.NoError(t, err)
+		require.Len(t, r.Input.Observations, maxObservations)
+		require.Equal(t, "unknown_stale", r.Availability.State)
+		require.Equal(t, "recent_positive_history_protects", r.Availability.Reason)
+		require.True(t, now.Add(-36*time.Hour).Equal(r.Input.Observations[maxObservations-1].ObservedAt))
+		_, err = pool.Exec(ctx, `delete from label_evidence where info_hash=$1 and observed_at=$2`, hash, now.Add(-36*time.Hour))
+		require.NoError(t, err)
+	}
 }

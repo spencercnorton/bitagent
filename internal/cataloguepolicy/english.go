@@ -46,7 +46,8 @@ var (
 	englishSubs       = regexp.MustCompile(`(?i)\b(?:eng(?:lish)?[ ._-]*(?:subs?|subtitles?)|(?:subs?|subtitles?)[ ._-]+eng(?:lish)?)\b`)
 	trackList         = regexp.MustCompile(`(?i)\b(audio|subs?|subtitles?)([ ._-]+only)?\s*:\s*([^;\]\)]+)`)
 	englishWord       = regexp.MustCompile(`(?i)\b(?:english|eng|en)\b`)
-	noAudio           = regexp.MustCompile(`(?i)\b(?:no[ ._-]+eng(?:lish)?[ ._-]+audio|(?:japanese|jpn|french|german|spanish|hindi)[ ._-]+audio[ ._-]+only)\b`)
+	negatedEnglish    = regexp.MustCompile(`(?i)\b(?:(?:no|not|without|except|excluding)[ ._-]+(?:english|eng|en)|non[ ._-]?(?:english|eng|en)|(?:english|eng|en)[ ._-]+(?:absent|unavailable|excluded|not[ ._-]+(?:available|included|present)))\b`)
+	noAudio           = regexp.MustCompile(`(?i)\b(?:no[ ._-]+eng(?:lish)?[ ._-]+(?:audio|dub(?:bed)?)|(?:japanese|jpn|french|german|spanish|hindi)[ ._-]+audio[ ._-]+only)\b`)
 	noSubs            = regexp.MustCompile(`(?i)\b(?:no[ ._-]+eng(?:lish)?[ ._-]+(?:subs?|subtitles?)|no[ ._-]+(?:subs?|subtitles?))\b`)
 	foreignWord       = regexp.MustCompile(`(?i)\b(?:japanese|jpn|ja|french|fra|fr|german|deu|de|spanish|spa|es|hindi|hin|hi|italian|ita|it|portuguese|por|pt|russian|rus|ru|chinese|zho|zh|korean|kor|ko)\b`)
 )
@@ -76,6 +77,7 @@ func ParseEnglishClaims(name, source string, at time.Time) EnglishEvidence {
 		}
 		positiveText := noAudio.ReplaceAllString(text, "")
 		positiveText = noSubs.ReplaceAllString(positiveText, "")
+		positiveText = negatedEnglish.ReplaceAllString(positiveText, "")
 		for _, m := range englishAudio.FindAllString(positiveText, -1) {
 			add("audio", TrackYes, m)
 		}
@@ -93,7 +95,10 @@ func ParseEnglishClaims(name, source string, at time.Time) EnglishEvidence {
 			if kind != "audio" {
 				kind = "subtitles"
 			}
-			if englishWord.MatchString(m[3]) {
+			if negatedEnglish.MatchString(m[3]) {
+				add(kind, TrackNo, m[0])
+			}
+			if englishWord.MatchString(negatedEnglish.ReplaceAllString(m[3], "")) {
 				add(kind, TrackYes, m[0])
 			} else if m[2] != "" && foreignWord.MatchString(m[3]) {
 				add(kind, TrackNo, m[0])
