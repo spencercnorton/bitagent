@@ -119,7 +119,10 @@ func (gq *genericQuery[T]) groupedPrefixItems() ([]T, bool, error) {
 	}
 	prefix := 512
 	if b.orderBy[0].Column.Table == model.TableNameTorrent && b.orderBy[0].Column.Name == "name" {
-		prefix = 8192
+		prefix = 4096
+		if b.offset > 0 {
+			prefix = 8192
+		}
 	}
 	for ; prefix <= 32768; prefix *= 2 {
 		candidateBuilder := b
