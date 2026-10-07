@@ -172,6 +172,15 @@ func resolveStructNode(
 					break
 				}
 			}
+			// Preserve named string values before building diagnostic nodes.
+			// Such types may intentionally redact String/JSON output while the
+			// typed application configuration retains the original credential.
+			if field.Type.Kind() == reflect.String {
+				v := reflect.ValueOf(rv)
+				if v.IsValid() && v.Kind() == reflect.String && v.Type() != field.Type && v.Type().ConvertibleTo(field.Type) {
+					rv = v.Convert(field.Type).Interface()
+				}
+			}
 
 			children[fieldKey] = ResolvedNode{
 				Spec: Spec{
