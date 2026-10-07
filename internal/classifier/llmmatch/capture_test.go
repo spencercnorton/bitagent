@@ -124,7 +124,7 @@ func TestOpenRouterCaptureFreezesProviderPinAsAuditEvidence(t *testing.T) {
 	}{
 		{
 			task:       llmcapture.TaskMatcherExtract,
-			contractID: "llmmatch-chat-extract-v1",
+			contractID: "llmmatch-chat-extract-v2",
 			system:     ExtractPrompt(),
 			user:       ExtractInput(torrent.Name, nil),
 			maxTokens:  120,

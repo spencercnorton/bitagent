@@ -107,11 +107,13 @@ func TestPostgresReleaseAttributesPersistenceFilteringNullAndDowngrade(t *testin
 	require.Empty(t, absent.Items)
 	_, err = pool.Exec(ctx, `UPDATE torrent_contents SET release_attributes='{}'::jsonb WHERE info_hash=$1`, hash.Bytes())
 	require.Error(t, err, "missing version/provenance cannot pass the storage contract")
-	_, err = provider.Down(ctx)
+	// Target the release-attribute migration even when newer additive
+	// migrations have been applied; dropping those must not hide its guard.
+	_, err = provider.DownTo(ctx, 56)
 	require.Error(t, err, "downgrade must retain populated claim data")
 	_, err = pool.Exec(ctx, `UPDATE torrent_contents SET release_attributes=NULL WHERE info_hash=$1`, hash.Bytes())
 	require.NoError(t, err)
-	_, err = provider.Down(ctx)
+	_, err = provider.DownTo(ctx, 56)
 	require.NoError(t, err)
 }
 

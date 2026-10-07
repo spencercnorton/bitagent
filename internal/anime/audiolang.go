@@ -103,6 +103,11 @@ func explicitForeignTrack(name string) bool {
 // fansub group as an English-subtitle advertisement) plus a wide bare-token
 // test, so a multi-audio pack listing several dubs alongside English is kept.
 func ForeignAudioOnly(name string) bool {
+	// Several unnamed audio tracks leave English uncertain. Preserve that
+	// uncertainty in the destructive filter without labelling it English.
+	if genericAudioRe.MatchString(name) {
+		return false
+	}
 	if !foreignAudioMarker(name) {
 		return false
 	}

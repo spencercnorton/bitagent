@@ -226,7 +226,7 @@ func batchExtractInput(chunk []model.Torrent) string {
 
 func (c *Client) batchExtractKey(chunk []model.Torrent) string {
 	maxTokens := batchBaseMaxTokens + batchPerItemMaxTokens*len(chunk)
-	return c.extractionRequestKey("batch_extract", "llmmatch-chat-batch-extract-v1",
+	return c.extractionRequestKey("batch_extract", "llmmatch-chat-batch-extract-v2",
 		c.newChatRequest(batchExtractSystemPrompt, batchExtractInput(chunk), maxTokens))
 }
 
