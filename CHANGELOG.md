@@ -8,8 +8,8 @@
   existing codecs and catalogue identities with journalled application and
   nullable search-projection rollback.
 
-- Share qualified manual/reference/private and wanted tag protection across
-  maintenance paths while preserving wanted-only matcher eligibility. Freeze
+- Share qualified manual/reference/bitgrab tag protection plus wanted maintenance
+  protection while preserving wanted-only matcher eligibility. Freeze
   independent authority before recovery snapshots and keep later private facts
   from using a stored crawler unblock exception.
 
