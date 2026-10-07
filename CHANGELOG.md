@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 4.4.0 — 2026-10-06
+
 - Add an unwired, disabled recovery foundation that atomically captures complete
   catalogue sources, removal and a bound block receipt, with bounded storage
   guards and qualified operator restoration through the native crawler bloom.
@@ -28,6 +30,9 @@
   source/policy identities, paced time-stratum admission, completion priority,
   owned worker leases and targeted transactional application. Ingestion retains
   its deterministic result while optional work waits for unchanged allowances.
+
+## 4.3.0 — 2026-10-06
+
 - Add reversible adult-content exclusion for consumer APIs with
   `SERVING_EXCLUDE_ADULT`. Known XXX, positive attached adult metadata and the
   core classifier's vetted strong native evidence are excluded before search
