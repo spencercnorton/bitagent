@@ -66,7 +66,16 @@ func (s *Store) withAdmission(ctx context.Context, hashes [][]byte, write bool, 
 		defer cancel()
 		_ = tx.Rollback(cleanup)
 	}()
-	if _, err = tx.Exec(ctx, `SET LOCAL lock_timeout='2s'`); err != nil {
+	lockWait := 2 * time.Second
+	if !write {
+		if deadline, ok := ctx.Deadline(); ok {
+			lockWait = time.Until(deadline)
+		}
+	}
+	if lockWait <= 0 {
+		return context.DeadlineExceeded
+	}
+	if _, err = tx.Exec(ctx, `SELECT set_config('lock_timeout',$1,true)`, fmt.Sprintf("%dms", max(1, lockWait.Milliseconds()))); err != nil {
 		return err
 	}
 	locks := []string{`SELECT 1 FROM torrents WHERE info_hash=ANY($1::bytea[]) ORDER BY info_hash FOR UPDATE`}

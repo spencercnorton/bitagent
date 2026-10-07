@@ -424,3 +424,29 @@ func TestConcurrentLaterDenialCannotBeUndoneByEarlierMerge(t *testing.T) {
 	require.True(t, withheld[string(hash)])
 	require.NotContains(t, out, string(hash))
 }
+
+func TestPostgresSlowSameHashTrackerDoesNotCancelHealthyFanout(t *testing.T) {
+	pool := seedsTestPool(t)
+	hash := admissionInsert(t, pool, 1, "Allowed.Release")
+	r := admissionRunner(t, pool, true)
+	r.cfg.Concurrency = 2
+	r.scraper.cfg.Concurrency = 2
+	r.scraper.cfg.ScrapeTimeout = 3 * time.Second
+	r.scraper.cfg.TrackerUrls = []string{"synthetic-slow", "synthetic-next"}
+	firstEntered := make(chan struct{})
+	var calls atomic.Int32
+	r.scraper.scrape = func(_ context.Context, _ string, _ []infohash.T) ([]scrapeItem, error) {
+		if calls.Add(1) == 1 {
+			close(firstEntered)
+			time.Sleep(2200 * time.Millisecond)
+		}
+		return []scrapeItem{{Leechers: 2}}, nil
+	}
+	// Both trackers use the actual SAME hash packet; a slow valid first call
+	// exceeds the former fixed2s admission wait without exceeding its3s RPC cap.
+	outcomes, err := r.scraper.ScrapeBatch(context.Background(), [][]byte{hash})
+	require.NoError(t, err)
+	<-firstEntered
+	require.Equal(t, int32(2), calls.Load())
+	require.Equal(t, "positive", outcomes[string(hash)].Class())
+}

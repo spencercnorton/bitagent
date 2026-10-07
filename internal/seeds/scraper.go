@@ -303,7 +303,11 @@ func (s *Scraper) scrapeTrackerChunks(
 			if s.admit == nil {
 				err = call(hashes[start:end])
 			} else {
-				packetCtx, packetCancel := context.WithTimeout(ctx, s.cfg.ScrapeTimeout)
+				// Source locks serialize overlapping hashes across tracker fanout.
+				// Allow their bounded queue to drain; each actual network call still
+				// has the unchanged ScrapeTimeout, concurrency and retry limits.
+				queueBudget := s.cfg.ScrapeTimeout*time.Duration(max(1, s.cfg.Concurrency)+1) + 2*time.Second
+				packetCtx, packetCancel := context.WithTimeout(ctx, queueBudget)
 				var networkErr error
 				gateErr := s.admit(packetCtx, hashes[start:end], func(allowed [][]byte) error { networkErr = call(allowed); return networkErr })
 				packetCancel()
