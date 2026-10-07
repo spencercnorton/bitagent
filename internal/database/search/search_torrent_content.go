@@ -23,10 +23,14 @@ type TorrentContentSearch interface {
 }
 
 func (s search) TorrentContent(ctx context.Context, options ...query.Option) (TorrentContentResult, error) {
+	options = append([]query.Option{query.SelectAll()}, options...)
+	if s.adultPolicy != nil && s.adultPolicy.ExcludesAdult() {
+		options = append(options, query.WithFacetExcludedValues(TorrentContentTypeFacetKey, "xxx"))
+	}
 	return query.GenericQuery[TorrentContentResultItem](
 		ctx,
 		s.q,
-		query.Options(append([]query.Option{query.SelectAll()}, options...)...),
+		query.Options(options...),
 		model.TableNameTorrentContent,
 		func(ctx context.Context, q *dao.Query) query.SubQuery {
 			base := q.TorrentContent.WithContext(ctx).ReadDB()

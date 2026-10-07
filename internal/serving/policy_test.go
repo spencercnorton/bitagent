@@ -28,6 +28,7 @@ func TestAdultPolicyUsesPositiveNullableMetadataAndExactUnicodeBoundaries(t *tes
 	require.NoError(t, err)
 	expr := p.TorrentCondition("torrent_contents")
 	require.Contains(t, expr.SQL, "serving_c.adult IS TRUE")
+	require.True(t, p.ExcludesAdult())
 	require.NotContains(t, expr.SQL, "adult <> true")
 	require.NotContains(t, p.strongPattern, `\p{L}`)
 	require.NotContains(t, p.strongPattern, `\d`)

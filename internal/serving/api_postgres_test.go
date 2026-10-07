@@ -80,6 +80,51 @@ func newServingPostgresDatabase(t *testing.T, ctx context.Context) (*pgxpool.Poo
 	return pool, dao.Use(gdb)
 }
 
+func TestServingPostgresImpossibleAdultFacetDoesNotScan(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, q := newServingPostgresDatabase(t, ctx)
+	_, err := pool.Exec(ctx, `
+INSERT INTO torrents (info_hash, name, size, private, files_status, created_at, updated_at)
+SELECT decode(md5(i::text), 'hex'), 'Synthetic.Typed.Release.mkv', 4096, false, 'single', now(), now()
+FROM generate_series(1, 100) i;
+INSERT INTO torrent_contents (info_hash, content_type, created_at, updated_at)
+SELECT info_hash, 'xxx', now(), now() FROM torrents;`)
+	require.NoError(t, err)
+	strong, media, err := classifier.CoreAdultServingEvidence()
+	require.NoError(t, err)
+	policy, err := serving.NewPolicy(serving.Config{ExcludeAdult: true}, strong, media)
+	require.NoError(t, err)
+	consumer, err := search.New(search.Params{Query: lazy.New(func() (*dao.Query, error) { return q, nil }), ServingPolicy: policy}).ServingSearch.Get()
+	require.NoError(t, err)
+	countSQL := make(chan string, 1)
+	require.NoError(t, q.TorrentContent.UnderlyingDB().Callback().Row().After("gorm:row").Register("test:count", func(db *gorm.DB) {
+		countSQL <- db.Dialector.Explain(db.Statement.SQL.String(), db.Statement.Vars...)
+	}))
+	result, err := consumer.TorrentContent(ctx, query.WithTotalCount(true), query.WithAggregationBudget(0),
+		query.WithFacet(search.TorrentContentTypeFacet(query.FacetHasFilter(query.FacetFilter{"xxx": {}}))))
+	require.NoError(t, err)
+	require.Zero(t, result.TotalCount)
+	require.Empty(t, result.Items)
+	sql := <-countSQL
+	require.Contains(t, sql, "sources_snapshot", "the mandatory source guard must remain")
+	require.Contains(t, sql, "serving_c.adult", "cross-row attachment guard must remain")
+	require.Contains(t, sql, "serving_f", "native file guard must remain")
+	var raw []byte
+	require.NoError(t, pool.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+sql).Scan(&raw))
+	var plans []map[string]any
+	require.NoError(t, json.Unmarshal(raw, &plans))
+	var visit func(map[string]any)
+	visit = func(node map[string]any) {
+		require.NotContains(t, node, "Relation Name", "an impossible selection must not scan tables")
+		children, _ := node["Plans"].([]any)
+		for _, child := range children {
+			visit(child.(map[string]any))
+		}
+	}
+	visit(plans[0]["Plan"].(map[string]any))
+}
+
 func TestServingPostgresStrongEvidenceMatchesCoreBaseNameAndBasePath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

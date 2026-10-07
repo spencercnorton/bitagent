@@ -139,6 +139,11 @@ func (p *Policy) TorrentCondition(table string) clause.Expr {
 	return clause.Expr{SQL: sql, Vars: args}
 }
 
+// ExcludesAdult reports the mandatory consumer policy. Query optimizations may
+// use it to recognize impossible facet selections; TorrentCondition still
+// enforces the complete evidence guard independently of client input.
+func (p *Policy) ExcludesAdult() bool { return p.excludeAdult }
+
 // ContentCondition leaves common metadata stored and hides only positive adult metadata.
 func (p *Policy) ContentCondition() clause.Expr {
 	if !p.excludeAdult {

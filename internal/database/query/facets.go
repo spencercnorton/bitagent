@@ -30,6 +30,53 @@ type Facet interface {
 
 type FacetFilter map[string]struct{}
 
+// WithFacetExcludedValues recognizes OR-facet values already forbidden by a
+// mandatory base predicate. The caller must retain that predicate: this only
+// avoids queries for impossible selections and aggregation buckets. It does
+// not change the selected labels or OR-facet self-aggregation behavior.
+func WithFacetExcludedValues(key string, values ...string) Option {
+	excluded := make(FacetFilter, len(values))
+	for _, value := range values {
+		excluded[value] = struct{}{}
+	}
+	return func(b OptionBuilder) (OptionBuilder, error) {
+		return b.withFacetExcludedValues(key, excluded), nil
+	}
+}
+
+type facetExcludedValues struct {
+	Facet
+	excluded FacetFilter
+}
+
+func (f facetExcludedValues) Criteria(filter FacetFilter) []Criteria {
+	if len(filter) == 0 || f.Logic() != model.FacetLogicOr {
+		return f.Facet.Criteria(filter)
+	}
+	allowed := make(FacetFilter, len(filter))
+	for value := range filter {
+		if !f.excluded.HasKey(value) {
+			allowed[value] = struct{}{}
+		}
+	}
+	if len(allowed) == 0 {
+		return []Criteria{DBCriteria{SQL: "FALSE"}}
+	}
+	return f.Facet.Criteria(allowed)
+}
+
+func (b optionBuilder) withFacetExcludedValues(key string, excluded FacetFilter) OptionBuilder {
+	facets := make([]Facet, len(b.facets))
+	for i, facet := range b.facets {
+		facets[i] = facet
+		if facet.Key() == key {
+			facets[i] = facetExcludedValues{Facet: facet, excluded: excluded}
+		}
+	}
+	b.facets = facets
+	return b
+}
+
 // Values allows iteration over deterministically sorted filter values, which helps with query caching.
 func (f FacetFilter) Values() []string {
 	values := make([]string, 0, len(f))

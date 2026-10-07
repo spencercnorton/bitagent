@@ -469,6 +469,7 @@ type OptionBuilder interface {
 	needsNextPage() bool
 	hasNextPage(nItems int) bool
 	withCurrentFacet(string) OptionBuilder
+	withFacetExcludedValues(string, FacetFilter) OptionBuilder
 	shouldTryCteStrategy() bool
 	groupingSpec() *groupingSpec
 	createContext(context.Context) context.Context
