@@ -361,7 +361,6 @@ func (c *Client) callEmbeddings(ctx context.Context, t model.Torrent, body []byt
 	c.metrics.calls.WithLabelValues(c.cfg.Embeddings.Model, "embedding").Inc()
 	start := time.Now()
 	response, err := c.httpEmbedding.Do(request)
-	c.metrics.callDuration.WithLabelValues("embedding").Observe(time.Since(start).Seconds())
 	result := llmcapture.HTTPResult{ErrorClass: "transport"}
 	var vectors [][]float64
 	if err == nil {
@@ -382,6 +381,7 @@ func (c *Client) callEmbeddings(ctx context.Context, t model.Torrent, body []byt
 			}
 		}
 	}
+	c.metrics.observeHTTP(c.cfg.Embeddings.Model, "embedding", start, result, err)
 	c.recordEmbeddingUsage(result.Body)
 	if recordErr := c.recordCapturedResult(ctx, "embedding", result); recordErr != nil {
 		return nil, recordErr

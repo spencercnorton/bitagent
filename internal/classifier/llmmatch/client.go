@@ -976,9 +976,8 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, u
 	}
 	start := time.Now()
 	resp, err := hc.Do(httpReq)
-	c.metrics.callDuration.WithLabelValues(stage).Observe(time.Since(start).Seconds())
 	if err != nil {
-		c.metrics.callErrors.WithLabelValues(stage, "timeout").Inc()
+		c.metrics.observeHTTP(c.cfg.Model, stage, start, llmcapture.HTTPResult{ErrorClass: "transport"}, err)
 		c.metrics.usageMissing.WithLabelValues(c.cfg.Model, stage).Inc()
 		if recordErr := c.recordCapturedResult(ctx, stage, llmcapture.HTTPResult{ErrorClass: "transport"}); recordErr != nil {
 			return nil, recordErr
@@ -987,6 +986,7 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, u
 	}
 	defer resp.Body.Close()
 	raw, content, err := ReadMatcherChatResponse(resp.StatusCode, resp.Body)
+	c.metrics.observeHTTP(c.cfg.Model, stage, start, llmcapture.HTTPResult{ErrorClass: matcherResponseErrorClass(err)}, err)
 	c.recordUsage(stage, raw)
 	if recordErr := c.recordCapturedResult(ctx, stage, llmcapture.HTTPResult{
 		Body: raw, StatusCode: resp.StatusCode, ErrorClass: matcherResponseErrorClass(err),
@@ -994,12 +994,6 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, u
 		return nil, recordErr
 	}
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrMatcherChatHTTPStatus):
-			c.metrics.callErrors.WithLabelValues(stage, "http_status").Inc()
-		default:
-			c.metrics.callErrors.WithLabelValues(stage, "decode").Inc()
-		}
 		return nil, err
 	}
 	return content, nil

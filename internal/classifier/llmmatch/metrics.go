@@ -1,6 +1,14 @@
 package llmmatch
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"context"
+	"errors"
+	"net"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/spencercnorton/bitagent/internal/llmcapture"
+)
 
 // Metrics observes the matcher. Natural provider-backed decisions also have a
 // bounded capture/result ledger; aggregate counters alone are not a precision
@@ -24,8 +32,9 @@ type Metrics struct {
 	animeTotal          *prometheus.CounterVec
 	cacheHits           prometheus.Counter
 	cacheMisses         prometheus.Counter
-	callErrors          *prometheus.CounterVec // stage=extract|rerank, class=timeout|http_status|decode
+	callErrors          *prometheus.CounterVec // stage=extract|batch_extract|rerank|embedding; bounded failure class
 	callDuration        *prometheus.HistogramVec
+	httpOutcomes        *prometheus.CounterVec
 	calls               *prometheus.CounterVec
 	tokens              *prometheus.CounterVec
 	usageMissing        *prometheus.CounterVec
@@ -44,6 +53,7 @@ func NewMetrics() *Metrics {
 		auditDecisions:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_audit_decisions_total", Help: "Final policy decision recording outcomes. No-provider and duplicate paths are not new cohort observations."}, []string{"outcome"}),
 		info:                prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "bitagent_classifier_llm_match_info", Help: "Configured matcher model and prompt version; present even before any call."}, []string{"model", "prompt_version"}),
 		calls:               prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_calls_total", Help: "Outbound matcher requests admitted by the durable allowance, by model and stage."}, []string{"model", "stage"}),
+		httpOutcomes:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_http_outcomes_total", Help: "Completed matcher HTTP attempts through bounded body reading and envelope decoding. Excludes admission, cache, replay and audit persistence; success does not mean an accepted identity or known bill."}, []string{"model", "stage", "outcome"}),
 		tokens:              prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_tokens_total", Help: "Provider-reported matcher tokens. cached_input is a subset of input; reasoning is a subset of output."}, []string{"model", "stage", "kind"}),
 		usageMissing:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_usage_missing_total", Help: "Matcher HTTP responses without valid provider usage; spend estimates are incomplete."}, []string{"model", "stage"}),
 		budgetSkips:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "bitagent_classifier_llm_match_budget_skips_total", Help: "Calls withheld because the durable request allowance is exhausted or unavailable."}, []string{"reason"}),
@@ -82,11 +92,11 @@ func NewMetrics() *Metrics {
 		}),
 		callErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "bitagent_classifier_llm_match_call_errors_total",
-			Help: "LLM matcher call errors, by stage and class.",
+			Help: "LLM matcher failures, by stage and class (timeout, transport, http_status, read or decode). Admission and replay are not provider failures.",
 		}, []string{"stage", "class"}),
 		callDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "bitagent_classifier_llm_match_call_duration_seconds",
-			Help:    "LLM matcher call latency, by stage.",
+			Help:    "Matcher HTTP attempt duration through bounded response-body reading and envelope decoding, by stage. Excludes admission, cache, replay, audit persistence and final policy gates.",
 			Buckets: prometheus.ExponentialBuckets(0.1, 2, 10),
 		}, []string{"stage"}),
 	}
@@ -97,8 +107,31 @@ func (m *Metrics) Collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		m.extractTotal, m.rerankTotal, m.matchesTotal, m.gateRejects, m.candidatesTotal, m.animeTotal,
 		m.cacheHits, m.cacheMisses, m.callErrors, m.callDuration,
-		m.calls, m.tokens, m.usageMissing, m.budgetSkips, m.config, m.info, m.auditResults, m.auditDecisions, m.embeddingShortlists,
+		m.calls, m.httpOutcomes, m.tokens, m.usageMissing, m.budgetSkips, m.config, m.info, m.auditResults, m.auditDecisions, m.embeddingShortlists,
 	}
+}
+
+// observeHTTP records the actual attempt before audit persistence can fail.
+// A retained replay must never call this or add provider tokens a second time.
+func (m *Metrics) observeHTTP(model, stage string, started time.Time, result llmcapture.HTTPResult, err error) {
+	m.callDuration.WithLabelValues(stage).Observe(time.Since(started).Seconds())
+	outcome := "success"
+	if err != nil {
+		switch result.ErrorClass {
+		case "transport":
+			outcome = "transport"
+			var timeout net.Error
+			if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &timeout) && timeout.Timeout()) {
+				outcome = "timeout"
+			}
+		case "http_status", "read":
+			outcome = result.ErrorClass
+		default:
+			outcome = "decode"
+		}
+		m.callErrors.WithLabelValues(stage, outcome).Inc()
+	}
+	m.httpOutcomes.WithLabelValues(model, stage, outcome).Inc()
 }
 
 func (m *Metrics) configure(c Config) {

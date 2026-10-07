@@ -86,17 +86,21 @@ Scrape-driven, 5-second per-scrape timeout.
 | `bitagent_classifier_preempt_unknown_media_type_total` | counter | `source` | Labels whose media type cannot short-circuit anything; the classifier ran. |
 | `bitagent_classifier_preempt_evidence_title_total` | counter | `outcome` | Title-level \*arr evidence for torrents with no label of their own (`CLASSIFIER_EVIDENCE_TITLE_IDENTITY`). `applied`: the identity the \*arrs agree on for this title was hinted. `weak`: fewer than 2 other labels, or no ⅔ majority. `no_preference`: no other torrent with this title is labelled. `no_key`: the name did not parse to a title. `no_index`: labels could not be loaded. Absent while the flag is off. |
 
-## `bitagent_classifier_llm_*` — LLM rerank stage (optional)
+## `bitagent_classifier_llm_*` — optional type fallback
 
-Only fires when the LLM stage is enabled and the inner CEL classifier returned `ErrUnmatched`.
+Runs for unknown, unattached classifier results, including unresolved workflows
+that returned successfully. Admission and policy gates still apply.
 
 | Metric | Type | Labels | Purpose |
 |---|---|---|---|
-| `bitagent_classifier_llm_invocations_total` | counter | `result` | LLM invocation outcomes. `result` ∈ {`success`, `gated`, `error`}. |
+| `bitagent_classifier_llm_invocations_total` | counter | `reason` | Results considered for fallback; `unmatched` does not imply a provider call or returned error. |
 | `bitagent_classifier_llm_cache_hits_total` | counter | — | Hits in the sha256 LRU cache. |
-| `bitagent_classifier_llm_cache_misses_total` | counter | — | Misses (forced inference). |
-| `bitagent_classifier_llm_duration_seconds` | histogram | — | End-to-end inference latency, including the gate chain. |
-| `bitagent_classifier_llm_gates_total` | counter | `stage` | Per-gate rejections — `stage` ∈ {`config`, `inner_unmatched`, `plausibility`, `privacy`}. |
+| `bitagent_classifier_llm_cache_misses_total` | counter | — | Misses, including later admission denials. |
+| `bitagent_classifier_llm_calls_total` | counter | `model` | Actual HTTP dispatches, excluding cache and admission rejection. |
+| `bitagent_classifier_llm_call_duration_seconds` | histogram | — | Provider round-trip time; excludes admission and final application. |
+| `bitagent_classifier_llm_gate_rejects_total` | counter | `reason` | Eligibility, admission and policy denials. |
+| `bitagent_classifier_llm_tokens_total` | counter | `model`, `kind` | Provider usage, with cached input and reasoning reported as subsets. |
+| `bitagent_classifier_llm_live_applied_total` | counter | `media_type` | Live predictions returned through policy; separate storage evidence is required to prove persistence. |
 
 ## `bitagent_retention_*` — retention pipeline
 
@@ -131,6 +135,22 @@ See [csam-defense.md](../csam-defense.md) for the full architecture.
 | `bitagent_liveness_blacklist_size` | gauge | — | Current size of the in-memory blacklist (seeders=0 for too long). |
 | `bitagent_classifier_deleted_total` | counter | `content_type`, `rule` | Torrents deleted by a classifier workflow rule: the content type assigned before the delete (`unknown` for the pre-parse banned-keyword rule) and the dotted path of the rule that fired. The only armed destructive path; this is its rate. |
 | `bitagent_liveness_torznab_excluded_total` | counter | — | Torznab response items filtered out for liveness. |
+
+## `bitagent_classifier_llm_match_*` — optional identity matcher
+
+| Metric | Type | Labels | Purpose |
+|---|---|---|---|
+| `bitagent_classifier_llm_match_calls_total` | counter | `model`, `stage` | Actual outbound attempts. Admission denials and retained replays are excluded. |
+| `bitagent_classifier_llm_match_http_outcomes_total` | counter | `model`, `stage`, `outcome` | Completed HTTP attempts through bounded body reading and envelope decoding: `success`, `timeout`, `transport`, `http_status`, `read`, or `decode`. Includes controlled dispatch and embeddings. |
+| `bitagent_classifier_llm_match_call_duration_seconds` | histogram | `stage` | Time from outbound attempt through body reading and envelope decoding. Excludes admission, cache/replay, receipt persistence and final policy. |
+| `bitagent_classifier_llm_match_call_errors_total` | counter | `stage`, `class` | HTTP failures and downstream extraction/rerank decoding failures. |
+| `bitagent_classifier_llm_match_tokens_total` | counter | `model`, `stage`, `kind` | Provider-reported usage; `cached_input` is part of `input`, and `reasoning` is part of `output`. Replays add no tokens. |
+
+Stages are `extract`, `batch_extract`, `rerank` and `embedding`. HTTP success
+does not establish an accepted or correct identity, application to storage, or
+billed cost. Use the bound capture/result/decision and application records for
+those outcomes. Missing provider usage and billing data remain unknown. A
+process restart resets aggregate counters; durable allowance usage survives.
 
 ## `bitagent_junkpurge_*` — junk classifier
 
