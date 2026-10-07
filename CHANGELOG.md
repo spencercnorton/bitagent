@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Enforce native and independently recorded private authority throughout public
+  lists, counts, files, tags and Torznab, matching the existing denied-grab
+  boundary. Retain source rows and ordinary wanted/manual lookalikes.
+
 - Add an optional, default-off release-name policy shared by acquisition,
   import, processing and model admission. Exclude exact Han/Cyrillic names,
   clear adult composites and configured hashes while retaining raw sources.

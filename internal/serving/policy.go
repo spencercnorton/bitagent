@@ -3,6 +3,7 @@ package serving
 
 import (
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"strings"
 	"unicode"
 
@@ -111,7 +112,20 @@ func (p *Policy) TorrentCondition(table string) clause.Expr {
    OR COALESCE(serving_source->>'source', '') = ''
    OR jsonb_typeof(serving_source->'source_metadata') IS DISTINCT FROM 'object'
    OR serving_source->'source_metadata'->>'key' IS DISTINCT FROM serving_source->>'source'))`
-	var args []any
+	// The consumer view cannot advertise a private hash through list, files,
+	// tags or native Torznab merely because a separate grab route refuses it.
+	// This authority is independent of optional name/adult policy.
+	private := table + ".private = FALSE"
+	if table != "torrents" {
+		private = "EXISTS (SELECT 1 FROM torrents serving_private WHERE serving_private.info_hash = " + root + " AND serving_private.private = FALSE)"
+	}
+	sql += " AND (" + private + ")" + `
+ AND NOT EXISTS (SELECT 1 FROM label_evidence serving_e WHERE serving_e.info_hash = ` + root + ` AND ` + catalogueguard.QBPrivacySQL("serving_e.source", "serving_e.category", "?") + `)
+ AND NOT EXISTS (SELECT 1 FROM torrent_tags serving_tag WHERE serving_tag.info_hash = ` + root + ` AND ` + catalogueguard.PrivacyTagSQL("serving_tag.name", "?") + `)
+ AND NOT EXISTS (SELECT 1 FROM torrent_canonical_labels serving_label WHERE serving_label.info_hash = ` + root + ` AND lower(btrim(serving_label.category,?)) IN ('private','bitgrab'))`
+	args := []any{catalogueguard.TagWhitespace, catalogueguard.TagWhitespace,
+		catalogueguard.TagWhitespace, catalogueguard.TagWhitespace, catalogueguard.TagWhitespace,
+		catalogueguard.TagWhitespace}
 	if p.excludeAdult {
 		sql += ` AND NOT EXISTS (
  SELECT 1 FROM torrent_contents serving_tc

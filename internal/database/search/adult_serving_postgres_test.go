@@ -106,6 +106,8 @@ CREATE TABLE junkpurge_quarantine (
   files_snapshot jsonb, sources_snapshot jsonb
 );
 CREATE TABLE metadata_sources (key text PRIMARY KEY, name text NOT NULL);
+CREATE TABLE label_evidence (info_hash bytea, source text, category text);
+CREATE TABLE torrent_canonical_labels (info_hash bytea PRIMARY KEY, category text);
 CREATE TABLE content_attributes (
   content_type text, content_source text, content_id text, source text, key text, value text
 );
