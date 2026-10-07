@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
+	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"strings"
@@ -95,18 +96,7 @@ FROM torrent_hints WHERE info_hash=$1 FOR SHARE`, task.InfoHash).Scan(&t.Hint.In
 // not prevent ordinary public matching. Manual/reference tags explicitly hold
 // optional application; bitgrab remains a privacy boundary.
 func authorityTag(name string) bool {
-	name = strings.ToLower(strings.TrimSpace(name))
-	for _, prefix := range []string{"manual", "reference", "bitgrab"} {
-		if name == prefix {
-			return true
-		}
-		for _, separator := range []string{":", "/", "-", "_"} {
-			if strings.HasPrefix(name, prefix+separator) {
-				return true
-			}
-		}
-	}
-	return false
+	return catalogueguard.ProtectedTag(name, false)
 }
 func lockedAuthority(ctx context.Context, tx pgx.Tx, task Task) error {
 	rows, err := tx.Query(ctx, `SELECT name FROM torrent_tags WHERE info_hash=$1 FOR SHARE`, task.InfoHash)

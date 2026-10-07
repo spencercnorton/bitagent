@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
 )
 
@@ -106,6 +107,18 @@ func lockHash(ctx context.Context, tx pgx.Tx, hash []byte) error {
 	_, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended(encode($1::bytea,'hex'),73159))`, hash)
 	return err
 }
+
+func lockAuthorityBeforeSnapshot(ctx context.Context, tx pgx.Tx) error {
+	// These utility statements precede the first repeatable-read snapshot.
+	// Serialize recovery writers first, then freeze independent authority. A
+	// waiter must see authority committed before its locks were granted.
+	// Verdict tables use a write-compatible self-exclusive mode rather than
+	// SHARE followed by an upgrade while another source guard holds SHARE.
+	_, err := tx.Exec(ctx, `lock table catalogue_recovery_budget in exclusive mode;
+lock table label_evidence,torrent_canonical_labels,junkpurge_quarantine in share mode;
+lock table torrent_verdict_state,torrent_verdict_events in share row exclusive mode`)
+	return err
+}
 func (s *Store) storageCheck(ctx context.Context, tx pgx.Tx) error {
 	var used int64
 	err := tx.QueryRow(ctx, `select sum(pg_total_relation_size(rel)) from unnest(array['catalogue_recovery_budget'::regclass,'catalogue_recovery_snapshots'::regclass,'catalogue_recovery_events'::regclass,'torrent_verdict_events'::regclass,'torrent_verdict_state'::regclass]) rel`).Scan(&used)
@@ -153,6 +166,9 @@ func (s *Store) RemoveBatch(ctx context.Context, hashes [][]byte, reason string,
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	if _, err = tx.Exec(ctx, `set local statement_timeout='15s'; set local lock_timeout='2s'`); err != nil {
+		return nil, err
+	}
+	if err = lockAuthorityBeforeSnapshot(ctx, tx); err != nil {
 		return nil, err
 	}
 	// Serialize budgets before hash locks; competing removers share this order.
@@ -210,7 +226,7 @@ func (s *Store) removeTx(ctx context.Context, tx pgx.Tx, hash []byte, reason str
 	if err != nil {
 		return out, err
 	}
-	if err = protected(ctx, tx, hash, true); err != nil {
+	if err = s.protected(ctx, tx, hash, true); err != nil {
 		return out, err
 	}
 	if err = checkCascade(ctx, tx); err != nil {
@@ -319,9 +335,9 @@ func checkCascade(ctx context.Context, tx pgx.Tx) error {
 	}
 	return nil
 }
-func protected(ctx context.Context, tx pgx.Tx, hash []byte, removing bool) error {
+func (s *Store) protected(ctx context.Context, tx pgx.Tx, hash []byte, removing bool) error {
 	var active bool
-	err := tx.QueryRow(ctx, `select exists(select 1 from junkpurge_quarantine where info_hash=$1 and expired_at is null) or exists(select 1 from torrent_canonical_labels where info_hash=$1)`, hash).Scan(&active)
+	err := tx.QueryRow(ctx, `select exists(select 1 from junkpurge_quarantine where info_hash=$1 and expired_at is null) or exists(select 1 from torrent_canonical_labels where info_hash=$1) or exists(select 1 from label_evidence where info_hash=$1 and source='qbittorrent' and lower(trim(category)) in('private','bitgrab'))`, hash).Scan(&active)
 	if err != nil {
 		return err
 	}
@@ -331,12 +347,40 @@ func protected(ctx context.Context, tx pgx.Tx, hash []byte, removing bool) error
 	if !removing {
 		return nil
 	}
-	err = tx.QueryRow(ctx, `select exists(select 1 from torrents where info_hash=$1 and private) or exists(select 1 from torrent_canonical_labels where info_hash=$1) or exists(select 1 from torrent_hints where info_hash=$1 and content_id is not null) or exists(select 1 from torrent_tags where info_hash=$1 and name in('wanted','manual','reference','bitgrab')) or exists(select 1 from junkpurge_sync_claims where info_hash=$1 and lease_until>now()) or exists(select 1 from torrent_verdict_state where info_hash=$1 and verdict in('quarantined','blacklisted','tombstoned'))`, hash).Scan(&active)
+	err = tx.QueryRow(ctx, `select exists(select 1 from torrents where info_hash=$1 and private) or exists(select 1 from torrent_canonical_labels where info_hash=$1) or exists(select 1 from torrent_hints where info_hash=$1 and content_id is not null) or exists(select 1 from junkpurge_sync_claims where info_hash=$1 and lease_until>now()) or exists(select 1 from torrent_verdict_state where info_hash=$1 and verdict in('quarantined','blacklisted','tombstoned'))`, hash).Scan(&active)
 	if err != nil {
 		return err
 	}
 	if active {
 		return ErrProtected
+	}
+	// Check bounded name bytes before materialising the tag list. The parent
+	// UPDATE lock excludes new FK-bound tags; SHARE locks and repeatable-read
+	// failures protect against edits to the existing list.
+	var tagCount, tagBytes int64
+	err = tx.QueryRow(ctx, `select count(*),coalesce(sum(octet_length(name)),0) from (select name from torrent_tags where info_hash=$1 limit $2) bounded`, hash, s.cfg.MaxRowsPerSnapshot+1).Scan(&tagCount, &tagBytes)
+	if err != nil {
+		return err
+	}
+	if tagCount > s.cfg.MaxRowsPerSnapshot || tagBytes > s.cfg.MaxSnapshotBytes {
+		return ErrCapacity
+	}
+	rows, err := tx.Query(ctx, `select name from torrent_tags where info_hash=$1 limit $2 for share`, hash, s.cfg.MaxRowsPerSnapshot+1)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			return err
+		}
+		if catalogueguard.ProtectedTag(name, true) {
+			return ErrProtected
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -388,6 +432,9 @@ func (s *Store) Restore(ctx context.Context, id int64, now time.Time) (bool, err
 	if _, err = tx.Exec(ctx, `set local statement_timeout='15s'; set local lock_timeout='2s'`); err != nil {
 		return false, err
 	}
+	if err = lockAuthorityBeforeSnapshot(ctx, tx); err != nil {
+		return false, err
+	}
 	var budgetLock bool
 	if err = tx.QueryRow(ctx, `select singleton from catalogue_recovery_budget where singleton=true for update`).Scan(&budgetLock); err != nil {
 		return false, err
@@ -418,7 +465,7 @@ func (s *Store) Restore(ctx context.Context, id int64, now time.Time) (bool, err
 	if err = checkCascade(ctx, tx); err != nil {
 		return false, err
 	}
-	if err = protected(ctx, tx, hash, false); err != nil {
+	if err = s.protected(ctx, tx, hash, false); err != nil {
 		return false, err
 	}
 	if err = currentReceipt(ctx, tx, id, hash, "removed"); err != nil {
@@ -497,7 +544,7 @@ func (s *Store) Filter(ctx context.Context, all, bloomKept [][]byte) ([][]byte, 
 	for _, h := range bloomKept {
 		kept[string(h)] = true
 	}
-	rows, err := s.pool.Query(ctx, `select distinct on(s.info_hash) s.info_hash,s.state,exists(select 1 from torrent_verdict_state v join torrent_verdict_events e on e.info_hash=v.info_hash where v.info_hash=s.info_hash and e.id=s.restored_verdict_event_id and e.id=(select max(id) from torrent_verdict_events where info_hash=s.info_hash) and v.verdict='restored' and v.mechanism='operator' and e.verdict=v.verdict and e.mechanism=v.mechanism and e.evidence=jsonb_build_object('catalogue_recovery_snapshot',s.id,'contract',s.contract_version,'transition','restored') and not exists(select 1 from junkpurge_quarantine q where q.info_hash=s.info_hash and q.expired_at is null)) from catalogue_recovery_snapshots s where info_hash=any($1) order by s.info_hash,s.id desc`, all)
+	rows, err := s.pool.Query(ctx, `select distinct on(s.info_hash) s.info_hash,s.state,exists(select 1 from torrent_verdict_state v join torrent_verdict_events e on e.info_hash=v.info_hash where v.info_hash=s.info_hash and e.id=s.restored_verdict_event_id and e.id=(select max(id) from torrent_verdict_events where info_hash=s.info_hash) and v.verdict='restored' and v.mechanism='operator' and e.verdict=v.verdict and e.mechanism=v.mechanism and e.evidence=jsonb_build_object('catalogue_recovery_snapshot',s.id,'contract',s.contract_version,'transition','restored') and not exists(select 1 from junkpurge_quarantine q where q.info_hash=s.info_hash and q.expired_at is null) and not exists(select 1 from label_evidence l where l.info_hash=s.info_hash and l.source='qbittorrent' and lower(trim(l.category)) in('private','bitgrab')) and not exists(select 1 from torrent_canonical_labels c where c.info_hash=s.info_hash and lower(trim(c.category)) in('private','bitgrab')) and not exists(select 1 from torrents t where t.info_hash=s.info_hash and t.private) and not exists(select 1 from torrent_tags g where g.info_hash=s.info_hash and `+catalogueguard.PrivacyTagSQL("g.name", "$2")+`)) from catalogue_recovery_snapshots s where info_hash=any($1) order by s.info_hash,s.id desc`, all, catalogueguard.TagWhitespace)
 	if err != nil {
 		return nil, err
 	}

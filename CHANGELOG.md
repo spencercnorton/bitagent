@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 4.4.0 — 2026-10-06
+
+- Repair missing codec claims only from the exact parser proposal, retaining
+  existing codecs and catalogue identities with journalled application and
+  nullable search-projection rollback.
+
+- Share qualified manual/reference/bitgrab tag protection plus wanted maintenance
+  protection while preserving wanted-only matcher eligibility. Freeze
+  independent authority before recovery snapshots and keep later private facts
+  from using a stored crawler unblock exception.
+
+- Refuse recovery-schema downgrade while any snapshot, audit event or consumed
+  budget remains, including restored and expired snapshots. Empty-only
+  downgrade serializes with recovery writers and remains retryable.
+
 - Add an unwired, disabled recovery foundation that atomically captures complete
   catalogue sources, removal and a bound block receipt, with bounded storage
   guards and qualified operator restoration through the native crawler bloom.
@@ -28,6 +43,9 @@
   source/policy identities, paced time-stratum admission, completion priority,
   owned worker leases and targeted transactional application. Ingestion retains
   its deterministic result while optional work waits for unchanged allowances.
+
+## 4.3.0 — 2026-10-06
+
 - Add reversible adult-content exclusion for consumer APIs with
   `SERVING_EXCLUDE_ADULT`. Known XXX, positive attached adult metadata and the
   core classifier's vetted strong native evidence are excluded before search

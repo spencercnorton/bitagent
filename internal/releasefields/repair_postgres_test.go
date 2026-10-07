@@ -182,4 +182,60 @@ func TestPostgresRepairJournalFailureRollsBackFields(t *testing.T) {
 	var raw []byte
 	require.NoError(t, pool.QueryRow(ctx, `SELECT release_attributes FROM torrent_contents`).Scan(&raw))
 	require.Empty(t, raw)
+	var codec model.NullVideoCodec
+	require.NoError(t, pool.QueryRow(ctx, `SELECT video_codec FROM torrent_contents`).Scan(&codec))
+	require.False(t, codec.Valid, "journal failure must roll back the codec too")
+}
+
+func TestPostgresRepairQualifiedProtectionRefusesFreezeAndInterveningApply(t *testing.T) {
+	pool, hash := repairFixture(t)
+	ctx := context.Background()
+	plan, err := Freeze(ctx, pool, []protocol.ID{hash}, false)
+	require.NoError(t, err)
+	snapshot := func() map[string]string {
+		out := map[string]string{}
+		for _, table := range []string{"torrents", "torrent_files", "torrent_contents", "torrent_tags", "llm_work_applications", "release_field_repair_journal"} {
+			var raw string
+			require.NoError(t, pool.QueryRow(ctx, `select coalesce(jsonb_agg(to_jsonb(r) order by to_jsonb(r)::text),'[]'::jsonb)::text from `+pgx.Identifier{table}.Sanitize()+` r`).Scan(&raw))
+			out[table] = raw
+		}
+		return out
+	}
+
+	for _, prefix := range []string{"wanted", "manual", "reference", "bitgrab"} {
+		name := prefix + "-synthetic"
+		_, err := pool.Exec(ctx, `insert into torrent_tags(info_hash,name,created_at,updated_at) values($1,$2,now(),now())`, hash.Bytes(), name)
+		require.NoError(t, err)
+		before := snapshot()
+		_, err = Freeze(ctx, pool, []protocol.ID{hash}, false)
+		require.ErrorIs(t, err, ErrChanged)
+		_, err = Apply(ctx, pool, plan, true)
+		require.ErrorIs(t, err, ErrChanged)
+		require.Equal(t, before, snapshot(), "native-format prefixed protection must retain raw and journals")
+		_, err = pool.Exec(ctx, `delete from torrent_tags where info_hash=$1 and name=$2`, hash.Bytes(), name)
+		require.NoError(t, err)
+	}
+	// Broaden only this owned synthetic fixture to cover legacy/imported tag
+	// spellings; production formatting constraints remain untouched.
+	_, err = pool.Exec(ctx, `ALTER TABLE torrent_tags DROP CONSTRAINT torrent_tags_name_check`)
+	require.NoError(t, err)
+	for _, prefix := range []string{"wanted", "manual", "reference", "bitgrab"} {
+		for _, separator := range []string{":", "/", "-", "_"} {
+			name := " \t" + strings.ToUpper(prefix) + separator + "synthetic\r\n"
+			t.Run(prefix+separator, func(t *testing.T) {
+				_, err := pool.Exec(ctx, `insert into torrent_tags(info_hash,name,created_at,updated_at) values($1,$2,now(),now())`, hash.Bytes(), name)
+				require.NoError(t, err)
+				before := snapshot()
+				_, err = Freeze(ctx, pool, []protocol.ID{hash}, false)
+				require.ErrorIs(t, err, ErrChanged)
+				for _, write := range []bool{false, true} {
+					_, err = Apply(ctx, pool, plan, write)
+					require.ErrorIs(t, err, ErrChanged)
+				}
+				require.Equal(t, before, snapshot(), "protected freeze/apply cannot alter raw identity, nullable fields or ledgers")
+				_, err = pool.Exec(ctx, `delete from torrent_tags where info_hash=$1 and name=$2`, hash.Bytes(), name)
+				require.NoError(t, err)
+			})
+		}
+	}
 }

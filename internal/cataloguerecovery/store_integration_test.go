@@ -661,3 +661,392 @@ values(decode(repeat('99',32),'hex'),'synthetic-history',$1,$4,'{}','{}','{}','{
 	require.Equal(t, before, raw(t, pool, h), "all non-NULL release claims and all raw source fields must roundtrip exactly")
 	require.Equal(t, retained, histories(), "restore cannot rewrite or refund permanent histories")
 }
+
+func recoveryMigrationProvider(t *testing.T, pool *pgxpool.Pool) *goose.Provider {
+	t.Helper()
+	db := stdlib.OpenDB(*pool.Config().ConnConfig)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrationssql.FS)
+	require.NoError(t, err)
+	return provider
+}
+func recoveryHistory(t *testing.T, pool *pgxpool.Pool) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, table := range []string{"catalogue_recovery_budget", "catalogue_recovery_snapshots", "catalogue_recovery_events", "torrent_verdict_events", "torrent_verdict_state", "goose_db_version"} {
+		var data string
+		require.NoError(t, pool.QueryRow(ctx, `select coalesce(jsonb_agg(to_jsonb(r) order by to_jsonb(r)::text),'[]'::jsonb)::text from `+pgx.Identifier{table}.Sanitize()+` r`).Scan(&data))
+		out[table] = data
+	}
+	return out
+}
+func TestPostgresRecoveryDowngradeRetainsRemovedRestoredExpiredAndBudgets(t *testing.T) {
+	for _, state := range []string{"removed", "restored", "expired", "snapshot_budget_only", "payload_budget_only"} {
+		t.Run(state, func(t *testing.T) {
+			pool := recoveryPool(t)
+			provider := recoveryMigrationProvider(t, pool)
+			h := hash(92)
+			seed(t, pool, h, false)
+			now := time.Now().UTC()
+			if strings.HasSuffix(state, "budget_only") {
+				column := "snapshots"
+				if state == "payload_budget_only" {
+					column = "payload_bytes"
+				}
+				_, err := pool.Exec(ctx, `update catalogue_recovery_budget set `+column+`=1`)
+				require.NoError(t, err)
+			} else {
+				c := cfg()
+				if state == "expired" {
+					c.Retention = time.Millisecond
+				}
+				s, err := cataloguerecovery.NewStore(pool, c)
+				require.NoError(t, err)
+				snap, err := s.Remove(ctx, h, "synthetic downgrade guard", now)
+				require.NoError(t, err)
+				if state == "restored" {
+					ok, e := s.Restore(ctx, snap.ID, now.Add(time.Second))
+					require.NoError(t, e)
+					require.True(t, ok)
+				}
+				if state == "expired" {
+					time.Sleep(2 * time.Millisecond)
+					ok, e := s.Restore(ctx, snap.ID, time.Now())
+					require.ErrorIs(t, e, cataloguerecovery.ErrExpired)
+					require.False(t, ok)
+					var expired bool
+					require.NoError(t, pool.QueryRow(ctx, `select expires_at < clock_timestamp() from catalogue_recovery_snapshots where id=$1`, snap.ID).Scan(&expired))
+					require.True(t, expired)
+				}
+			}
+			before, hist := raw(t, pool, h), recoveryHistory(t, pool)
+			_, err := provider.DownTo(ctx, 58)
+			require.ErrorContains(t, err, "catalogue recovery history and budgets must be retained")
+			require.Equal(t, before, raw(t, pool, h))
+			require.Equal(t, hist, recoveryHistory(t, pool), "rejected downgrade cannot mutate history, budgets, verdicts or migration receipt")
+		})
+	}
+}
+func TestPostgresRecoveryEmptyDowngradeAndRetry(t *testing.T) {
+	pool := recoveryPool(t)
+	provider := recoveryMigrationProvider(t, pool)
+	h := hash(93)
+	seed(t, pool, h, true)
+	before := raw(t, pool, h)
+	down, err := provider.DownTo(ctx, 58)
+	require.NoError(t, err)
+	require.Len(t, down, 1)
+	require.Equal(t, before, raw(t, pool, h))
+	up, err := provider.UpTo(ctx, 59)
+	require.NoError(t, err)
+	require.Len(t, up, 1)
+	require.Equal(t, before, raw(t, pool, h))
+	require.Zero(t, count(t, pool, "catalogue_recovery_snapshots"))
+	require.Zero(t, count(t, pool, "catalogue_recovery_events"))
+	var used, snapshots int64
+	require.NoError(t, pool.QueryRow(ctx, `select payload_bytes,snapshots from catalogue_recovery_budget`).Scan(&used, &snapshots))
+	require.Zero(t, used)
+	require.Zero(t, snapshots)
+}
+
+func TestPostgresRecoveryDowngradeSerializesWithPendingBudgetWriter(t *testing.T) {
+	pool := recoveryPool(t)
+	provider := recoveryMigrationProvider(t, pool)
+	h := hash(94)
+	seed(t, pool, h, true)
+	before := raw(t, pool, h)
+	deadline, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	tx, err := pool.Begin(deadline)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(deadline, `update catalogue_recovery_budget set payload_bytes=1`)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() { _, e := provider.DownTo(deadline, 58); done <- e }()
+	require.Eventually(t, func() bool {
+		var blocked bool
+		e := pool.QueryRow(deadline, `select exists(select 1 from pg_locks where relation='catalogue_recovery_budget'::regclass and mode='AccessExclusiveLock' and not granted)`).Scan(&blocked)
+		return e == nil && blocked
+	}, 5*time.Second, 10*time.Millisecond, "downgrade must wait before reading the empty-only guard")
+	require.NoError(t, tx.Commit(deadline))
+	require.ErrorContains(t, <-done, "catalogue recovery history and budgets must be retained")
+	require.Equal(t, before, raw(t, pool, h))
+	var used int64
+	require.NoError(t, pool.QueryRow(ctx, `select payload_bytes from catalogue_recovery_budget`).Scan(&used))
+	require.EqualValues(t, 1, used)
+	require.Zero(t, count(t, pool, "catalogue_recovery_snapshots"))
+	require.Zero(t, count(t, pool, "catalogue_recovery_events"))
+}
+
+func TestPostgresRecoveryQualifiedProtectedTagsKeepRawAndLedgers(t *testing.T) {
+	pool := recoveryPool(t)
+	s := store(t, pool)
+	h := hash(95)
+	seed(t, pool, h, false)
+
+	for _, prefix := range []string{"wanted", "manual", "reference", "bitgrab"} {
+		name := prefix + "-synthetic"
+		_, err := pool.Exec(ctx, `insert into torrent_tags(info_hash,name,created_at,updated_at) values($1,$2,now(),now())`, h, name)
+		require.NoError(t, err)
+		before, hist := raw(t, pool, h), recoveryHistory(t, pool)
+		_, err = s.Remove(ctx, h, "synthetic native-prefix protection", time.Now())
+		require.ErrorIs(t, err, cataloguerecovery.ErrProtected)
+		require.Equal(t, before, raw(t, pool, h))
+		require.Equal(t, hist, recoveryHistory(t, pool))
+		_, err = pool.Exec(ctx, `delete from torrent_tags where info_hash=$1 and name=$2`, h, name)
+		require.NoError(t, err)
+	}
+	// Broaden only this owned synthetic fixture for legacy/imported spellings;
+	// native production formatting constraints remain untouched.
+	_, err := pool.Exec(ctx, `ALTER TABLE torrent_tags DROP CONSTRAINT torrent_tags_name_check`)
+	require.NoError(t, err)
+	for _, prefix := range []string{"wanted", "manual", "reference", "bitgrab"} {
+		for _, separator := range []string{":", "/", "-", "_"} {
+			name := " \t" + strings.ToUpper(prefix) + separator + "synthetic\r\n"
+			t.Run(prefix+separator, func(t *testing.T) {
+				_, err := pool.Exec(ctx, `insert into torrent_tags(info_hash,name,created_at,updated_at) values($1,$2,now(),now())`, h, name)
+				require.NoError(t, err)
+				before, hist := raw(t, pool, h), recoveryHistory(t, pool)
+				_, err = s.Remove(ctx, h, "synthetic prefixed protection", time.Now())
+				require.ErrorIs(t, err, cataloguerecovery.ErrProtected)
+				require.Equal(t, before, raw(t, pool, h))
+				require.Equal(t, hist, recoveryHistory(t, pool), "protected removal cannot capture/delete/block/refund")
+				_, err = pool.Exec(ctx, `delete from torrent_tags where info_hash=$1 and name=$2`, h, name)
+				require.NoError(t, err)
+			})
+		}
+	}
+}
+
+func authorityFact(t *testing.T, tx pgx.Tx, h []byte, kind string) {
+	t.Helper()
+	var err error
+	switch kind {
+	case "canonical":
+		_, err = tx.Exec(ctx, `insert into torrent_canonical_labels(info_hash,resolved_source,resolved_strength,resolved_at) values($1,'synthetic-authority',10,now())`, h)
+	case "private", "bitgrab":
+		_, err = tx.Exec(ctx, `insert into label_evidence(source,source_kind,source_instance,source_object_id,info_hash,category,observed_at,strength) values('qbittorrent','synthetic-privacy','fixture',encode($1::bytea,'hex'),$1,$2,now(),10)`, h, " "+strings.ToUpper(kind)+" ")
+	case "quarantine":
+		_, err = tx.Exec(ctx, `insert into junkpurge_quarantine(info_hash,torrent_name,verdict,confidence,torrent_snapshot) values($1,'SyntheticAuthority','junk',0.5,'{}')`, h)
+	case "verdict":
+		err = verdicts.RecordTx(ctx, tx, verdicts.Event{InfoHash: h, Verdict: verdicts.VerdictBlacklisted, Mechanism: verdicts.MechanismCsam, Reason: "synthetic independent authority"})
+	}
+	require.NoError(t, err)
+}
+
+func TestPostgresRecoverySeesAuthorityCommittedBeforeFirstSnapshot(t *testing.T) {
+	for _, restore := range []bool{false, true} {
+		for _, kind := range []string{"canonical", "private", "bitgrab", "quarantine", "verdict"} {
+			t.Run(fmt.Sprint(restore)+"/"+kind, func(t *testing.T) {
+				pool := recoveryPool(t)
+				s := store(t, pool)
+				h := hash(98)
+				seed(t, pool, h, false)
+				var snap cataloguerecovery.Snapshot
+				var err error
+				if restore {
+					snap, err = s.Remove(ctx, h, "synthetic pre-snapshot authority", time.Now())
+					require.NoError(t, err)
+				}
+				before := raw(t, pool, h)
+				actor, err := pool.Begin(ctx)
+				require.NoError(t, err)
+				defer actor.Rollback(ctx)
+				authorityFact(t, actor, h, kind)
+				done := make(chan error, 1)
+				go func() {
+					if restore {
+						_, e := s.Restore(ctx, snap.ID, time.Now())
+						done <- e
+					} else {
+						_, e := s.Remove(ctx, h, "synthetic guarded removal", time.Now())
+						done <- e
+					}
+				}()
+				table, mode := "torrent_canonical_labels", "ShareLock"
+				switch kind {
+				case "private", "bitgrab":
+					table = "label_evidence"
+				case "quarantine":
+					table = "junkpurge_quarantine"
+				case "verdict":
+					table = "torrent_verdict_state"
+					mode = "ShareRowExclusiveLock"
+				}
+				require.Eventually(t, func() bool {
+					var waiting bool
+					e := pool.QueryRow(ctx, `select exists(select 1 from pg_locks where relation=$1::regclass and mode=$2 and not granted)`, table, mode).Scan(&waiting)
+					return e == nil && waiting
+				}, time.Second, 5*time.Millisecond)
+				require.NoError(t, actor.Commit(ctx))
+				err = <-done
+				if restore && kind == "verdict" {
+					require.ErrorIs(t, err, cataloguerecovery.ErrConflict)
+				} else {
+					require.ErrorIs(t, err, cataloguerecovery.ErrProtected)
+				}
+				require.Equal(t, before, raw(t, pool, h))
+				expected := 0
+				if restore {
+					expected = 1
+				}
+				require.Equal(t, expected, count(t, pool, "catalogue_recovery_snapshots"))
+				expectedEvents := 0
+				if restore {
+					expectedEvents = 2
+				}
+				require.Equal(t, expectedEvents, count(t, pool, "catalogue_recovery_events"))
+			})
+		}
+	}
+}
+func TestPostgresRecoverySerializesCanonicalWriterAtRawTransition(t *testing.T) {
+	for _, restore := range []bool{false, true} {
+		t.Run(fmt.Sprint(restore), func(t *testing.T) {
+			pool := recoveryPool(t)
+			s := store(t, pool)
+			h := hash(99)
+			seed(t, pool, h, false)
+			var snap cataloguerecovery.Snapshot
+			var err error
+			if restore {
+				snap, err = s.Remove(ctx, h, "synthetic serialization", time.Now())
+				require.NoError(t, err)
+			}
+			action, returned := "delete", "old"
+			if restore {
+				action, returned = "insert", "new"
+			}
+			_, err = pool.Exec(ctx, `create function synthetic_authority_barrier() returns trigger language plpgsql as $$begin perform pg_advisory_xact_lock(9494,2);return `+returned+`;end$$;create trigger synthetic_authority before `+action+` on torrents for each row execute function synthetic_authority_barrier()`)
+			require.NoError(t, err)
+			barrier, err := pool.Acquire(ctx)
+			require.NoError(t, err)
+			defer barrier.Release()
+			_, err = barrier.Exec(ctx, `select pg_advisory_lock(9494,2)`)
+			require.NoError(t, err)
+			defer barrier.Exec(ctx, `select pg_advisory_unlock(9494,2)`)
+			done := make(chan error, 1)
+			go func() {
+				if restore {
+					_, e := s.Restore(ctx, snap.ID, time.Now())
+					done <- e
+				} else {
+					_, e := s.Remove(ctx, h, "synthetic serialization", time.Now())
+					done <- e
+				}
+			}()
+			require.Eventually(t, func() bool {
+				var waiting bool
+				e := barrier.QueryRow(ctx, `select exists(select 1 from pg_locks where locktype='advisory' and classid=9494 and objid=2 and not granted)`).Scan(&waiting)
+				return e == nil && waiting
+			}, time.Second, 5*time.Millisecond)
+			writer := make(chan error, 1)
+			go func() {
+				_, e := pool.Exec(ctx, `insert into torrent_canonical_labels(info_hash,resolved_source,resolved_strength,resolved_at) values($1,'synthetic-independent-authority',10,now())`, h)
+				writer <- e
+			}()
+			require.Eventually(t, func() bool {
+				var waiting bool
+				e := barrier.QueryRow(ctx, `select exists(select 1 from pg_locks where relation='torrent_canonical_labels'::regclass and mode='RowExclusiveLock' and not granted)`).Scan(&waiting)
+				return e == nil && waiting
+			}, time.Second, 5*time.Millisecond)
+			select {
+			case e := <-writer:
+				t.Fatalf("independent authority committed inside transition: %v", e)
+			default:
+			}
+			_, err = barrier.Exec(ctx, `select pg_advisory_unlock(9494,2)`)
+			require.NoError(t, err)
+			require.NoError(t, <-done)
+			require.NoError(t, <-writer)
+			require.Equal(t, 1, count(t, pool, "torrent_canonical_labels"))
+			expectedRaw := 0
+			if restore {
+				expectedRaw = 1
+			}
+			require.Equal(t, expectedRaw, count(t, pool, "torrents"))
+		})
+	}
+}
+
+func TestPostgresRestoredBloomExceptionCannotMaskLaterPrivateFact(t *testing.T) {
+	for _, kind := range []string{"private", "bitgrab"} {
+		t.Run(kind, func(t *testing.T) {
+			pool := recoveryPool(t)
+			s := store(t, pool)
+			h := hash(100)
+			seed(t, pool, h, true)
+			id, err := protocol.NewIDFromByteSlice(h)
+			require.NoError(t, err)
+			m := nativeManager(t, pool, s)
+			require.NoError(t, m.Block(ctx, []protocol.ID{id}, true))
+			var snap int64
+			require.NoError(t, pool.QueryRow(ctx, `select id from catalogue_recovery_snapshots where info_hash=$1`, h).Scan(&snap))
+			ok, err := s.Restore(ctx, snap, time.Now())
+			require.NoError(t, err)
+			require.True(t, ok)
+			kept, err := m.Filter(ctx, []protocol.ID{id})
+			require.NoError(t, err)
+			require.Equal(t, []protocol.ID{id}, kept)
+			actor, err := pool.Begin(ctx)
+			require.NoError(t, err)
+			authorityFact(t, actor, h, kind)
+			require.NoError(t, actor.Commit(ctx))
+			before, hist := raw(t, pool, h), recoveryHistory(t, pool)
+			restart := nativeManager(t, pool, s)
+			for _, manager := range []blocking.Manager{m, restart} {
+				kept, err = manager.Filter(ctx, []protocol.ID{id})
+				require.NoError(t, err)
+				require.Empty(t, kept, "later privacy fact must veto a persisted bloom exception")
+			}
+			require.Equal(t, before, raw(t, pool, h))
+			require.Equal(t, hist, recoveryHistory(t, pool))
+		})
+	}
+}
+func TestPostgresRestoredBloomTagPrivacyPreservesPublicAuthority(t *testing.T) {
+	pool := recoveryPool(t)
+	s := store(t, pool)
+	h := hash(101)
+	seed(t, pool, h, true)
+	id, err := protocol.NewIDFromByteSlice(h)
+	require.NoError(t, err)
+	m := nativeManager(t, pool, s)
+	require.NoError(t, m.Block(ctx, []protocol.ID{id}, true))
+	var snap int64
+	require.NoError(t, pool.QueryRow(ctx, `select id from catalogue_recovery_snapshots where info_hash=$1`, h).Scan(&snap))
+	ok, err := s.Restore(ctx, snap, time.Now())
+	require.NoError(t, err)
+	require.True(t, ok)
+	restart := nativeManager(t, pool, s)
+	check := func(name string, private bool) {
+		_, err := pool.Exec(ctx, `insert into torrent_tags(info_hash,name,created_at,updated_at) values($1,$2,now(),now())`, h, name)
+		require.NoError(t, err)
+		before, hist := raw(t, pool, h), recoveryHistory(t, pool)
+		for _, manager := range []blocking.Manager{m, restart} {
+			kept, e := manager.Filter(ctx, []protocol.ID{id})
+			require.NoError(t, e)
+			if private {
+				require.Empty(t, kept)
+			} else {
+				require.Equal(t, []protocol.ID{id}, kept)
+			}
+		}
+		require.Equal(t, before, raw(t, pool, h))
+		require.Equal(t, hist, recoveryHistory(t, pool))
+		_, err = pool.Exec(ctx, `delete from torrent_tags where info_hash=$1 and name=$2`, h, name)
+		require.NoError(t, err)
+	}
+	for _, prefix := range []string{"manual", "reference", "wanted", "bitgrab"} {
+		check(prefix+"-synthetic", prefix == "bitgrab")
+	}
+	// Extend only this owned fixture to imported forms, without production DDL.
+	_, err = pool.Exec(ctx, `alter table torrent_tags drop constraint torrent_tags_name_check`)
+	require.NoError(t, err)
+	for _, prefix := range []string{"manual", "reference", "wanted", "bitgrab"} {
+		for _, separator := range []string{":", "/", "-", "_"} {
+			check(" \t"+strings.ToUpper(prefix)+separator+"synthetic\r\n", prefix == "bitgrab")
+		}
+	}
+}
