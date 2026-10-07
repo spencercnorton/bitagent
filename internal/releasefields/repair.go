@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"github.com/spencercnorton/bitagent/internal/classifier/parsers"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
@@ -141,12 +142,7 @@ func current(ctx context.Context, tx pgx.Tx, hash protocol.ID) (model.Torrent, m
 			tags.Close()
 			return t, tc, err
 		}
-		name = strings.ToLower(strings.TrimSpace(name))
-		for _, prefix := range []string{"wanted", "manual", "reference", "bitgrab"} {
-			if name == prefix || strings.HasPrefix(name, prefix+":") {
-				blocked = true
-			}
-		}
+		blocked = blocked || catalogueguard.ProtectedTag(name, true)
 	}
 	err = tags.Err()
 	tags.Close()

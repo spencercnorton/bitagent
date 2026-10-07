@@ -165,3 +165,35 @@ func TestQueueDisabledOrColdPoolNeverInitializesOnIngest(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "disabled", out)
 }
+
+func TestPostgresQualifiedAuthorityKeepsWantedMatchingEligible(t *testing.T) {
+	_, pool := workFixture(t)
+	ctx := context.Background()
+	d := draftFor(7)
+	putPublic(t, pool, d)
+	_, err := pool.Exec(ctx, `create table torrent_tags(info_hash bytea,name text);create table torrent_canonical_labels(info_hash bytea,media_type text,media_id text)`)
+	require.NoError(t, err)
+	for _, prefix := range []string{"wanted", "manual", "reference", "bitgrab"} {
+		for _, separator := range []string{":", "/", "-", "_"} {
+			name := " \t" + strings.ToUpper(prefix) + separator + "synthetic\r\n"
+			t.Run(prefix+separator, func(t *testing.T) {
+				_, err := pool.Exec(ctx, `insert into torrent_tags values($1,$2)`, d.InfoHash, name)
+				require.NoError(t, err)
+				tx, err := pool.Begin(ctx)
+				require.NoError(t, err)
+				err = lockedAuthority(ctx, tx, Task{Draft: d})
+				if prefix == "wanted" {
+					require.NoError(t, err)
+				} else {
+					require.ErrorIs(t, err, ErrObsolete)
+				}
+				require.NoError(t, tx.Rollback(ctx))
+				var count int
+				require.NoError(t, pool.QueryRow(ctx, `select count(*) from torrent_tags`).Scan(&count))
+				require.Equal(t, 1, count)
+				_, err = pool.Exec(ctx, `delete from torrent_tags`)
+				require.NoError(t, err)
+			})
+		}
+	}
+}

@@ -29,7 +29,8 @@ Construct the store only with explicit reviewed limits. `RemoveBatch` accepts
 deadline, 15-second statement timeout and 2-second lock timeout; filtering has a
 5-second deadline. Child locks/counts stop at the remaining row cap plus one.
 It owns a repeatable-read transaction:
-locks budget, then ordered hash/raw/dependent rows; captures every column and
+serializes on the budget table, then locks independent authority before its
+first repeatable-read snapshot, then ordered hash/raw/dependent rows; captures every column and
 its schema; removes raw rows; appends a bound blocking verdict and recovery
 transition events; and commits all of these together. Missing tables, unknown raw
 foreign-key dependencies, capture/ledger errors and cancellation roll back the
@@ -52,7 +53,8 @@ All deletion/block writers must use this qualified implementation; mixed legacy
 and recovery writers are unsupported. The attached `Block` uses the atomic
 removal first. A subsequent bloom flush only adds the block and never deletes
 raw rows again. A failed bloom flush leaves the durable exact block in force,
-without losing its complete recovery receipt. Filter errors fail closed.
+without losing its complete recovery receipt. Filter errors fail closed. A later native or recorded private/bitgrab fact
+revokes an otherwise matching stored unblock exception.
 
 `Restore` retains the immutable snapshot and restores complete rows in one
 transaction. It checks payload digest, exact column/constraint contract, source

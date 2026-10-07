@@ -4,6 +4,11 @@
 
 ## 4.4.0 — 2026-10-06
 
+- Share qualified manual/reference/private and wanted tag protection across
+  maintenance paths while preserving wanted-only matcher eligibility. Freeze
+  independent authority before recovery snapshots and keep later private facts
+  from using a stored crawler unblock exception.
+
 - Refuse recovery-schema downgrade while any snapshot, audit event or consumed
   budget remains, including restored and expired snapshots. Empty-only
   downgrade serializes with recovery writers and remains retryable.
