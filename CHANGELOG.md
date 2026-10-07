@@ -23,6 +23,8 @@
 - Select grouped pages from bounded ordered eligible prefixes, retaining the
   exact highest-seeder representative and falling back to the complete grouped
   query for short or unsupported shapes. Add an ordered matched paging index.
+  Avoid disproportionate JIT compilation only inside each prefix's owned
+  read-only transaction. Existing caller transactions keep the original path.
 
 - Measure matcher HTTP latency through bounded response reading and envelope
   decoding. Count model/stage outcomes and failures consistently for ordinary,

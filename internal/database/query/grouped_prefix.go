@@ -1,6 +1,7 @@
 package query
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -87,6 +88,12 @@ func (gq *genericQuery[T]) groupedPrefixItems() ([]T, bool, error) {
 		return nil, false, rendered.Error
 	}
 	statement := rendered.Statement
+	// Only own transactions may change query-local planner settings. Inspect
+	// the resolved factory/scopes so a caller transaction retains its snapshot,
+	// uncommitted rows and settings, including prepared-statement wrappers.
+	if _, inTransaction := statement.ConnPool.(gorm.TxCommitter); inTransaction {
+		return nil, false, nil
+	}
 	from, _ := statement.Clauses["FROM"].Expression.(clause.From)
 	if len(statement.Joins) != 0 || len(from.Joins) != len(joins) {
 		return nil, false, nil
@@ -135,14 +142,28 @@ func (gq *genericQuery[T]) groupedPrefixItems() ([]T, bool, error) {
 			return nil, false, err
 		}
 		keys := strings.Join(keyNames, ",")
-		sql := "WITH eligible AS NOT MATERIALIZED (" + eligibleSQL +
+		prefixSQL := "WITH eligible AS NOT MATERIALIZED (" + eligibleSQL +
 			"), candidates AS MATERIALIZED (" + dao.ToSQL(candidates) +
 			"), keys AS MATERIALIZED (SELECT DISTINCT " + keys + " FROM candidates), " +
 			"winners AS MATERIALIZED (SELECT representative.id FROM keys JOIN LATERAL (" +
 			strings.Join(branches, " UNION ALL ") + ") representative ON TRUE), " +
 			"selected AS (SELECT candidate.* FROM candidates candidate JOIN winners ON winners.id=candidate.id) " + outerSQL
 		var items []T
-		if err = fresh().Raw(sql).Scan(&items).Error; err != nil {
+		executionDB := fresh()
+		if _, inTransaction := executionDB.Statement.ConnPool.(gorm.TxCommitter); inTransaction {
+			return nil, false, nil
+		}
+		// These bounded pages can cross PostgreSQL's JIT cost threshold even
+		// though execution is short. Compiling hundreds of expressions costs
+		// more than the page itself. SET LOCAL ends with this owned read-only
+		// transaction; ordinary queries, fallback and pooled settings retain
+		// their existing behavior on success, failure or cancellation.
+		if err = executionDB.Transaction(func(tx *gorm.DB) error {
+			if settingErr := tx.Exec("SET LOCAL jit = off").Error; settingErr != nil {
+				return settingErr
+			}
+			return tx.Raw(prefixSQL).Scan(&items).Error
+		}, &sql.TxOptions{ReadOnly: true}); err != nil {
 			return nil, false, fmt.Errorf("grouped candidate prefix: %w", err)
 		}
 		if len(items) >= wanted {
