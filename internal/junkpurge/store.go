@@ -167,7 +167,7 @@ ON CONFLICT (info_hash) DO NOTHING`, torrentSnap); err != nil {
 (t.name,t.size,t.private,t.created_at,t.updated_at,t.files_status,t.files_count) IS NOT DISTINCT FROM
 (s.name,s.size,s.private,s.created_at,s.updated_at,s.files_status,s.files_count),
 t.private OR EXISTS(SELECT 1 FROM torrent_canonical_labels WHERE info_hash=$1)
-OR EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=$1 AND source='qbittorrent' AND lower(btrim(category,$3)) IN('private','bitgrab'))
+OR EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=$1 AND `+catalogueguard.QBPrivacySQL("source", "category", "$3")+`)
 OR EXISTS(SELECT 1 FROM torrent_verdict_state WHERE info_hash=$1 AND (mechanism<>'junkpurge' OR verdict NOT IN('quarantined','tombstoned')))
 FROM torrents t CROSS JOIN jsonb_populate_record(null::torrents,$2::jsonb) s WHERE t.info_hash=$1`, ihBytes, torrentSnap, catalogueguard.TagWhitespace).Scan(&sourceMatches, &protected); err != nil {
 		return err

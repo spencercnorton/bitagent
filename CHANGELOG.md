@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 4.5.1 — 2026-10-07
+
+- Normalize independent qB source and category privacy facts during legacy
+  quarantine restore. Refuse protected restores atomically while retaining
+  their snapshots, raw rows, queued work and verdict history.
+
 ## 4.5.0 — 2026-10-07
 
 - Enforce native and independently recorded private authority throughout public
