@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 4.5.0 — 2026-10-07
+
 - Enforce native and independently recorded private authority throughout public
   lists, counts, files, tags and Torznab, matching the existing denied-grab
   boundary. Retain source rows and ordinary wanted/manual lookalikes.
