@@ -8,17 +8,23 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 )
 
 // Store is the persistence layer for the seeds worker. It owns the
 // torrent_tracker_seeds ledger and mirrors positive results into the
 // torrents_torrent_sources(source='tracker') surfacing row.
 type Store struct {
-	pool lazy.Lazy[*pgxpool.Pool]
+	pool  lazy.Lazy[*pgxpool.Pool]
+	names *namepolicy.Policy
 }
 
-func NewStore(pool lazy.Lazy[*pgxpool.Pool]) *Store {
-	return &Store{pool: pool}
+func NewStore(pool lazy.Lazy[*pgxpool.Pool], names ...*namepolicy.Policy) *Store {
+	s := &Store{pool: pool}
+	if len(names) > 0 {
+		s.names = names[0]
+	}
+	return s
 }
 
 // SelectStale returns up to limit info-hashes that have never been scraped or
@@ -30,15 +36,17 @@ func (s *Store) SelectStale(ctx context.Context, minAge time.Duration, limit int
 	if err != nil {
 		return nil, fmt.Errorf("seeds: acquire pool: %w", err)
 	}
-	const q = `
+	admission, args := s.selectionAdmission()
+	q := `
 select t.info_hash
 from torrents t
 left join torrent_tracker_seeds s on s.info_hash = t.info_hash
-where s.info_hash is null
-   or s.checked_at < now() - make_interval(secs => $1)
+where (s.info_hash is null
+   or s.checked_at < now() - make_interval(secs => $1)) AND ` + admission + `
 order by s.checked_at asc nulls first
 limit $2`
-	rows, err := pool.Query(ctx, q, minAge.Seconds(), limit)
+	args = append([]any{minAge.Seconds(), limit}, args...)
+	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("seeds: select stale: %w", err)
 	}
@@ -146,10 +154,18 @@ where tc.info_hash = agg.info_hash
 // Returns how many source rows were actually upserted and cleared. hashes
 // fixes the iteration order so batch results map back deterministically.
 func (s *Store) Persist(ctx context.Context, hashes [][]byte, outcomes map[string]*ScrapeOutcome) (upserted, cleared int, err error) {
-	pool, err := s.pool.Get()
+	err = s.withAdmission(ctx, hashes, true, func(tx pgx.Tx, allowed [][]byte) error {
+		var e error
+		upserted, cleared, e = persist(ctx, tx, allowed, outcomes)
+		return e
+	})
 	if err != nil {
-		return 0, 0, fmt.Errorf("seeds: acquire pool: %w", err)
+		return 0, 0, err
 	}
+	return
+}
+
+func persist(ctx context.Context, tx pgx.Tx, hashes [][]byte, outcomes map[string]*ScrapeOutcome) (upserted, cleared int, err error) {
 
 	const (
 		opUpsert = iota
@@ -185,7 +201,7 @@ func (s *Store) Persist(ctx context.Context, hashes [][]byte, outcomes map[strin
 		}
 	}
 
-	br := pool.SendBatch(ctx, batch)
+	br := tx.SendBatch(ctx, batch)
 	defer br.Close()
 
 	for i := range hashes {
@@ -217,17 +233,16 @@ func (s *Store) SyncDenormalizedCounts(ctx context.Context, hashes [][]byte) (in
 		return 0, nil
 	}
 
-	pool, err := s.pool.Get()
+	var synced int64
+	err := s.withAdmission(ctx, hashes, true, func(tx pgx.Tx, allowed [][]byte) error {
+		ct, e := tx.Exec(ctx, denormSyncSQL, allowed)
+		synced = ct.RowsAffected()
+		return e
+	})
 	if err != nil {
-		return 0, fmt.Errorf("seeds: acquire pool: %w", err)
+		return 0, err
 	}
-
-	ct, err := pool.Exec(ctx, denormSyncSQL, hashes)
-	if err != nil {
-		return 0, fmt.Errorf("seeds: denorm sync: %w", err)
-	}
-
-	return ct.RowsAffected(), nil
+	return synced, nil
 }
 
 // CoverageCounts returns standing ledger coverage for the gauges: total rows

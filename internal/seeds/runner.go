@@ -4,23 +4,26 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spencercnorton/bitagent/internal/evidence/liveness"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"go.uber.org/zap"
 )
 
 // LivenessRecorder is the slice of *liveness.Store the runner feeds scrape
 // evidence into. nil disables the hook entirely (CLI dry-runs, tests).
 type LivenessRecorder interface {
-	MarkAliveBatch(ctx context.Context, infoHashes [][]byte, observedAt time.Time, source string) (int64, error)
-	RecordSuspectBatch(ctx context.Context, infoHashes [][]byte, observedAt time.Time) (int64, error)
+	MarkAliveBatchTx(ctx context.Context, tx pgx.Tx, infoHashes [][]byte, observedAt time.Time, source string) (int64, error)
+	RecordSuspectBatchTx(ctx context.Context, tx pgx.Tx, infoHashes [][]byte, observedAt time.Time) (int64, error)
 }
 
 // Stats summarizes one RunBatch: how the scraped hashes classified and how many
 // surfacing rows changed.
 type Stats struct {
 	Selected        int
+	Denied          int // selected public hashes withheld by a later source check
 	Positive        int // live swarm found (seeders/leechers > 0)
 	KnownZero       int // a tracker knows the hash but the swarm is dead
 	Unknown         int // no tracker in the pool knows the hash
@@ -45,11 +48,16 @@ type Runner struct {
 // NewRunner builds a Runner. metrics may be nil (metric updates are guarded);
 // livenessRec may be nil (scrape evidence is then not fed into the liveness
 // ladder — CLI contexts).
-func NewRunner(cfg Config, pool lazy.Lazy[*pgxpool.Pool], metrics *Metrics, livenessRec LivenessRecorder, logger *zap.SugaredLogger) *Runner {
+func NewRunner(cfg Config, pool lazy.Lazy[*pgxpool.Pool], metrics *Metrics, livenessRec LivenessRecorder, logger *zap.SugaredLogger, names ...*namepolicy.Policy) *Runner {
+	store := NewStore(pool, names...)
+	scraper := NewScraper(cfg, metrics, logger)
+	scraper.admit = func(ctx context.Context, hashes [][]byte, use func([][]byte) error) error {
+		return store.withAdmission(ctx, hashes, false, func(_ pgx.Tx, allowed [][]byte) error { return use(allowed) })
+	}
 	return &Runner{
 		cfg:      cfg,
-		store:    NewStore(pool),
-		scraper:  NewScraper(cfg, metrics, logger),
+		store:    store,
+		scraper:  scraper,
 		metrics:  metrics,
 		liveness: livenessRec,
 		logger:   logger,
@@ -76,13 +84,19 @@ func (r *Runner) RunBatch(ctx context.Context, write bool) (Stats, error) {
 		r.metrics.hashesSelected.Add(float64(len(hashes)))
 	}
 
-	outcomes := r.scraper.ScrapeBatch(ctx, hashes)
+	outcomes, err := r.scraper.ScrapeBatch(ctx, hashes)
+	if err != nil {
+		r.incErr("admission")
+		return st, err
+	}
+	admitted := make([][]byte, 0, len(hashes))
 	for _, h := range hashes {
 		o := outcomes[string(h)]
 		if o == nil {
-			st.Unknown++
+			st.Denied++
 			continue
 		}
+		admitted = append(admitted, h)
 		switch o.Class() {
 		case "positive":
 			st.Positive++
@@ -102,52 +116,52 @@ func (r *Runner) RunBatch(ctx context.Context, write bool) (Stats, error) {
 		return st, nil
 	}
 
-	up, cl, perr := r.store.Persist(ctx, hashes, outcomes)
-	if perr != nil {
-		r.incErr("persist")
-		return st, perr
-	}
-	st.SourcesUpserted = up
-	st.SourcesCleared = cl
-	if r.metrics != nil {
-		r.metrics.sourcesUpserted.Add(float64(up))
-		r.metrics.sourcesCleared.Add(float64(cl))
-	}
-
-	synced, serr := r.store.SyncDenormalizedCounts(ctx, hashes)
-	if serr != nil {
-		r.incErr("denorm")
-		return st, serr
-	}
-	st.DenormSynced = int(synced)
-	if r.metrics != nil {
-		r.metrics.denormSynced.Add(float64(synced))
-	}
-
-	// Feed scrape evidence into the liveness ladder (best-effort — liveness
-	// is advisory; a failure here must not fail the cycle). Positive scrapes
-	// revive suspect/dead rows (real seeders exist); authoritative zeros
-	// record suspect observations. Promotion to dead stays exclusively with
-	// the resolver — scrape evidence NEVER calls MarkDead.
-	if r.liveness != nil {
-		positives, zeros := partitionLivenessEvidence(hashes, outcomes)
-		now := time.Now()
-		if revived, lerr := r.liveness.MarkAliveBatch(ctx, positives, now, liveness.AliveSourceTrackerScrape); lerr != nil {
-			r.incErr("liveness_alive")
-			r.logger.Warnw("seeds: liveness mark-alive batch", "err", lerr)
-		} else {
-			st.LivenessRevived = int(revived)
+	// Recheck and commit the seed ledger, source projection, derived counts and
+	// existing liveness observations together. A late denial or any error leaves
+	// no partial new facts. No transition here promotes anything to dead.
+	err = r.store.withAdmission(ctx, admitted, true, func(tx pgx.Tx, allowed [][]byte) error {
+		st.Denied += len(admitted) - len(allowed)
+		var e error
+		st.SourcesUpserted, st.SourcesCleared, e = persist(ctx, tx, allowed, outcomes)
+		if e != nil {
+			return e
 		}
-		if suspects, lerr := r.liveness.RecordSuspectBatch(ctx, zeros, now); lerr != nil {
-			r.incErr("liveness_suspect")
-			r.logger.Warnw("seeds: liveness record-suspect batch", "err", lerr)
-		} else {
+		ct, e := tx.Exec(ctx, denormSyncSQL, allowed)
+		if e != nil {
+			return e
+		}
+		st.DenormSynced = int(ct.RowsAffected())
+		if r.liveness != nil {
+			positives, zeros := partitionLivenessEvidence(allowed, outcomes)
+			now := time.Now()
+			revived, e := r.liveness.MarkAliveBatchTx(ctx, tx, positives, now, liveness.AliveSourceTrackerScrape)
+			if e != nil {
+				return e
+			}
+			st.LivenessRevived = int(revived)
+			suspects, e := r.liveness.RecordSuspectBatchTx(ctx, tx, zeros, now)
+			if e != nil {
+				return e
+			}
 			st.LivenessSuspect = int(suspects)
 		}
-		if r.metrics != nil {
-			r.metrics.livenessRevived.Add(float64(st.LivenessRevived))
-			r.metrics.livenessSuspect.Add(float64(st.LivenessSuspect))
-		}
+		return nil
+	})
+	if err != nil {
+		r.incErr("persist")
+		st.SourcesUpserted = 0
+		st.SourcesCleared = 0
+		st.DenormSynced = 0
+		st.LivenessRevived = 0
+		st.LivenessSuspect = 0
+		return st, err
+	}
+	if r.metrics != nil {
+		r.metrics.sourcesUpserted.Add(float64(st.SourcesUpserted))
+		r.metrics.sourcesCleared.Add(float64(st.SourcesCleared))
+		r.metrics.denormSynced.Add(float64(st.DenormSynced))
+		r.metrics.livenessRevived.Add(float64(st.LivenessRevived))
+		r.metrics.livenessSuspect.Add(float64(st.LivenessSuspect))
 	}
 	return st, nil
 }

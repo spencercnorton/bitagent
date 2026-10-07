@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spencercnorton/bitagent/internal/evidence/liveness"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/seeds"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
@@ -28,7 +29,8 @@ type Params struct {
 	Config   seeds.Config
 	Pool     lazy.Lazy[*pgxpool.Pool]
 	Metrics  *seeds.Metrics
-	Liveness *liveness.Store `optional:"true"`
+	Liveness *liveness.Store    `optional:"true"`
+	Names    *namepolicy.Policy `optional:"true"`
 	Logger   *zap.SugaredLogger
 }
 
@@ -77,7 +79,7 @@ func (p Params) action(cctx *cli.Context) error {
 	if p.Liveness != nil {
 		livenessRec = p.Liveness
 	}
-	runner := seeds.NewRunner(cfg, p.Pool, p.Metrics, livenessRec, logger)
+	runner := seeds.NewRunner(cfg, p.Pool, p.Metrics, livenessRec, logger, p.Names)
 
 	var total seeds.Stats
 	batchNum := 0
@@ -88,6 +90,7 @@ func (p Params) action(cctx *cli.Context) error {
 		}
 		batchNum++
 		total.Selected += st.Selected
+		total.Denied += st.Denied
 		total.Positive += st.Positive
 		total.KnownZero += st.KnownZero
 		total.Unknown += st.Unknown
@@ -98,6 +101,7 @@ func (p Params) action(cctx *cli.Context) error {
 			"mode", modeLabel(write),
 			"batch", batchNum,
 			"selected", st.Selected,
+			"withheld", st.Denied,
 			"positive", st.Positive,
 			"known_zero", st.KnownZero,
 			"unknown", st.Unknown,
@@ -127,7 +131,8 @@ func (p Params) action(cctx *cli.Context) error {
 	logger.Infow("refresh-seeds done",
 		"mode", modeLabel(write),
 		"batches", batchNum,
-		"scraped", total.Selected,
+		"selected", total.Selected,
+		"withheld", total.Denied,
 		"positive", total.Positive,
 		"positive_pct", fmt.Sprintf("%.1f", pct(total.Positive)),
 		"known_zero", total.KnownZero,
