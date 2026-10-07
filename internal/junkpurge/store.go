@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/catalogueguard"
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/processor"
 	"github.com/spencercnorton/bitagent/internal/protocol"
@@ -90,6 +92,22 @@ func RestoreQuarantined(ctx context.Context, pool *pgxpool.Pool, vstore *verdict
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Independent authority is not FK-bound to torrents. Freeze it before
+	// reading the snapshot, then recheck the raw row and tags under its lock.
+	if _, err := tx.Exec(ctx, `set local statement_timeout='15s'; set local lock_timeout='2s';
+LOCK TABLE label_evidence,torrent_canonical_labels IN SHARE MODE;
+LOCK TABLE torrent_verdict_state,torrent_verdict_events IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return err
+	}
+	var snapshotBytes, snapshotRows int64
+	if err := tx.QueryRow(ctx, `SELECT octet_length(torrent_snapshot::text)+coalesce(octet_length(files_snapshot::text),0)+coalesce(octet_length(sources_snapshot::text),0),
+1+coalesce(jsonb_array_length(files_snapshot),0)+coalesce(jsonb_array_length(sources_snapshot),0)
+FROM junkpurge_quarantine WHERE info_hash=$1`, ihBytes).Scan(&snapshotBytes, &snapshotRows); err != nil {
+		return fmt.Errorf("quarantine entry not found: %w", err)
+	}
+	if snapshotBytes > 64<<20 || snapshotRows > 65536 {
+		return cataloguerecovery.ErrCapacity
+	}
 
 	var torrentSnap, filesSnap, sourcesSnap []byte
 	var quarantinedAt time.Time
@@ -97,6 +115,15 @@ func RestoreQuarantined(ctx context.Context, pool *pgxpool.Pool, vstore *verdict
 		`SELECT torrent_snapshot, files_snapshot, sources_snapshot, quarantined_at FROM junkpurge_quarantine WHERE info_hash = $1`,
 		ihBytes).Scan(&torrentSnap, &filesSnap, &sourcesSnap, &quarantinedAt); err != nil {
 		return fmt.Errorf("quarantine entry not found: %w", err)
+	}
+	var bound bool
+	if err := tx.QueryRow(ctx, `SELECT (jsonb_populate_record(null::torrents,$2::jsonb)).info_hash=$1
+AND NOT EXISTS(SELECT 1 FROM jsonb_populate_recordset(null::torrent_files,coalesce($3::jsonb,'[]'::jsonb)) WHERE info_hash IS DISTINCT FROM $1)
+AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce($4::jsonb,'[]'::jsonb)) r WHERE (jsonb_populate_record(null::torrents_torrent_sources,r.value)).info_hash IS DISTINCT FROM $1)`, ihBytes, torrentSnap, filesSnap, sourcesSnap).Scan(&bound); err != nil {
+		return err
+	}
+	if !bound {
+		return cataloguerecovery.ErrConflict
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO torrents (info_hash, name, size, private, created_at, updated_at, files_status, files_count)
@@ -123,6 +150,49 @@ FROM junkpurge_quarantine WHERE info_hash=$1 FOR UPDATE`, ihBytes).
 	if !quarantinedAt.Equal(currentQuarantinedAt) || !bytes.Equal(torrentSnap, currentTorrent) ||
 		!bytes.Equal(filesSnap, currentFiles) || !bytes.Equal(sourcesSnap, currentSources) {
 		return fmt.Errorf("quarantine snapshot changed during restore; retry against its current version")
+	}
+	var sourceMatches, protected bool
+	if err := tx.QueryRow(ctx, `SELECT
+(t.name,t.size,t.private,t.created_at,t.updated_at,t.files_status,t.files_count) IS NOT DISTINCT FROM
+(s.name,s.size,s.private,s.created_at,s.updated_at,s.files_status,s.files_count),
+t.private OR EXISTS(SELECT 1 FROM torrent_canonical_labels WHERE info_hash=$1)
+OR EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=$1 AND source='qbittorrent' AND lower(btrim(category,$3)) IN('private','bitgrab'))
+OR EXISTS(SELECT 1 FROM torrent_verdict_state WHERE info_hash=$1 AND (mechanism<>'junkpurge' OR verdict NOT IN('quarantined','tombstoned')))
+FROM torrents t CROSS JOIN jsonb_populate_record(null::torrents,$2::jsonb) s WHERE t.info_hash=$1`, ihBytes, torrentSnap, catalogueguard.TagWhitespace).Scan(&sourceMatches, &protected); err != nil {
+		return err
+	}
+	if protected {
+		return cataloguerecovery.ErrProtected
+	}
+	if !sourceMatches {
+		return cataloguerecovery.ErrConflict
+	}
+	var tagCount, tagBytes int64
+	if err := tx.QueryRow(ctx, `SELECT count(*),coalesce(sum(octet_length(name)),0) FROM (SELECT name FROM torrent_tags WHERE info_hash=$1 LIMIT 65537) bounded`, ihBytes).Scan(&tagCount, &tagBytes); err != nil {
+		return err
+	}
+	if tagCount > 65536 || tagBytes > 64<<20 {
+		return cataloguerecovery.ErrCapacity
+	}
+	tags, err := tx.Query(ctx, `SELECT name FROM torrent_tags WHERE info_hash=$1 LIMIT 65537 FOR SHARE`, ihBytes)
+	if err != nil {
+		return err
+	}
+	for tags.Next() {
+		var name string
+		if err := tags.Scan(&name); err != nil {
+			tags.Close()
+			return err
+		}
+		if catalogueguard.ProtectedTag(name, true) {
+			tags.Close()
+			return cataloguerecovery.ErrProtected
+		}
+	}
+	err = tags.Err()
+	tags.Close()
+	if err != nil {
+		return err
 	}
 	if len(filesSnap) > 0 {
 		if _, err := tx.Exec(ctx, `
@@ -195,44 +265,12 @@ ON CONFLICT (fingerprint) WHERE status IN ('pending', 'retry') DO NOTHING`, job.
 	return tx.Commit(ctx)
 }
 
-// DeleteQuarantinedNow permanently removes a quarantine entry immediately
-// (skipping the rest of the review window) and blacklists its info_hash so the
-// crawler can't bring it back.
-// When configured, its verdict state/event commit with the deletion and blacklist.
+// DeleteQuarantinedNow retains the legacy archive until a destructive retention
+// policy and complete recovery caller contract have been qualified. An explicit
+// operator request cannot substitute for missing complete source capture.
 func DeleteQuarantinedNow(ctx context.Context, pool *pgxpool.Pool, vstore *verdicts.Store, logger *zap.SugaredLogger, infoHashHex string) error {
-	ih, err := protocol.ParseID(infoHashHex)
-	if err != nil {
+	if _, err := protocol.ParseID(infoHashHex); err != nil {
 		return fmt.Errorf("invalid info_hash %q: %w", infoHashHex, err)
 	}
-	ihBytes := ih[:]
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	// Review actions are bound to an existing snapshot and serialize with a
-	// concurrent restore. A missing entry is not authority to blacklist a hash.
-	var present bool
-	if err = tx.QueryRow(ctx, `SELECT true FROM junkpurge_quarantine WHERE info_hash=$1 FOR UPDATE`, ihBytes).Scan(&present); err != nil {
-		return fmt.Errorf("quarantine entry not found: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `
-INSERT INTO torrent_liveness (info_hash, status, last_observed_at, blacklisted_at)
-VALUES ($1, 'dead', now(), now())
-ON CONFLICT (info_hash) DO UPDATE SET status = 'dead', blacklisted_at = now(), updated_at = now()`, ihBytes); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(ctx, `DELETE FROM junkpurge_quarantine WHERE info_hash = $1`, ihBytes); err != nil {
-		return err
-	}
-	if vstore != nil {
-		if err := verdicts.RecordTx(ctx, tx, verdicts.Event{
-			InfoHash: ihBytes, Verdict: verdicts.VerdictBlacklisted,
-			Mechanism: verdicts.MechanismOperator, Actor: "operator",
-			Reason: "operator confirmed delete from quarantine",
-		}); err != nil {
-			return fmt.Errorf("record quarantine deletion: %w", err)
-		}
-	}
-	return tx.Commit(ctx)
+	return cataloguerecovery.ErrDisabled
 }

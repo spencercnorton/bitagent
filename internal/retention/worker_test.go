@@ -1,11 +1,24 @@
 package retention
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
+
 	"go.uber.org/zap"
 )
+
+func TestPhysicalRetentionRemainsHeldWithoutQualifiedRecovery(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.Enabled, cfg.EnablePurge = true, true
+	n, err := purgeBatch(context.Background(), nil, cfg)
+	if n != 0 || !errors.Is(err, cataloguerecovery.ErrDisabled) {
+		t.Fatalf("purgeBatch = %d, %v, want recovery-disabled hold", n, err)
+	}
+}
 
 // TestDefaultConfigSafe verifies the defaults are "do nothing". A
 // new deploy must not immediately start deleting torrents; both

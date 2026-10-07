@@ -4,11 +4,13 @@
 package quarantinehttp
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 	"github.com/spencercnorton/bitagent/internal/httpserver"
 	"github.com/spencercnorton/bitagent/internal/junkpurge"
 	"github.com/spencercnorton/bitagent/internal/lazy"
@@ -82,7 +84,11 @@ func (h *handler) restore(c *gin.Context) {
 		return
 	}
 	if err := junkpurge.RestoreQuarantined(c.Request.Context(), pool, h.verdicts, h.logger, c.Param("hash")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, cataloguerecovery.ErrProtected) || errors.Is(err, cataloguerecovery.ErrConflict) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "restored", "infoHash": c.Param("hash")})
@@ -95,7 +101,11 @@ func (h *handler) deleteNow(c *gin.Context) {
 		return
 	}
 	if err := junkpurge.DeleteQuarantinedNow(c.Request.Context(), pool, h.verdicts, h.logger, c.Param("hash")); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		status := http.StatusInternalServerError
+		if errors.Is(err, cataloguerecovery.ErrDisabled) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted", "infoHash": c.Param("hash")})

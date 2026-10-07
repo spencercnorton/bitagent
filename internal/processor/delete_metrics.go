@@ -10,9 +10,8 @@ import (
 	"github.com/spencercnorton/bitagent/internal/telemetry/dualemit"
 )
 
-// DeleteMetrics counts classifier-driven torrent deletes at the one place
-// they become real — where the processor turns ErrDeleteTorrent into a row
-// on infoHashesToDelete. Until this existed the `default` workflow's
+// DeleteMetrics counts classifier-driven torrent deletes after the bounded
+// recovery transition commits. Held or failed decisions do not count. The `default` workflow's
 // delete rules were the only armed destructive path with no metric at all
 // (GROUND-TRUTH F-1): six content types sat at zero rows in a 7M-row
 // catalogue and nothing reported the rate.

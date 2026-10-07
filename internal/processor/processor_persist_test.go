@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/spencercnorton/bitagent/internal/blocking"
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 	"github.com/spencercnorton/bitagent/internal/classifier"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
@@ -62,6 +64,7 @@ type recordingBlockingManager struct {
 	blocking.Manager
 	mu      sync.Mutex
 	blocked []protocol.ID
+	err     error
 }
 
 func (m *recordingBlockingManager) Block(
@@ -71,6 +74,9 @@ func (m *recordingBlockingManager) Block(
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.err != nil {
+		return m.err
+	}
 	m.blocked = append(m.blocked, hashes...)
 	return nil
 }
@@ -167,15 +173,7 @@ func newProcessTestProcessor(
 	}, mock, blocker
 }
 
-func expectTorrentDelete(mock sqlmock.Sqlmock, hash protocol.ID) {
-	mock.ExpectBegin()
-	mock.ExpectExec(`DELETE FROM "torrents"`).
-		WithArgs(hash[:]).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectCommit()
-}
-
-func expectTorrentContentInsertAndTorrentDelete(mock sqlmock.Sqlmock, deleteHash protocol.ID) {
+func expectTorrentContentInsert(mock sqlmock.Sqlmock) {
 	mock.ExpectBegin()
 	expectReleaseAttributeReads(mock, processTestHash(3), "kept movie 2026")
 	// restoreLLMEnglishAudio: the kept row carries no english_audio signal, so
@@ -184,9 +182,6 @@ func expectTorrentContentInsertAndTorrentDelete(mock sqlmock.Sqlmock, deleteHash
 		WillReturnRows(sqlmock.NewRows([]string{"id", "english_audio", "english_audio_source"}))
 	mock.ExpectQuery(`INSERT INTO "torrent_contents"`).
 		WillReturnRows(sqlmock.NewRows([]string{"published_at"}).AddRow(nil))
-	mock.ExpectExec(`DELETE FROM "torrents"`).
-		WithArgs(deleteHash[:]).
-		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 }
 
@@ -203,7 +198,6 @@ func TestProcessClassifierOnlyDeletePersistsWithoutInsert(t *testing.T) {
 			return classification.Result{}, classification.ErrDeleteTorrent
 		}},
 	)
-	expectTorrentDelete(mock, hash)
 
 	if err := p.Process(context.Background(), MessageParams{InfoHashes: []protocol.ID{hash}}); err != nil {
 		t.Fatalf("Process: %v", err)
@@ -229,7 +223,6 @@ func TestProcessContentFilterOnlyDeletePersistsWithoutInsert(t *testing.T) {
 	cfg.Enforce = true
 	cfg.BlockedExtensions = []string{"iso"}
 	p.contentFilter = contentfilter.New(cfg)
-	expectTorrentDelete(mock, hash)
 
 	if err := p.Process(context.Background(), MessageParams{InfoHashes: []protocol.ID{hash}}); err != nil {
 		t.Fatalf("Process: %v", err)
@@ -261,7 +254,7 @@ func TestProcessMixedKeepAndDeletePersistsBoth(t *testing.T) {
 			}, nil
 		}},
 	)
-	expectTorrentContentInsertAndTorrentDelete(mock, deleteHash)
+	expectTorrentContentInsert(mock)
 
 	if err := p.Process(context.Background(), MessageParams{
 		InfoHashes: []protocol.ID{keepHash, deleteHash},
@@ -307,7 +300,6 @@ func TestProcessDeletePersistsAlongsideFailedAndDeferredRepublishes(t *testing.T
 
 	expectQueueJob(mock, "failed-republish")
 	expectQueueJob(mock, "deferred-republish")
-	expectTorrentDelete(mock, deleteHash)
 
 	if err := p.Process(context.Background(), MessageParams{
 		InfoHashes: []protocol.ID{deleteHash, failedHash, deferredHash},
@@ -379,6 +371,52 @@ func TestProcessNoPersistenceWorkAvoidsTransaction(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unexpected SQL: %v", err)
+	}
+}
+
+func TestProcessRecoveryOffHoldsLegacyDeleteWithoutSQLOrDeleteMetric(t *testing.T) {
+	hash := processTestHash(10)
+	p, mock, blocker := newProcessTestProcessor(t,
+		[]model.Torrent{processTestTorrent(hash, "synthetic legacy CEL proposal", "mkv")},
+		processRunnerStub{run: func(model.Torrent) (classification.Result, error) {
+			return classification.Result{}, classification.ErrDeleteTorrent
+		}},
+	)
+	blocker.err = cataloguerecovery.ErrDisabled
+	p.deleteMetrics = NewDeleteMetrics()
+	err := p.Process(context.Background(), MessageParams{InfoHashes: []protocol.ID{hash}})
+	if !errors.Is(err, cataloguerecovery.ErrDisabled) {
+		t.Fatalf("Process error = %v, want recovery disabled", err)
+	}
+	if len(blocker.blockedHashes()) != 0 {
+		t.Fatal("held action was admitted to blocking")
+	}
+	if count := testutil.CollectAndCount(p.deleteMetrics.deleted); count != 0 {
+		t.Fatalf("held deletion emitted %d delete counters", count)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("held deletion issued SQL: %v", err)
+	}
+}
+
+func TestProcessRecoveryOffStillPersistsOrdinaryRowsInMixedBatch(t *testing.T) {
+	keepHash, deleteHash := processTestHash(3), processTestHash(11)
+	p, mock, blocker := newProcessTestProcessor(t,
+		[]model.Torrent{processTestTorrent(keepHash, "kept movie 2026", "mkv"), processTestTorrent(deleteHash, "synthetic legacy proposal", "mkv")},
+		processRunnerStub{run: func(torrent model.Torrent) (classification.Result, error) {
+			if torrent.InfoHash == deleteHash {
+				return classification.Result{}, classification.ErrDeleteTorrent
+			}
+			return classification.Result{ContentAttributes: classification.ContentAttributes{ContentType: model.NewNullContentType(model.ContentTypeMovie)}}, nil
+		}},
+	)
+	blocker.err = cataloguerecovery.ErrDisabled
+	expectTorrentContentInsert(mock)
+	if err := p.Process(context.Background(), MessageParams{InfoHashes: []protocol.ID{keepHash, deleteHash}}); !errors.Is(err, cataloguerecovery.ErrDisabled) {
+		t.Fatalf("Process error = %v, want recovery disabled", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("ordinary persistence: %v", err)
 	}
 }
 

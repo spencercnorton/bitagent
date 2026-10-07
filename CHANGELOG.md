@@ -5,6 +5,14 @@
 - Measure matcher HTTP latency through bounded response reading and envelope
   decoding. Count model/stage outcomes and failures consistently for ordinary,
   controlled and embedding attempts, excluding admission, cache and replay.
+- Fail closed on unqualified catalogue removal and crawler blocks. Route
+  processor and content-type purge removal through the complete recovery
+  writer, retain ordinary keep/review work, and count only committed deletes.
+- Hold legacy retention and both junk-quarantine writers before partial capture
+  can discard source rows. Retain paid Batch receipts, historical quarantine
+  maintenance and restore support without reporting held actions as applied.
+- Refuse legacy archive hard purge and protect operator restoration against
+  competing private/override/verdict authority and mismatched source hashes.
 
 ## 4.4.0 — 2026-10-06
 
