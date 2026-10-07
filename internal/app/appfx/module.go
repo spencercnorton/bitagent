@@ -47,6 +47,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/llmwork/llmworkfx"
 	"github.com/spencercnorton/bitagent/internal/logging/loggingfx"
 	"github.com/spencercnorton/bitagent/internal/metrics/metricsfx"
+	"github.com/spencercnorton/bitagent/internal/namepolicy/namepolicyfx"
 	"github.com/spencercnorton/bitagent/internal/processor/processorfx"
 	"github.com/spencercnorton/bitagent/internal/protocol/dht/dhtfx"
 	"github.com/spencercnorton/bitagent/internal/protocol/metainfo/metainfofx"
@@ -90,6 +91,7 @@ func New() fx.Option {
 		llmworkfx.New(),
 		metainfofx.New(),
 		metricsfx.New(),
+		namepolicyfx.New(),
 		processorfx.New(),
 		queuefx.New(),
 		queuecleanfx.New(),
