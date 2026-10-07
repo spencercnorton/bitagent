@@ -278,6 +278,18 @@ type ComplexityRoot struct {
 		Metrics func(childComplexity int, input gen.QueueMetricsQueryInput) int
 	}
 
+	ReleaseAttributes struct {
+		AudioChannels    func(childComplexity int) int
+		AudioFeatures    func(childComplexity int) int
+		AudioFormats     func(childComplexity int) int
+		Encoder          func(childComplexity int) int
+		HDRFormats       func(childComplexity int) int
+		Parser           func(childComplexity int) int
+		Revisions        func(childComplexity int) int
+		SourceNameSHA256 func(childComplexity int) int
+		Version          func(childComplexity int) int
+	}
+
 	ReleaseYearAgg struct {
 		Count      func(childComplexity int) int
 		IsEstimate func(childComplexity int) int
@@ -330,6 +342,7 @@ type ComplexityRoot struct {
 		Languages          func(childComplexity int) int
 		Leechers           func(childComplexity int) int
 		PublishedAt        func(childComplexity int) int
+		ReleaseAttributes  func(childComplexity int) int
 		ReleaseGroup       func(childComplexity int) int
 		Seeders            func(childComplexity int) int
 		Title              func(childComplexity int) int
@@ -1471,6 +1484,69 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 
 		return e.complexity.QueueQuery.Metrics(childComplexity, args["input"].(gen.QueueMetricsQueryInput)), true
 
+	case "ReleaseAttributes.audioChannels":
+		if e.complexity.ReleaseAttributes.AudioChannels == nil {
+			break
+		}
+
+		return e.complexity.ReleaseAttributes.AudioChannels(childComplexity), true
+
+	case "ReleaseAttributes.audioFeatures":
+		if e.complexity.ReleaseAttributes.AudioFeatures == nil {
+			break
+		}
+
+		return e.complexity.ReleaseAttributes.AudioFeatures(childComplexity), true
+
+	case "ReleaseAttributes.audioFormats":
+		if e.complexity.ReleaseAttributes.AudioFormats == nil {
+			break
+		}
+
+		return e.complexity.ReleaseAttributes.AudioFormats(childComplexity), true
+
+	case "ReleaseAttributes.encoder":
+		if e.complexity.ReleaseAttributes.Encoder == nil {
+			break
+		}
+
+		return e.complexity.ReleaseAttributes.Encoder(childComplexity), true
+
+	case "ReleaseAttributes.hdrFormats":
+		if e.complexity.ReleaseAttributes.HDRFormats == nil {
+			break
+		}
+
+		return e.complexity.ReleaseAttributes.HDRFormats(childComplexity), true
+
+	case "ReleaseAttributes.parser":
+		if e.complexity.ReleaseAttributes.Parser == nil {
+			break
+		}
+
+		return e.complexity.ReleaseAttributes.Parser(childComplexity), true
+
+	case "ReleaseAttributes.revisions":
+		if e.complexity.ReleaseAttributes.Revisions == nil {
+			break
+		}
+
+		return e.complexity.ReleaseAttributes.Revisions(childComplexity), true
+
+	case "ReleaseAttributes.sourceNameSha256":
+		if e.complexity.ReleaseAttributes.SourceNameSHA256 == nil {
+			break
+		}
+
+		return e.complexity.ReleaseAttributes.SourceNameSHA256(childComplexity), true
+
+	case "ReleaseAttributes.version":
+		if e.complexity.ReleaseAttributes.Version == nil {
+			break
+		}
+
+		return e.complexity.ReleaseAttributes.Version(childComplexity), true
+
 	case "ReleaseYearAgg.count":
 		if e.complexity.ReleaseYearAgg.Count == nil {
 			break
@@ -1743,6 +1819,13 @@ func (e *executableSchema) Complexity(typeName, field string, childComplexity in
 		}
 
 		return e.complexity.TorrentContent.PublishedAt(childComplexity), true
+
+	case "TorrentContent.releaseAttributes":
+		if e.complexity.TorrentContent.ReleaseAttributes == nil {
+			break
+		}
+
+		return e.complexity.TorrentContent.ReleaseAttributes(childComplexity), true
 
 	case "TorrentContent.releaseGroup":
 		if e.complexity.TorrentContent.ReleaseGroup == nil {
@@ -2391,6 +2474,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 		ec.unmarshalInputQueueJobsQueryInput,
 		ec.unmarshalInputQueueMetricsQueryInput,
 		ec.unmarshalInputQueuePurgeJobsInput,
+		ec.unmarshalInputReleaseAttributesFilterInput,
 		ec.unmarshalInputReleaseYearFacetInput,
 		ec.unmarshalInputSuggestTagsQueryInput,
 		ec.unmarshalInputTorrentContentFacetsInput,
@@ -2851,6 +2935,8 @@ type TorrentContent {
   video3d: Video3D
   videoModifier: VideoModifier
   releaseGroup: String
+  """Explicit release-name claims; null means no supported evidence, not verified media tracks."""
+  releaseAttributes: ReleaseAttributes
   """
   English availability for anime releases (dub | sub | none). Null = unknown
   or not anime. Read from the persisted english_audio column.
@@ -2866,6 +2952,18 @@ type TorrentContent {
   publishedAt: DateTime!
   createdAt: DateTime!
   updatedAt: DateTime!
+}
+
+type ReleaseAttributes {
+  version: Int!
+  parser: String!
+  sourceNameSha256: String!
+  hdrFormats: [String!]!
+  audioFormats: [String!]!
+  audioChannels: String
+  audioFeatures: [String!]!
+  revisions: [String!]!
+  encoder: String
 }
 
 type LanguageInfo {
@@ -3183,6 +3281,16 @@ scalar Year
     the highest-seeded torrent regardless of orderBy.
   """
   groupByContent: Boolean
+  releaseAttributes: ReleaseAttributesFilterInput
+}
+
+input ReleaseAttributesFilterInput {
+  hdrFormat: String
+  audioFormat: String
+  audioFeature: String
+  revision: String
+  encoder: String
+  audioChannels: String
 }
 
 input ContentTypeFacetInput {
@@ -10080,6 +10188,396 @@ func (ec *executionContext) fieldContext_QueueQuery_metrics(ctx context.Context,
 	return fc, nil
 }
 
+func (ec *executionContext) _ReleaseAttributes_version(ctx context.Context, field graphql.CollectedField, obj *model.ReleaseAttributes) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_ReleaseAttributes_version(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (any, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Version, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(int)
+	fc.Result = res
+	return ec.marshalNInt2int(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_ReleaseAttributes_version(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ReleaseAttributes",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Int does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ReleaseAttributes_parser(ctx context.Context, field graphql.CollectedField, obj *model.ReleaseAttributes) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_ReleaseAttributes_parser(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (any, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Parser, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNString2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_ReleaseAttributes_parser(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ReleaseAttributes",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ReleaseAttributes_sourceNameSha256(ctx context.Context, field graphql.CollectedField, obj *model.ReleaseAttributes) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_ReleaseAttributes_sourceNameSha256(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (any, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.SourceNameSHA256, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.(string)
+	fc.Result = res
+	return ec.marshalNString2string(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_ReleaseAttributes_sourceNameSha256(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ReleaseAttributes",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ReleaseAttributes_hdrFormats(ctx context.Context, field graphql.CollectedField, obj *model.ReleaseAttributes) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_ReleaseAttributes_hdrFormats(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (any, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.HDRFormats, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.([]string)
+	fc.Result = res
+	return ec.marshalNString2ᚕstringᚄ(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_ReleaseAttributes_hdrFormats(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ReleaseAttributes",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ReleaseAttributes_audioFormats(ctx context.Context, field graphql.CollectedField, obj *model.ReleaseAttributes) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_ReleaseAttributes_audioFormats(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (any, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.AudioFormats, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.([]string)
+	fc.Result = res
+	return ec.marshalNString2ᚕstringᚄ(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_ReleaseAttributes_audioFormats(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ReleaseAttributes",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ReleaseAttributes_audioChannels(ctx context.Context, field graphql.CollectedField, obj *model.ReleaseAttributes) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_ReleaseAttributes_audioChannels(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (any, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.AudioChannels, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalOString2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_ReleaseAttributes_audioChannels(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ReleaseAttributes",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ReleaseAttributes_audioFeatures(ctx context.Context, field graphql.CollectedField, obj *model.ReleaseAttributes) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_ReleaseAttributes_audioFeatures(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (any, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.AudioFeatures, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.([]string)
+	fc.Result = res
+	return ec.marshalNString2ᚕstringᚄ(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_ReleaseAttributes_audioFeatures(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ReleaseAttributes",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ReleaseAttributes_revisions(ctx context.Context, field graphql.CollectedField, obj *model.ReleaseAttributes) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_ReleaseAttributes_revisions(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (any, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Revisions, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		if !graphql.HasFieldError(ctx, fc) {
+			ec.Errorf(ctx, "must not be null")
+		}
+		return graphql.Null
+	}
+	res := resTmp.([]string)
+	fc.Result = res
+	return ec.marshalNString2ᚕstringᚄ(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_ReleaseAttributes_revisions(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ReleaseAttributes",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ReleaseAttributes_encoder(ctx context.Context, field graphql.CollectedField, obj *model.ReleaseAttributes) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_ReleaseAttributes_encoder(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (any, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.Encoder, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*string)
+	fc.Result = res
+	return ec.marshalOString2ᚖstring(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_ReleaseAttributes_encoder(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ReleaseAttributes",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type String does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _ReleaseYearAgg_value(ctx context.Context, field graphql.CollectedField, obj *gen.ReleaseYearAgg) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_ReleaseYearAgg_value(ctx, field)
 	if err != nil {
@@ -11984,6 +12482,67 @@ func (ec *executionContext) fieldContext_TorrentContent_releaseGroup(_ context.C
 	return fc, nil
 }
 
+func (ec *executionContext) _TorrentContent_releaseAttributes(ctx context.Context, field graphql.CollectedField, obj *gqlmodel.TorrentContent) (ret graphql.Marshaler) {
+	fc, err := ec.fieldContext_TorrentContent_releaseAttributes(ctx, field)
+	if err != nil {
+		return graphql.Null
+	}
+	ctx = graphql.WithFieldContext(ctx, fc)
+	defer func() {
+		if r := recover(); r != nil {
+			ec.Error(ctx, ec.Recover(ctx, r))
+			ret = graphql.Null
+		}
+	}()
+	resTmp, err := ec.ResolverMiddleware(ctx, func(rctx context.Context) (any, error) {
+		ctx = rctx // use context from middleware stack in children
+		return obj.ReleaseAttributes, nil
+	})
+	if err != nil {
+		ec.Error(ctx, err)
+		return graphql.Null
+	}
+	if resTmp == nil {
+		return graphql.Null
+	}
+	res := resTmp.(*model.ReleaseAttributes)
+	fc.Result = res
+	return ec.marshalOReleaseAttributes2ᚖgithubᚗcomᚋspencercnortonᚋbitagentᚋinternalᚋmodelᚐReleaseAttributes(ctx, field.Selections, res)
+}
+
+func (ec *executionContext) fieldContext_TorrentContent_releaseAttributes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TorrentContent",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			switch field.Name {
+			case "version":
+				return ec.fieldContext_ReleaseAttributes_version(ctx, field)
+			case "parser":
+				return ec.fieldContext_ReleaseAttributes_parser(ctx, field)
+			case "sourceNameSha256":
+				return ec.fieldContext_ReleaseAttributes_sourceNameSha256(ctx, field)
+			case "hdrFormats":
+				return ec.fieldContext_ReleaseAttributes_hdrFormats(ctx, field)
+			case "audioFormats":
+				return ec.fieldContext_ReleaseAttributes_audioFormats(ctx, field)
+			case "audioChannels":
+				return ec.fieldContext_ReleaseAttributes_audioChannels(ctx, field)
+			case "audioFeatures":
+				return ec.fieldContext_ReleaseAttributes_audioFeatures(ctx, field)
+			case "revisions":
+				return ec.fieldContext_ReleaseAttributes_revisions(ctx, field)
+			case "encoder":
+				return ec.fieldContext_ReleaseAttributes_encoder(ctx, field)
+			}
+			return nil, fmt.Errorf("no field named %q was found under type ReleaseAttributes", field.Name)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _TorrentContent_englishAudio(ctx context.Context, field graphql.CollectedField, obj *gqlmodel.TorrentContent) (ret graphql.Marshaler) {
 	fc, err := ec.fieldContext_TorrentContent_englishAudio(ctx, field)
 	if err != nil {
@@ -13006,6 +13565,8 @@ func (ec *executionContext) fieldContext_TorrentContentSearchResult_items(_ cont
 				return ec.fieldContext_TorrentContent_videoModifier(ctx, field)
 			case "releaseGroup":
 				return ec.fieldContext_TorrentContent_releaseGroup(ctx, field)
+			case "releaseAttributes":
+				return ec.fieldContext_TorrentContent_releaseAttributes(ctx, field)
 			case "englishAudio":
 				return ec.fieldContext_TorrentContent_englishAudio(ctx, field)
 			case "englishAudioSource":
@@ -18276,6 +18837,68 @@ func (ec *executionContext) unmarshalInputQueuePurgeJobsInput(ctx context.Contex
 	return it, nil
 }
 
+func (ec *executionContext) unmarshalInputReleaseAttributesFilterInput(ctx context.Context, obj any) (gqlmodel.ReleaseAttributesFilterInput, error) {
+	var it gqlmodel.ReleaseAttributesFilterInput
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"hdrFormat", "audioFormat", "audioFeature", "revision", "encoder", "audioChannels"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "hdrFormat":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("hdrFormat"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.HDRFormat = data
+		case "audioFormat":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("audioFormat"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AudioFormat = data
+		case "audioFeature":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("audioFeature"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AudioFeature = data
+		case "revision":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("revision"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Revision = data
+		case "encoder":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("encoder"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Encoder = data
+		case "audioChannels":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("audioChannels"))
+			data, err := ec.unmarshalOString2ᚖstring(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.AudioChannels = data
+		}
+	}
+
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputReleaseYearFacetInput(ctx context.Context, obj any) (gen.ReleaseYearFacetInput, error) {
 	var it gen.ReleaseYearFacetInput
 	asMap := map[string]any{}
@@ -18468,7 +19091,7 @@ func (ec *executionContext) unmarshalInputTorrentContentSearchQueryInput(ctx con
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"queryString", "limit", "page", "offset", "totalCount", "hasNextPage", "infoHashes", "facets", "orderBy", "cached", "aggregationBudget", "torrentCreatedAfter", "torrentCreatedBefore", "groupByContent"}
+	fieldsInOrder := [...]string{"queryString", "limit", "page", "offset", "totalCount", "hasNextPage", "infoHashes", "facets", "orderBy", "cached", "aggregationBudget", "torrentCreatedAfter", "torrentCreatedBefore", "groupByContent", "releaseAttributes"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -18573,6 +19196,13 @@ func (ec *executionContext) unmarshalInputTorrentContentSearchQueryInput(ctx con
 				return it, err
 			}
 			it.GroupByContent = data
+		case "releaseAttributes":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("releaseAttributes"))
+			data, err := ec.unmarshalOReleaseAttributesFilterInput2ᚖgithubᚗcomᚋspencercnortonᚋbitagentᚋinternalᚋgqlᚋgqlmodelᚐReleaseAttributesFilterInput(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ReleaseAttributes = data
 		}
 	}
 
@@ -20951,6 +21581,79 @@ func (ec *executionContext) _QueueQuery(ctx context.Context, sel ast.SelectionSe
 	return out
 }
 
+var releaseAttributesImplementors = []string{"ReleaseAttributes"}
+
+func (ec *executionContext) _ReleaseAttributes(ctx context.Context, sel ast.SelectionSet, obj *model.ReleaseAttributes) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, releaseAttributesImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferred := make(map[string]*graphql.FieldSet)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ReleaseAttributes")
+		case "version":
+			out.Values[i] = ec._ReleaseAttributes_version(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "parser":
+			out.Values[i] = ec._ReleaseAttributes_parser(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "sourceNameSha256":
+			out.Values[i] = ec._ReleaseAttributes_sourceNameSha256(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "hdrFormats":
+			out.Values[i] = ec._ReleaseAttributes_hdrFormats(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "audioFormats":
+			out.Values[i] = ec._ReleaseAttributes_audioFormats(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "audioChannels":
+			out.Values[i] = ec._ReleaseAttributes_audioChannels(ctx, field, obj)
+		case "audioFeatures":
+			out.Values[i] = ec._ReleaseAttributes_audioFeatures(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "revisions":
+			out.Values[i] = ec._ReleaseAttributes_revisions(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "encoder":
+			out.Values[i] = ec._ReleaseAttributes_encoder(ctx, field, obj)
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.deferred, int32(len(deferred)))
+
+	for label, dfs := range deferred {
+		ec.processDeferredGroup(graphql.DeferredGroup{
+			Label:    label,
+			Path:     graphql.GetPath(ctx),
+			FieldSet: dfs,
+			Context:  ctx,
+		})
+	}
+
+	return out
+}
+
 var releaseYearAggImplementors = []string{"ReleaseYearAgg"}
 
 func (ec *executionContext) _ReleaseYearAgg(ctx context.Context, sel ast.SelectionSet, obj *gen.ReleaseYearAgg) graphql.Marshaler {
@@ -21273,6 +21976,8 @@ func (ec *executionContext) _TorrentContent(ctx context.Context, sel ast.Selecti
 			out.Values[i] = ec._TorrentContent_videoModifier(ctx, field, obj)
 		case "releaseGroup":
 			out.Values[i] = ec._TorrentContent_releaseGroup(ctx, field, obj)
+		case "releaseAttributes":
+			out.Values[i] = ec._TorrentContent_releaseAttributes(ctx, field, obj)
 		case "englishAudio":
 			out.Values[i] = ec._TorrentContent_englishAudio(ctx, field, obj)
 		case "englishAudioSource":
@@ -25559,6 +26264,21 @@ func (ec *executionContext) unmarshalOQueueJobsOrderByInput2ᚕgithubᚗcomᚋsp
 		}
 	}
 	return res, nil
+}
+
+func (ec *executionContext) marshalOReleaseAttributes2ᚖgithubᚗcomᚋspencercnortonᚋbitagentᚋinternalᚋmodelᚐReleaseAttributes(ctx context.Context, sel ast.SelectionSet, v *model.ReleaseAttributes) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	return ec._ReleaseAttributes(ctx, sel, v)
+}
+
+func (ec *executionContext) unmarshalOReleaseAttributesFilterInput2ᚖgithubᚗcomᚋspencercnortonᚋbitagentᚋinternalᚋgqlᚋgqlmodelᚐReleaseAttributesFilterInput(ctx context.Context, v any) (*gqlmodel.ReleaseAttributesFilterInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := ec.unmarshalInputReleaseAttributesFilterInput(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
 }
 
 func (ec *executionContext) marshalOReleaseYearAgg2ᚕgithubᚗcomᚋspencercnortonᚋbitagentᚋinternalᚋgqlᚋgqlmodelᚋgenᚐReleaseYearAggᚄ(ctx context.Context, sel ast.SelectionSet, v []gen.ReleaseYearAgg) graphql.Marshaler {

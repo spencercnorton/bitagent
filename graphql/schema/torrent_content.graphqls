@@ -41,6 +41,16 @@ input TorrentContentSearchQueryInput {
     the highest-seeded torrent regardless of orderBy.
   """
   groupByContent: Boolean
+  releaseAttributes: ReleaseAttributesFilterInput
+}
+
+input ReleaseAttributesFilterInput {
+  hdrFormat: String
+  audioFormat: String
+  audioFeature: String
+  revision: String
+  encoder: String
+  audioChannels: String
 }
 
 input ContentTypeFacetInput {

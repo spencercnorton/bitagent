@@ -18,20 +18,21 @@ type TorrentContentQuery struct {
 }
 
 type TorrentContent struct {
-	ID              string
-	InfoHash        protocol.ID
-	ContentType     model.NullContentType
-	ContentSource   model.NullString
-	ContentID       model.NullString
-	Title           string
-	Languages       []model.Language `json:"omitempty"`
-	Episodes        *Episodes
-	VideoResolution model.NullVideoResolution
-	VideoSource     model.NullVideoSource
-	VideoCodec      model.NullVideoCodec
-	Video3D         model.NullVideo3D
-	VideoModifier   model.NullVideoModifier
-	ReleaseGroup    model.NullString
+	ID                string
+	InfoHash          protocol.ID
+	ContentType       model.NullContentType
+	ContentSource     model.NullString
+	ContentID         model.NullString
+	Title             string
+	Languages         []model.Language `json:"omitempty"`
+	Episodes          *Episodes
+	VideoResolution   model.NullVideoResolution
+	VideoSource       model.NullVideoSource
+	VideoCodec        model.NullVideoCodec
+	Video3D           model.NullVideo3D
+	VideoModifier     model.NullVideoModifier
+	ReleaseGroup      model.NullString
+	ReleaseAttributes *model.ReleaseAttributes
 	// EnglishAudio + its provenance ("name" | "llm"), straight off the
 	// persisted columns — see model.DeriveEnglishAudio for semantics.
 	EnglishAudio       model.NullEnglishAudio
@@ -65,6 +66,7 @@ func NewTorrentContentFromResultItem(item search.TorrentContentResultItem) Torre
 		Video3D:            item.Video3D,
 		VideoModifier:      item.VideoModifier,
 		ReleaseGroup:       item.ReleaseGroup,
+		ReleaseAttributes:  item.ReleaseAttributes,
 		EnglishAudio:       item.EnglishAudio,
 		EnglishAudioSource: item.EnglishAudioSource,
 		Seeders:            item.Seeders,
@@ -125,6 +127,7 @@ type TorrentContentSearchQueryInput struct {
 	TorrentCreatedAfter  graphql.Omittable[*time.Time]
 	TorrentCreatedBefore graphql.Omittable[*time.Time]
 	GroupByContent       model.NullBool
+	ReleaseAttributes    *ReleaseAttributesFilterInput
 }
 
 type TorrentContentSearchResult struct {
@@ -147,6 +150,13 @@ func (t TorrentContentQuery) Search(
 	}
 	options = append(options, input.Option())
 	hasQueryString := input.QueryString.Valid
+	if input.ReleaseAttributes != nil {
+		for field, value := range input.ReleaseAttributes.values() {
+			if value != nil {
+				options = append(options, q.Where(search.TorrentContentReleaseAttributeCriteria(field, *value)))
+			}
+		}
+	}
 
 	if input.Facets != nil {
 		options = append(options, torrentContentFacetsOption(*input.Facets))

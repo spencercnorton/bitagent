@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add frozen, journalled field-only release repairs with NULL-only claim filling, reviewed historical source corrections and guarded rollback. Preserve retained claims during ordinary processing.
+
+- Retain nullable, versioned HDR, audio/channel, encoder and revision filename
+  claims with source provenance. Expose explicit claim filters and read-only
+  GraphQL/Torznab fields, without changing catalogue identity or verifying tracks.
+- Recognize explicit BDREMUX as a REMUX modifier and CAMRip as a CAM source.
+
 - Apply deferred model receipts with source-bound compare-and-set transactions and retain committed facts across ordinary refreshes and response expiry.
 
 - Add an opt-in durable request dispatch fence and bounded replay of retained

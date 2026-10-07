@@ -21,6 +21,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/app/cmd/refreshalttitlescmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/refreshanimetitlescmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/refreshseedscmd"
+	"github.com/spencercnorton/bitagent/internal/app/cmd/releasefieldsrepaircmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/reprocesscmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/workercmd"
 	"github.com/spencercnorton/bitagent/internal/attribution"
@@ -118,6 +119,7 @@ func New() fx.Option {
 			batchllmmatchcmd.New,
 			classifiercmd.New,
 			episodesbackfillcmd.New,
+			releasefieldsrepaircmd.New,
 			granularitybackfillcmd.New,
 			configcmd.New,
 			evalfreezecmd.New,

@@ -619,7 +619,7 @@ func ParseVideoContentWithOptions(
 		Languages:     model.InferLanguages(rest),
 		LanguageMulti: multiRegex.MatchString(rest),
 	}
-	attrs.InferVideoAttributes(rest)
+	attrs.InferVideoAttributes(rest, torrent.Name)
 
 	// Anime names its release group in a leading [Group] bracket
 	// ("[SubsPlease] Show - 12 …"), which cleanTitle strips from BaseTitle

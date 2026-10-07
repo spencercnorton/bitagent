@@ -2,6 +2,7 @@ package model
 
 import (
 	"github.com/spencercnorton/bitagent/internal/keywords"
+	"strings"
 )
 
 // VideoModifier represents the modifier of a video
@@ -12,10 +13,13 @@ func (v VideoModifier) Label() string {
 	return v.String()
 }
 
-var videoModifierRegex = keywords.MustNewRegexFromKeywords(namesToLower(VideoModifierNames()...)...)
+var videoModifierRegex = keywords.MustNewRegexFromKeywords(append([]string{"bdremux"}, namesToLower(VideoModifierNames()...)...)...)
 
 func InferVideoModifier(input string) NullVideoModifier {
 	if match := videoModifierRegex.FindStringSubmatch(input); match != nil {
+		if strings.EqualFold(match[1], "bdremux") {
+			return NewNullVideoModifier(VideoModifierREMUX)
+		}
 		if parsed, parseErr := ParseVideoModifier(match[1]); parseErr == nil {
 			return NewNullVideoModifier(parsed)
 		}

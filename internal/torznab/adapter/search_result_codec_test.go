@@ -27,3 +27,18 @@ func TestTorznabSerializesCodecAndGroupClaimsWithoutChangingReleaseName(t *testi
 		})
 	}
 }
+
+func TestTorznabEmitsOnlyExplicitClaimExtensions(t *testing.T) {
+	claims := model.InferReleaseAttributes("source", "HEVC.HDR10.DV.DDP5.1.Atmos.PROPER.REPACK")
+	item := torrentContentResultItemToTorznabResultItem(search.TorrentContentResultItem{TorrentContent: model.TorrentContent{ReleaseAttributes: claims}}, false)
+	attrs := map[string]string{}
+	for _, attr := range item.TorznabAttrs {
+		attrs[attr.AttrName] = attr.AttrValue
+	}
+	require.Equal(t, "DOLBY_VISION,HDR10", attrs[torznab.AttrClaimedHDR])
+	require.Equal(t, "EAC3", attrs[torznab.AttrClaimedAudio])
+	require.Equal(t, "5.1", attrs[torznab.AttrClaimedAudioChannels])
+	require.Equal(t, "ATMOS", attrs[torznab.AttrClaimedAudioFeatures])
+	require.Equal(t, "PROPER,REPACK", attrs[torznab.AttrClaimedRevision])
+	require.NotContains(t, attrs, torznab.AttrClaimedEncoder)
+}

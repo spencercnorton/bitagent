@@ -60,6 +60,8 @@ type TorrentContent {
   video3d: Video3D
   videoModifier: VideoModifier
   releaseGroup: String
+  """Explicit release-name claims; null means no supported evidence, not verified media tracks."""
+  releaseAttributes: ReleaseAttributes
   """
   English availability for anime releases (dub | sub | none). Null = unknown
   or not anime. Read from the persisted english_audio column.
@@ -75,6 +77,18 @@ type TorrentContent {
   publishedAt: DateTime!
   createdAt: DateTime!
   updatedAt: DateTime!
+}
+
+type ReleaseAttributes {
+  version: Int!
+  parser: String!
+  sourceNameSha256: String!
+  hdrFormats: [String!]!
+  audioFormats: [String!]!
+  audioChannels: String
+  audioFeatures: [String!]!
+  revisions: [String!]!
+  encoder: String
 }
 
 type LanguageInfo {

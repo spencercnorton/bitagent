@@ -7,6 +7,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,14 +31,22 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
-func deferredTypeHarness(t *testing.T, beforeResponse func(*pgxpool.Pool, protocol.ID), local bool) (*DeferredApplyHandler, *llmwork.Store, *llmwork.Lease, *llmstage.Stage, *pgxpool.Pool, model.Torrent, *atomic.Int32) {
+func deferredTypeHarness(t *testing.T, beforeResponse func(*pgxpool.Pool, protocol.ID), local bool, names ...string) (*DeferredApplyHandler, *llmwork.Store, *llmwork.Lease, *llmstage.Stage, *pgxpool.Pool, model.Torrent, *atomic.Int32) {
 	t.Helper()
 	pool, backend := deferredApplyFixture(t)
 	ctx := context.Background()
 	var hash protocol.ID
 	hash[0] = 23
-	for _, q := range []string{`INSERT INTO torrents(info_hash,name,size,private,files_status,files_count,created_at,updated_at)VALUES($1,'Amber.Signal.2026.1080p.mkv',734003200,false,'multi',1,now(),now())`, `INSERT INTO torrent_files(info_hash,"index",path,size,created_at,updated_at) VALUES($1,0,'Amber.Signal.2026.1080p.mkv',734003200,now(),now())`, `INSERT INTO torrent_contents(info_hash,size,is_anime,created_at,updated_at)VALUES($1,734003200,false,now(),now())`} {
-		_, err := pool.Exec(ctx, q, hash.Bytes())
+	sourceName := "Amber.Signal.2026.1080p.mkv"
+	if len(names) > 0 {
+		sourceName = names[0]
+	}
+	for _, q := range []string{`INSERT INTO torrents(info_hash,name,size,private,files_status,files_count,created_at,updated_at)VALUES($1,$2,734003200,false,'multi',1,now(),now())`, `INSERT INTO torrent_files(info_hash,"index",path,size,created_at,updated_at) VALUES($1,0,'Amber.Signal.2026.1080p.mkv',734003200,now(),now())`, `INSERT INTO torrent_contents(info_hash,size,is_anime,created_at,updated_at)VALUES($1,734003200,false,now(),now())`} {
+		args := []any{hash.Bytes()}
+		if strings.Contains(q, "$2") {
+			args = append(args, sourceName)
+		}
+		_, err := pool.Exec(ctx, q, args...)
 		require.NoError(t, err)
 	}
 	source := deferredTaskSource(t, backend, hash)

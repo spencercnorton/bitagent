@@ -305,11 +305,16 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 			if x = ensureDeferredContent(ctx, tx, &after); x != nil {
 				return x
 			}
+			var claims any
+			if after.ReleaseAttributes != nil {
+				raw, _ := json.Marshal(after.ReleaseAttributes)
+				claims = string(raw)
+			}
 			languages, _ := json.Marshal(after.Languages)
 			episodes, _ := json.Marshal(after.Episodes)
 			changed, x := tx.Exec(ctx, `UPDATE torrent_contents SET content_type=$2,content_source=$3,content_id=$4,languages=$5::jsonb,episodes=$6::jsonb,
 video_resolution=$7,video_source=$8,video_codec=$9,video_3d=$10,video_modifier=$11,release_group=$12,english_audio=$13,english_audio_source=$14,
-release_granularity=$15,release_date=$16,anime_absolute_episode=$17,is_anime=$18,tsv=$19::tsvector,updated_at=now() WHERE id=$1 AND content_source IS NULL AND content_id IS NULL`, before.ID, after.ContentType, after.ContentSource, after.ContentID, string(languages), string(episodes), after.VideoResolution, after.VideoSource, after.VideoCodec, after.Video3D, after.VideoModifier, after.ReleaseGroup, after.EnglishAudio, after.EnglishAudioSource, after.ReleaseGranularity, after.ReleaseDate, after.AnimeAbsoluteEpisode, after.IsAnime, after.Tsv.String())
+release_granularity=$15,release_date=$16,anime_absolute_episode=$17,is_anime=$18,tsv=$19::tsvector,release_attributes=$20::jsonb,updated_at=now() WHERE id=$1 AND content_source IS NULL AND content_id IS NULL`, before.ID, after.ContentType, after.ContentSource, after.ContentID, string(languages), string(episodes), after.VideoResolution, after.VideoSource, after.VideoCodec, after.Video3D, after.VideoModifier, after.ReleaseGroup, after.EnglishAudio, after.EnglishAudioSource, after.ReleaseGranularity, after.ReleaseDate, after.AnimeAbsoluteEpisode, after.IsAnime, after.Tsv.String(), claims)
 			if x != nil {
 				return x
 			}

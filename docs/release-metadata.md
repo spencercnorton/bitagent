@@ -23,8 +23,9 @@ release name preserved. Nullable values stay nullable. GraphQL codec enums are
 additive; clients with exhaustive codec lists should accept unknown future
 values rather than reject the entire result.
 
-There is no database schema migration or automatic historical repair in this
-change. New parser behavior applies on classification. Before a field-only
+Codec/group recognition itself requires no schema migration. Richer claims use
+the nullable column described below; neither change performs automatic historical
+repair. New parser behavior applies on classification. Before a field-only
 repair, freeze old/new values and their source/provenance and preserve manual
 overrides. Do not run the full classifier as a metadata repair.
 
@@ -32,3 +33,20 @@ Readers must understand `HEVC` and `AV1` before those values are persisted.
 An older binary whose codec scanner rejects those values needs a compatible
 reader, the saved field rollback, or a matching database backup. Disabling
 new inference alone does not remove already stored codec values.
+
+Migration 57 adds nullable `release_attributes` JSONB. Version 1 retains the
+parser identity and SHA-256 of the original release name with explicit HDR/DV,
+audio format/channel/feature, encoder and revision claims. No supported claim
+means SQL NULL. Multiple advertised formats can coexist; contradictory scalar
+channel or encoder claims remain unknown. HEVC does not imply x265, and Dolby
+Vision does not manufacture a codec, bit depth or verified track.
+
+GraphQL `releaseAttributes` and its search input expose these advertised claims.
+Torznab emits `claimedhdr`, `claimedaudio`, `claimedaudiochannels`,
+`claimedaudiofeatures`, `claimedrevision` and `claimedencoder` only when present.
+These optional extension fields keep their claim status explicit.
+
+The migration must follow earlier migrations in the release lineage. Its
+downgrade refuses to discard populated claim data. No startup-wide backfill is
+performed; bounded field repair is separate from classification and must retain
+source checks, previous values and override precedence.
