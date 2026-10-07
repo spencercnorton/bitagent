@@ -2228,12 +2228,17 @@ FOR UPDATE`, run.ID)
 	if len(policies) > 0 && policies[0].Enabled() {
 		for _, item := range items {
 			var name string
-			if err := tx.QueryRow(ctx, `SELECT name FROM torrents WHERE info_hash=$1`, item.hash).Scan(&name); err != nil {
+			var adult bool
+			if err := tx.QueryRow(ctx, `SELECT t.name, EXISTS(SELECT 1 FROM torrent_contents tc WHERE tc.info_hash=t.info_hash AND tc.content_type='xxx') FROM torrents t WHERE t.info_hash=$1`, item.hash).Scan(&name, &adult); err != nil {
 				return summary, err
 			}
 			var h protocol.ID
 			copy(h[:], item.hash)
-			d := policies[0].Evaluate(h, name)
+			kind := ""
+			if adult {
+				kind = "xxx"
+			}
+			d := policies[0].EvaluateClassified(h, name, kind)
 			if !d.Eligible {
 				policies[0].Observe("model_apply", d)
 				return summary, namepolicy.ErrExcluded

@@ -1708,6 +1708,14 @@ INSERT INTO junkpurge_sync_claims (
 		var state string
 		require.NoError(t, pool.QueryRow(ctx, `SELECT state FROM junkpurge_batch_items WHERE run_id=$1`, run.ID).Scan(&state))
 		require.Equal(t, "succeeded", state)
+		// A second current explicit-adult row must veto settlement even
+		// though the unchanged name and original movie row still qualify.
+		_, err = pool.Exec(ctx, `UPDATE torrents SET name='Allowed.Locked.Release.mkv' WHERE info_hash=$1;INSERT INTO torrent_contents(info_hash,content_type,content_id,created_at)VALUES($1,'xxx',NULL,now())`, hash)
+		require.NoError(t, err)
+		_, err = finalizeBatchRun(ctx, pool, *run, false, p)
+		require.ErrorIs(t, err, namepolicy.ErrExcluded)
+		require.NoError(t, pool.QueryRow(ctx, `SELECT state FROM junkpurge_batch_items WHERE run_id=$1`, run.ID).Scan(&state))
+		require.Equal(t, "succeeded", state)
 		var n int
 		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_judgments WHERE info_hash=$1`, hash).Scan(&n))
 		require.Zero(t, n)
