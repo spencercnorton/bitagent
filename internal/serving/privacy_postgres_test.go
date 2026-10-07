@@ -115,5 +115,19 @@ INSERT INTO torrent_canonical_labels(info_hash,category,resolved_source,resolved
 			}
 		})
 	}
+	operator, err := search.New(search.Params{Query: lazy.New(func() (*dao.Query, error) { return q, nil })}).Search.Get()
+	require.NoError(t, err)
+	raw, err := operator.Torrents(ctx, query.Limit(32))
+	require.NoError(t, err)
+	require.Len(t, raw.Items, 9, "consumer queries cannot contaminate the internal source view")
+	contents, err := operator.TorrentContent(ctx, query.Limit(32))
+	require.NoError(t, err)
+	require.Len(t, contents.Items, 9)
+	files, err := operator.TorrentFiles(ctx, query.Limit(32))
+	require.NoError(t, err)
+	require.Len(t, files.Items, 9)
+	tags, err := operator.TorrentSuggestTags(ctx, search.SuggestTagsQuery{Prefix: "privacy-test"})
+	require.NoError(t, err)
+	require.Len(t, tags.Suggestions, 9)
 	require.Equal(t, snapshot, before(), "mandatory privacy hides consumer results without altering any source, metadata or authority row")
 }
