@@ -80,6 +80,46 @@ func newServingPostgresDatabase(t *testing.T, ctx context.Context) (*pgxpool.Poo
 	return pool, dao.Use(gdb)
 }
 
+func TestServingPostgresTypedAdultSkipsExpensiveSubplans(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, q := newServingPostgresDatabase(t, ctx)
+	_, err := pool.Exec(ctx, `
+INSERT INTO torrents (info_hash, name, size, private, files_status, created_at, updated_at)
+SELECT decode(md5(i::text), 'hex'), 'Synthetic.Typed.Release.mkv', 4096, false, 'single', now(), now()
+FROM generate_series(1, 100) i;
+INSERT INTO torrent_contents (info_hash, content_type, created_at, updated_at)
+SELECT info_hash, 'xxx', now(), now() FROM torrents;`)
+	require.NoError(t, err)
+	strong, media, err := classifier.CoreAdultServingEvidence()
+	require.NoError(t, err)
+	policy, err := serving.NewPolicy(serving.Config{ExcludeAdult: true}, strong, media)
+	require.NoError(t, err)
+	sql := dao.ToSQL(q.TorrentContent.UnderlyingDB().
+		Where(policy.TorrentCondition("torrent_contents")).
+		Where("torrent_contents.content_type = ?", "xxx"))
+	var raw []byte
+	require.NoError(t, pool.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+sql).Scan(&raw))
+	var plans []map[string]any
+	require.NoError(t, json.Unmarshal(raw, &plans))
+	root := plans[0]["Plan"].(map[string]any)
+	require.Zero(t, root["Actual Rows"])
+	subplans := 0
+	var visit func(map[string]any)
+	visit = func(node map[string]any) {
+		if node["Parent Relationship"] == "SubPlan" || node["Parent Relationship"] == "InitPlan" {
+			subplans++
+			require.Zero(t, node["Actual Loops"], "typed adult rows must not scan other evidence")
+		}
+		children, _ := node["Plans"].([]any)
+		for _, child := range children {
+			visit(child.(map[string]any))
+		}
+	}
+	visit(root)
+	require.Positive(t, subplans, "the ordinary/unknown branch must retain the evidence guards")
+}
+
 func TestServingPostgresStrongEvidenceMatchesCoreBaseNameAndBasePath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()

@@ -135,6 +135,13 @@ func (p *Policy) TorrentCondition(table string) clause.Expr {
 			}
 		}
 		args = append(args, p.strongPattern, p.strongPattern)
+		if table == "torrent_contents" {
+			// A typed adult row is itself evidence in serving_tc. Keep the
+			// remaining source/metadata/file checks in the other CASE arm so
+			// PostgreSQL does not build global anti-joins for an empty adult
+			// browse. NULL and ordinary types still run every existing guard.
+			sql = "CASE WHEN torrent_contents.content_type = 'xxx' THEN FALSE ELSE (" + sql + ") END"
+		}
 	}
 	return clause.Expr{SQL: sql, Vars: args}
 }
