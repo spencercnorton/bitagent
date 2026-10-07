@@ -15,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	migrationssql "github.com/spencercnorton/bitagent/migrations"
@@ -1103,8 +1104,9 @@ WHERE id=$1`, attempt.ID,
 	).Scan(&judgments))
 	require.Zero(t, judgments)
 
-	// Live settlement uses the same transaction for judgment, quarantine
-	// snapshot, torrent deletion, item application, and run finalization.
+	// Live destructive settlement is held without the complete recovery
+	// caller contract. Paid results stay retained; raw rows and ledgers do not
+	// change and the action cannot masquerade as an applied outcome.
 	hashC := bytes20(3)
 	insertCandidate(t, pool, hashC, "obvious junk")
 	workerCfg.BatchSize = 1
@@ -1134,9 +1136,9 @@ WHERE id=$1`, attempt.ID,
 	require.NoError(t, err)
 	require.Len(t, finalizing, 1)
 	finalized, err = finalizeBatchRun(ctx, pool, finalizing[0], true)
-	require.NoError(t, err)
-	require.Equal(t, runStateCompleted, finalized.State)
-	require.Equal(t, [][]byte{hashC}, finalized.QuarantinedHashes)
+	require.ErrorIs(t, err, cataloguerecovery.ErrDisabled)
+	require.Empty(t, finalized.State)
+	require.Empty(t, finalized.QuarantinedHashes)
 
 	var remaining, quarantined, purged int
 	require.NoError(t, pool.QueryRow(
@@ -1148,9 +1150,14 @@ WHERE id=$1`, attempt.ID,
 	require.NoError(t, pool.QueryRow(
 		ctx, `SELECT count(*) FROM junkpurge_judgments WHERE info_hash=$1 AND purged`, hashC,
 	).Scan(&purged))
-	require.Zero(t, remaining)
-	require.Equal(t, 1, quarantined)
-	require.Equal(t, 1, purged)
+	require.Equal(t, 1, remaining)
+	require.Zero(t, quarantined)
+	require.Zero(t, purged)
+	var heldState, itemState string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT state FROM junkpurge_batch_runs WHERE id=$1`, liveRun.ID).Scan(&heldState))
+	require.Equal(t, runStateFinalizing, heldState)
+	require.NoError(t, pool.QueryRow(ctx, `SELECT state FROM junkpurge_batch_items WHERE run_id=$1`, liveRun.ID).Scan(&itemState))
+	require.Equal(t, itemStateSucceeded, itemState)
 
 	// Two replicas racing the final allowed attempt must create exactly one;
 	// the loser rechecks for A's unsettled attempt under the run lock instead
@@ -1413,8 +1420,10 @@ INSERT INTO junkpurge_sync_claims (
 	quarantinedHashes, err := quarantineJunk(
 		ctx, pool, [][]byte{hashE}, 0.8, 7*24*time.Hour, "sync-a",
 	)
-	require.NoError(t, err)
-	require.Equal(t, [][]byte{hashE}, quarantinedHashes)
+	require.ErrorIs(t, err, cataloguerecovery.ErrDisabled)
+	require.Empty(t, quarantinedHashes)
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM torrents WHERE info_hash=$1`, hashE).Scan(&remaining))
+	require.Equal(t, 1, remaining)
 	require.NoError(t, releaseSyncClaims(
 		ctx, pool, "sync-a", [][]byte{hashE},
 	))
@@ -1438,7 +1447,7 @@ INSERT INTO junkpurge_sync_claims (
 	quarantinedHashes, err = quarantineJunk(
 		ctx, pool, [][]byte{hashF}, 0.8, 7*24*time.Hour, "sync-a",
 	)
-	require.NoError(t, err)
+	require.ErrorIs(t, err, cataloguerecovery.ErrDisabled)
 	require.Empty(t, quarantinedHashes)
 	require.NoError(t, pool.QueryRow(
 		ctx, `SELECT count(*) FROM torrents WHERE info_hash=$1`, hashF,

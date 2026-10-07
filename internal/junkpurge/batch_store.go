@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 )
 
 const (
@@ -2195,18 +2196,12 @@ FOR UPDATE`, run.ID)
 		finalState = runStateDryRun
 		summary.WouldDelete = len(junk)
 	} else if len(junk) > 0 {
-		eligible, err := eligibleBatchJunkTx(
-			ctx, tx, run.ID, junk, run.MinAge, run.MinConfidence,
-		)
-		if err != nil {
-			return summary, err
-		}
-		summary.QuarantinedHashes, err = quarantineJunkTx(
-			ctx, tx, eligible, run.MinConfidence,
-		)
-		if err != nil {
-			return summary, err
-		}
+		// Provider results are already retained in the batch items. Do not
+		// settle a destructive action using the legacy partial snapshot. Leave
+		// finalizing held, without another dispatch, until the complete caller
+		// recovery/retention contract is qualified. Dry-run and keep-only runs
+		// continue to settle normally.
+		return summary, cataloguerecovery.ErrDisabled
 	}
 
 	if _, err := tx.Exec(ctx, `

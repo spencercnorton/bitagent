@@ -69,12 +69,9 @@ type processor struct {
 	// same *evidence.Store. nil-safe — when unset (e.g. in narrow
 	// tests) the gate is a no-op.
 	privacy PrivacyStore
-	// verdicts is the T3 phase-C dual-write hook (nil-safe): a
-	// classifier ErrDeleteTorrent or a content-filter enforce drop is
-	// recorded as a blacklisted verdict AFTER the delete commits. Both
-	// cohorts are already added to the blocking bloom by persist -> Block,
-	// so this recording is behavior-neutral — it only makes the durable
-	// negative enumerable in the ledger.
+	// Legacy audit helpers remain available for historical evidence. Removal
+	// authority is now written atomically by the complete recovery transition;
+	// an independent blacklist here would invalidate its restore receipt.
 	verdicts *verdicts.Store
 	// deleteAuditBudget gates recording the torrent name in the
 	// classifier_delete evidence for a 1-in-128 sample (never for CSAM
@@ -85,16 +82,6 @@ type processor struct {
 	// content type and rule path (nil-safe). See DeleteMetrics.
 	deleteMetrics *DeleteMetrics
 	logger        *zap.SugaredLogger
-}
-
-// deleteVerdict is a pending blacklisted-verdict write for one deleted
-// torrent, accumulated during the classify loop and flushed after persist
-// commits (so a rolled-back delete never leaves a false blacklist row).
-type deleteVerdict struct {
-	infoHash  protocol.ID
-	mechanism string
-	reason    string
-	evidence  []byte
 }
 
 type MissingHashesError struct {
@@ -155,9 +142,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		idsToDelete        []string
 		infoHashesToDelete []protocol.ID
 		deferredHashes     []protocol.ID
-		// deleteVerdicts pairs each queued delete with its blacklist
-		// verdict; flushed after persist commits (recording-only).
-		deleteVerdicts []deleteVerdict
+		deleteObservations []deleteObservation
 	)
 
 	tcs := make([]model.TorrentContent, 0, len(searchResult.Torrents))
@@ -210,37 +195,13 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 			if classifyErr != nil {
 				if errors.Is(classifyErr, classification.ErrDeleteTorrent) {
 					infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
-					c.deleteMetrics.Observe(cl.ContentType, classifyErr)
-					// Hoisted above both hooks: the ledger's sampled name
-					// capture and the CSAM exporter run the same
-					// banned-keyword test over these paths, and must never
-					// see different input.
+					deleteObservations = append(deleteObservations, deleteObservation{cl.ContentType, classifyErr})
+					// The independent CSAM observation exporter verifies the
+					// name and paths even when destructive admission is held.
 					filePaths := make([]string, 0, len(torrent.Files))
 					for _, f := range torrent.Files {
 						filePaths = append(filePaths, f.Path)
 					}
-					if c.verdicts != nil {
-						// CSAM keyword deletes flow through this same
-						// ErrDeleteTorrent path (design §1 row 1) and are
-						// tagged classifier_delete — the dedicated `csam`
-						// mechanism lands in a later phase-C MR. The
-						// evidence rule_path preserves the CSAM-vs-flag
-						// distinction, so when an operator-restore path
-						// over the ledger is added it MUST refuse to
-						// restore a classifier_delete whose rule_path is a
-						// banned-keyword rule (design §3/§6-Q3: CSAM
-						// blacklists are not operator-restorable).
-						deleteVerdicts = append(deleteVerdicts, deleteVerdict{
-							infoHash:  torrent.InfoHash,
-							mechanism: verdicts.MechanismClassifierDelete,
-							reason:    "classifier delete_torrent; content deleted + blocking-bloomed",
-							evidence: classifierDeleteEvidence(
-								workflowName, classifyErr, torrent,
-								filePaths, c.deleteAuditBudget,
-							),
-						})
-					}
-
 					// CSAM self-export hook — exporter independently
 					// re-checks the title + file paths against the
 					// banned-keyword regex (so other classifier-driven
@@ -266,10 +227,10 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 				// filter is disabled (no metrics emitted, zero cost) or
 				// not wired (nil — older deploys / partial test wiring).
 				// On a "drop" decision in enforce mode we route the
-				// torrent to infoHashesToDelete, treating it the same as
-				// the classifier's ErrDeleteTorrent path: the persist
-				// pass will purge the torrent + its TorrentContent rows
-				// in one transaction. In shadow mode (Enforce=false) the
+				// torrent to infoHashesToDelete, using the same bounded
+				// recovery writer as ErrDeleteTorrent. Recovery-off holds
+				// the action without row deletion or bloom admission.
+				// In shadow mode (Enforce=false) the
 				// metric records the would-drop and we fall through to
 				// the normal persist.
 				if !params.SkipContentFilter &&
@@ -303,14 +264,6 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 					}
 					if !d.Allow {
 						infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
-						if c.verdicts != nil {
-							deleteVerdicts = append(deleteVerdicts, deleteVerdict{
-								infoHash:  torrent.InfoHash,
-								mechanism: verdicts.MechanismContentFilter,
-								reason:    "content-filter enforce drop; content deleted + blocking-bloomed",
-								evidence:  contentFilterEvidence(d),
-							})
-						}
 						return
 					}
 					if d.Review && d.WouldReview && !d.WouldDrop && d.Reason == contentfilter.ReasonLLMNonEnglish {
@@ -408,34 +361,17 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		return err
 	}
 
-	// Deletes committed — dual-write the blacklist verdicts (phase C).
-	// AFTER persist so a rolled-back delete never leaves a false negative;
-	// recording-only + log-and-continue, so a ledger error never fails the
-	// batch. deleteVerdicts is empty unless c.verdicts is wired.
-	c.recordDeleteVerdicts(ctx, deleteVerdicts)
+	// Count fully successful removal calls, never held decisions. The
+	// shared writer owns the bound verdict; do not overwrite it after commit.
+	for _, observation := range deleteObservations {
+		c.deleteMetrics.Observe(observation.contentType, observation.err)
+	}
 	return nil
 }
 
-// recordDeleteVerdicts writes one blacklisted verdict per committed delete.
-// Best-effort: mirrors the phase-A junkpurge dual-writer — a Record error is
-// logged, never propagated.
-func (c processor) recordDeleteVerdicts(ctx context.Context, dv []deleteVerdict) {
-	if c.verdicts == nil {
-		return
-	}
-	for _, v := range dv {
-		if err := c.verdicts.Record(ctx, verdicts.Event{
-			InfoHash:  v.infoHash.Bytes(),
-			Verdict:   verdicts.VerdictBlacklisted,
-			Mechanism: v.mechanism,
-			Reason:    v.reason,
-			Evidence:  v.evidence,
-		}); err != nil {
-			if c.logger != nil {
-				c.logger.Warnw("processor verdict record", "mechanism", v.mechanism, "err", err)
-			}
-		}
-	}
+type deleteObservation struct {
+	contentType model.NullContentType
+	err         error
 }
 
 // classifierDeleteEvidence records why the classifier condemned a torrent —

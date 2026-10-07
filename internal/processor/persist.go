@@ -15,7 +15,6 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/protocol"
-	"github.com/spencercnorton/bitagent/internal/slice"
 	"gorm.io/gorm/clause"
 )
 
@@ -122,79 +121,75 @@ func (c processor) persist(ctx context.Context, payload persistPayload) error {
 		}
 	}
 
-	if len(payload.deleteInfoHashes) > 0 {
-		if blockErr := c.blockingManager.Block(ctx, payload.deleteInfoHashes, false); blockErr != nil {
-			return blockErr
-		}
-	}
+	// Persist independent keep/review work before attempting removal. A held
+	// destructive action must neither erase its source nor stall ordinary rows
+	// in the same processor batch. Only the shared blocking writer may remove
+	// a raw torrent, after its complete recovery snapshot has committed.
+	ordinary := payload
+	ordinary.deleteInfoHashes = nil
+	if !ordinary.isEmpty() {
+		if err := c.dao.Transaction(func(tx *dao.Query) error {
+			if err := guardPreservedApplications(ctx, tx, payload.applications); err != nil {
+				return err
+			}
+			if len(contentsPtr) > 0 {
+				if createContentErr := tx.Content.WithContext(ctx).Clauses(
+					clause.OnConflict{
+						UpdateAll: true,
+					}).CreateInBatches(contentsPtr, 100); createContentErr != nil {
+					return createContentErr
+				}
+			}
 
-	return c.dao.Transaction(func(tx *dao.Query) error {
-		if err := guardPreservedApplications(ctx, tx, payload.applications); err != nil {
+			// The restore must read the old rows before the deleteIDs delete
+			// removes them — an ID-changing replacement (unmatched->matched) is
+			// exactly the case where the 'llm' value lives on a row about to die.
+			if len(torrentContentsPtr) > 0 {
+				if restoreErr := c.restoreReleaseAttributes(ctx, tx, torrentContentsPtr, sourceNames); restoreErr != nil {
+					return restoreErr
+				}
+				if restoreErr := c.restoreLLMEnglishAudio(ctx, tx, torrentContentsPtr); restoreErr != nil {
+					return restoreErr
+				}
+			}
+
+			if len(payload.deleteIDs) > 0 {
+				if _, deleteErr := tx.TorrentContent.WithContext(ctx).Where(
+					c.dao.TorrentContent.ID.In(payload.deleteIDs...),
+				).Delete(); deleteErr != nil {
+					return deleteErr
+				}
+			}
+
+			if len(torrentContentsPtr) > 0 {
+				if createErr := tx.TorrentContent.WithContext(ctx).Clauses(
+					clause.OnConflict{
+						UpdateAll: true,
+					},
+				).CreateInBatches(torrentContentsPtr, 100); createErr != nil {
+					return createErr
+				}
+			}
+
+			if len(torrentTagsPtr) > 0 {
+				if createErr := tx.TorrentTag.WithContext(ctx).Clauses(
+					clause.OnConflict{
+						DoNothing: true,
+					},
+				).CreateInBatches(torrentTagsPtr, 100); createErr != nil {
+					return createErr
+				}
+			}
+
+			return nil
+		}); err != nil {
 			return err
 		}
-		if len(contentsPtr) > 0 {
-			if createContentErr := tx.Content.WithContext(ctx).Clauses(
-				clause.OnConflict{
-					UpdateAll: true,
-				}).CreateInBatches(contentsPtr, 100); createContentErr != nil {
-				return createContentErr
-			}
-		}
-
-		// The restore must read the old rows before the deleteIDs delete
-		// removes them — an ID-changing replacement (unmatched->matched) is
-		// exactly the case where the 'llm' value lives on a row about to die.
-		if len(torrentContentsPtr) > 0 {
-			if restoreErr := c.restoreReleaseAttributes(ctx, tx, torrentContentsPtr, sourceNames); restoreErr != nil {
-				return restoreErr
-			}
-			if restoreErr := c.restoreLLMEnglishAudio(ctx, tx, torrentContentsPtr); restoreErr != nil {
-				return restoreErr
-			}
-		}
-
-		if len(payload.deleteIDs) > 0 {
-			if _, deleteErr := tx.TorrentContent.WithContext(ctx).Where(
-				c.dao.TorrentContent.ID.In(payload.deleteIDs...),
-			).Delete(); deleteErr != nil {
-				return deleteErr
-			}
-		}
-
-		if len(torrentContentsPtr) > 0 {
-			if createErr := tx.TorrentContent.WithContext(ctx).Clauses(
-				clause.OnConflict{
-					UpdateAll: true,
-				},
-			).CreateInBatches(torrentContentsPtr, 100); createErr != nil {
-				return createErr
-			}
-		}
-
-		if len(torrentTagsPtr) > 0 {
-			if createErr := tx.TorrentTag.WithContext(ctx).Clauses(
-				clause.OnConflict{
-					DoNothing: true,
-				},
-			).CreateInBatches(torrentTagsPtr, 100); createErr != nil {
-				return createErr
-			}
-		}
-
-		if len(payload.deleteInfoHashes) > 0 {
-			valuers := slice.Map(payload.deleteInfoHashes, func(infoHash protocol.ID) driver.Valuer {
-				return infoHash
-			})
-
-			if _, deleteErr := tx.Torrent.WithContext(ctx).Where(
-				c.dao.Torrent.InfoHash.In(valuers...),
-			).Delete(); deleteErr != nil {
-				return deleteErr
-			}
-		}
-
-		return nil
-	})
+	}
+	if len(payload.deleteInfoHashes) > 0 {
+		return c.blockingManager.Block(ctx, payload.deleteInfoHashes, false)
+	}
+	return nil
 }
 
 var errReleaseAttributesChanged = errors.New("retained release attribute source or ownership changed")

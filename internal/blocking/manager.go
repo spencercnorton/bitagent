@@ -102,7 +102,12 @@ func (m *manager) Block(ctx context.Context, hashes []protocol.ID, flush bool) e
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
-	if m.recovery != nil {
+	// Blocking is a destructive authority transition, even when the bloom
+	// write is buffered. Never accept it without the complete source capture.
+	if len(hashes) > 0 && m.recovery == nil {
+		return cataloguerecovery.ErrDisabled
+	}
+	if len(hashes) > 0 {
 		raw := make([][]byte, len(hashes))
 		for i, h := range hashes {
 			raw[i] = h.Bytes()
@@ -139,6 +144,9 @@ const blockedTorrentsBloomFilterKey = "blocked_torrents"
 
 func (m *manager) flush(ctx context.Context) error {
 	hashes := slices.Collect(maps.Keys(m.buffer))
+	if len(hashes) > 0 && m.recovery == nil {
+		return cataloguerecovery.ErrDisabled
+	}
 
 	tx, err := m.pool.BeginTx(ctx, pgx.TxOptions{
 		AccessMode: pgx.ReadWrite,
@@ -150,13 +158,6 @@ func (m *manager) flush(ctx context.Context) error {
 	defer func() {
 		_ = tx.Rollback(ctx)
 	}()
-
-	if len(hashes) > 0 && m.recovery == nil {
-		_, err = tx.Exec(ctx, "DELETE FROM torrents WHERE info_hash = any($1)", hashes)
-		if err != nil {
-			return fmt.Errorf("failed to delete from torrents table: %w", err)
-		}
-	}
 
 	bf := bloom.NewDefaultStableBloomFilter()
 

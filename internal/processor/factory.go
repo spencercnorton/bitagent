@@ -35,10 +35,8 @@ type Params struct {
 	// processor stays buildable in narrow test harnesses; production
 	// always supplies a real store via evidencefx.
 	EvidenceStore *evidence.Store `optional:"true"`
-	// Verdicts is the T3 verdict ledger (nil-safe optional, same as the
-	// junkpurge worker). Phase C dual-writes classifier_delete and
-	// content_filter drops as blacklisted verdicts alongside the existing
-	// delete — recording only, log-and-continue.
+	// Verdicts is retained for wiring compatibility. Removal authority now
+	// belongs to the atomic recovery writer, without a later blacklist write.
 	Verdicts *verdicts.Store `optional:"true"`
 	// DeleteMetrics counts classifier-driven deletes (nil-safe optional).
 	DeleteMetrics *DeleteMetrics `optional:"true"`

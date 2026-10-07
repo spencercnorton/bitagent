@@ -10,27 +10,20 @@ package purgecontenttypescmd
 
 import (
 	"context"
-	"database/sql/driver"
 	"fmt"
 	"time"
 
 	"github.com/spencercnorton/bitagent/internal/blocking"
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 	"github.com/spencercnorton/bitagent/internal/classifier"
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/protocol"
-	"github.com/spencercnorton/bitagent/internal/slice"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
-
-// blockTrancheSize bounds how many purged hashes accumulate before they are
-// pushed to the blocking bloom filter. Every push rewrites the whole filter
-// large object (~25 MB, see blocking/manager.go flush), so tranches keep that
-// to ~a dozen rewrites for a million-row purge instead of one per batch.
-const blockTrancheSize = 100_000
 
 type Params struct {
 	fx.In
@@ -58,8 +51,8 @@ func New(p Params) (Result, error) {
 			},
 			&cli.IntFlag{
 				Name:  "batchSize",
-				Value: 2000,
-				Usage: "torrents to delete per batch",
+				Value: cataloguerecovery.MaxBatch,
+				Usage: "torrents per batch (write caps each complete recovery transition at 32)",
 			},
 			&cli.Int64Flag{
 				Name:  "limit",
@@ -261,18 +254,15 @@ func (p Params) purge(ctx *cli.Context, d *dao.Query, typeNames []string, totalT
 	}
 
 	batchSize := ctx.Int("batchSize")
-	if batchSize <= 0 {
-		batchSize = 2000
+	if batchSize <= 0 || batchSize > cataloguerecovery.MaxBatch {
+		batchSize = cataloguerecovery.MaxBatch
 	}
 
 	limit := ctx.Int64("limit")
 	sleep := ctx.Duration("sleep")
 	startedAt := time.Now()
 
-	var (
-		deleted int64
-		pending []protocol.ID
-	)
+	var deleted int64
 
 	for limit <= 0 || deleted < limit {
 		rows, findErr := d.TorrentContent.WithContext(ctx.Context).
@@ -293,29 +283,13 @@ func (p Params) purge(ctx *cli.Context, d *dao.Query, typeNames []string, totalT
 			hashes = hashes[:limit-deleted]
 		}
 
-		// Delete first so the next SELECT makes progress; the classify-time
-		// delete config (enforced above unless --force) covers any hash the
-		// crawler re-announces before its block tranche lands below.
-		valuers := slice.Map(hashes, func(infoHash protocol.ID) driver.Valuer {
-			return infoHash
-		})
-
-		if _, deleteErr := d.Torrent.WithContext(ctx.Context).Where(
-			d.Torrent.InfoHash.In(valuers...),
-		).Delete(); deleteErr != nil {
-			return deleteErr
+		// The writer must capture and remove the complete source atomically.
+		// Never delete first: recovery-off, protection and capacity failures
+		// retain the raw rows and cannot leave a false crawler block.
+		if blockErr := bm.Block(ctx.Context, hashes, true); blockErr != nil {
+			return blockErr
 		}
-
 		deleted += int64(len(hashes))
-		pending = append(pending, hashes...)
-
-		if len(pending) >= blockTrancheSize {
-			if blockErr := bm.Block(ctx.Context, pending, true); blockErr != nil {
-				return blockErr
-			}
-
-			pending = pending[:0]
-		}
 
 		p.Logger.Infow("purge-content-types progress",
 			"deletedTorrents", deleted,
@@ -327,12 +301,6 @@ func (p Params) purge(ctx *cli.Context, d *dao.Query, typeNames []string, totalT
 		case <-ctx.Context.Done():
 			return ctx.Context.Err()
 		case <-time.After(sleep):
-		}
-	}
-
-	if len(pending) > 0 {
-		if blockErr := bm.Block(ctx.Context, pending, true); blockErr != nil {
-			return blockErr
 		}
 	}
 

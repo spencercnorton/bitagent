@@ -269,9 +269,9 @@ CREATE TRIGGER refuse_review_delete BEFORE DELETE ON junkpurge_quarantine FOR EA
 	require.Equal(t, 1, total, "snapshot remains restorable after failure")
 	_, err = pool.Exec(ctx, `DROP TRIGGER refuse_review_delete ON junkpurge_quarantine`)
 	require.NoError(t, err)
-	require.NoError(t, DeleteQuarantinedNow(ctx, pool, nil, nil, hex.EncodeToString(hash)))
+	require.Error(t, DeleteQuarantinedNow(ctx, pool, nil, nil, hex.EncodeToString(hash)), "hard purge remains held without complete recovery and retention qualification")
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM torrent_liveness`).Scan(&blacklisted))
-	require.Equal(t, 1, blacklisted)
+	require.Zero(t, blacklisted)
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_quarantine`).Scan(&total))
-	require.Zero(t, total)
+	require.Equal(t, 1, total)
 }

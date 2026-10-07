@@ -1,12 +1,29 @@
 package junkpurge
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 	migrationssql "github.com/spencercnorton/bitagent/migrations"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRuntimeQuarantineRequiresCompleteRecoveryBeforeAnyMutation(t *testing.T) {
+	hashes, err := quarantineJunk(context.Background(), nil, [][]byte{bytes20(1)}, 0.99, 24*time.Hour, "synthetic-owner")
+	require.ErrorIs(t, err, cataloguerecovery.ErrDisabled)
+	require.Empty(t, hashes)
+	hashes, err = quarantineJunk(context.Background(), nil, nil, 0.99, 24*time.Hour, "synthetic-owner")
+	require.NoError(t, err)
+	require.Empty(t, hashes)
+}
+
+func TestLegacySnapshotPurgeFailsClosedBeforeDatabaseAccess(t *testing.T) {
+	err := DeleteQuarantinedNow(context.Background(), nil, nil, nil, "0000000000000000000000000000000000000000")
+	require.ErrorIs(t, err, cataloguerecovery.ErrDisabled)
+}
 
 // These assertions run everywhere, including CI, which has no PostgreSQL service
 // and therefore skips TestQuarantineTombstoneLifecycle. They are deliberately

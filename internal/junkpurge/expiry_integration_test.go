@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
 	migrationssql "github.com/spencercnorton/bitagent/migrations"
@@ -267,7 +268,14 @@ AND NOT EXISTS(SELECT 1 FROM torrent_verdict_events WHERE info_hash=$1 AND verdi
 				require.NoError(t, RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)))
 				expected = verdicts.VerdictRestored
 			case "delete":
-				require.NoError(t, DeleteQuarantinedNow(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)))
+				// Construct a historical operator deletion to verify delayed
+				// observations cannot overwrite it. The live writer is held.
+				tx, err := pool.Begin(ctx)
+				require.NoError(t, err)
+				_, err = tx.Exec(ctx, `DELETE FROM junkpurge_quarantine WHERE info_hash=$1`, h)
+				require.NoError(t, err)
+				require.NoError(t, verdicts.RecordTx(ctx, tx, verdicts.Event{InfoHash: h, Verdict: verdicts.VerdictBlacklisted, Mechanism: verdicts.MechanismOperator, Reason: "synthetic historical deletion"}))
+				require.NoError(t, tx.Commit(ctx))
 				expected = verdicts.VerdictBlacklisted
 			case "expire":
 				n, err := expireQuarantineChunk(ctx, pool, 30, 1, true)
@@ -388,7 +396,7 @@ CREATE TRIGGER reject_transition BEFORE INSERT ON torrent_verdict_events FOR EAC
 				require.ErrorContains(t, err, "record quarantine restore")
 			} else {
 				err = DeleteQuarantinedNow(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h))
-				require.ErrorContains(t, err, "record quarantine deletion")
+				require.ErrorIs(t, err, cataloguerecovery.ErrDisabled)
 			}
 			require.Error(t, err)
 			require.Equal(t, snapshot, expirySnapshot(t, ctx, pool, h))

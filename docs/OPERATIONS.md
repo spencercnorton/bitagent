@@ -56,6 +56,37 @@ Test Torznab capabilities and a synthetic request before connecting a full
 client stack. Evaluate optional processing in shadow/dry-run mode before
 accepting live verdicts or deletion.
 
+## Catalogue removal
+
+Catalogue removal and crawler blocking require the complete, bounded recovery
+transition. The application does not attach this disabled foundation: legacy
+CEL delete actions, enforced content-filter drops, GraphQL deletion and
+`purge-content-types --write` therefore return a recovery-disabled error before
+deletion or bloom admission. The command's `--force` flag cannot bypass it.
+Ordinary matching and keep/review rows still persist, including independent
+rows in a batch whose removal is held.
+
+Retention purge and both synchronous and Batch junk quarantine are also held:
+their previous partial snapshots cannot restore every cascading source row.
+Dry-run observations, retained provider results, keep-only Batch settlement,
+existing quarantine expiry and operator restoration remain available. A held
+destructive Batch run retains its successful provider receipts in `finalizing`;
+it is not recorded as applied and does not dispatch again for that hold.
+
+Legacy archive hard purge is held as well; the API returns conflict without
+deleting its snapshot or declaring the torrent dead. Legacy restore validates
+captured hashes and source bounds, rechecks current raw state and protected
+authority, and refuses competing private/canonical/verdict facts. It preserves
+newer source observations and retains permanent processing/dispatch histories.
+Old partial snapshots cannot reconstruct facts that were never captured.
+
+The explicit `blocking.WithRecovery` integration is for callers that have
+qualified source protection, complete capture, bounded retention/storage and
+restoration. It does not authorize a deletion policy or configure the public
+application. Never enable legacy title/origin/zero-seed decisions merely because
+capture is available. Do not downgrade to an older unguarded binary to bypass
+the hold.
+
 ## Quarantine maintenance
 
 Quarantine expiry retains snapshots indefinitely; it does not delete them or

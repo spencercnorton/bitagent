@@ -10,9 +10,10 @@ import (
 	"github.com/spencercnorton/bitagent/internal/telemetry/dualemit"
 )
 
-// DeleteMetrics counts classifier-driven torrent deletes at the one place
-// they become real — where the processor turns ErrDeleteTorrent into a row
-// on infoHashesToDelete. Until this existed the `default` workflow's
+// DeleteMetrics counts classifier removals after the complete blocking call
+// succeeds. Held or failed calls do not count. Recovery can commit before a
+// later bloom flush fails; the retained ledger, not this counter, establishes
+// the poststate of those errors. The `default` workflow's
 // delete rules were the only armed destructive path with no metric at all
 // (GROUND-TRUTH F-1): six content types sat at zero rows in a 7M-row
 // catalogue and nothing reported the rate.
@@ -32,8 +33,8 @@ func NewDeleteMetrics() *DeleteMetrics {
 	return &DeleteMetrics{
 		deleted: dualemit.NewCounterVec(prometheus.CounterOpts{
 			Namespace: "bitagent", Subsystem: "classifier", Name: "deleted_total",
-			Help: "Torrents deleted by a classifier workflow rule, labelled by the content type " +
-				"assigned before the delete and the dotted path of the rule that fired.",
+			Help: "Successful classifier removal calls, labelled by the content type assigned before the " +
+				"delete and its dotted rule path; inspect retained recovery state after failed calls.",
 		}, []string{"content_type", "rule"}),
 	}
 }

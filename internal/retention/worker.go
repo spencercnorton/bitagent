@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/worker"
 	"go.uber.org/fx"
@@ -222,25 +223,10 @@ func countCandidates(ctx context.Context, pool *pgxpool.Pool, cfg Config) (int64
 }
 
 func purgeBatch(ctx context.Context, pool *pgxpool.Pool, cfg Config) (int64, error) {
-	q := fmt.Sprintf(`
-DELETE FROM torrents
-WHERE info_hash IN (
-    SELECT t.info_hash FROM torrents t
-    WHERE %s
-    ORDER BY t.updated_at ASC
-    LIMIT $4
-)`, predicate)
-	tag, err := pool.Exec(ctx,
-		q,
-		time.Now().Add(-cfg.MinAge),
-		time.Now().Add(-cfg.MaxLastSeen),
-		time.Now().Add(-cfg.SourceFreshnessMaxAge),
-		cfg.BatchSize,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return tag.RowsAffected(), nil
+	// The legacy freshness predicate is only an observer. An observed zero
+	// cannot authorize physical removal, and this caller has no complete
+	// recovery/retention contract. Keep dry-run metrics available while held.
+	return 0, cataloguerecovery.ErrDisabled
 }
 
 func min64(a, b int64) int64 {
