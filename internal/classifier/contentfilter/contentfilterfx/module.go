@@ -37,6 +37,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -94,6 +95,7 @@ func New() fx.Option {
 // (Moved from internal/dhtcrawler/factory.go::buildContentFilter so
 // any consumer of *contentfilter.Filter sees the same instance.)
 type filterParams struct {
+	NamePolicy *namepolicy.Policy `optional:"true"`
 	fx.In
 	Config   contentfilter.Config
 	Metrics  *contentfilter.Metrics
@@ -114,6 +116,7 @@ func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 	if !cfg.LLMEnabled {
 		filter := contentfilter.New(cfg)
 		filter.SetWork(p.Work)
+		filter.SetNamePolicy(p.NamePolicy)
 		return filter, nil
 	}
 	if err := validateProductionLLMConfig(cfg); err != nil {
@@ -138,6 +141,9 @@ func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 		timeout,
 		cfg.LLMOpenaiDataSharing,
 	)
+	if x, ok := llm.(interface{ SetNamePolicy(*namepolicy.Policy) }); ok {
+		x.SetNamePolicy(p.NamePolicy)
+	}
 	cb := m.LLMCallbacks()
 	apiStyle := cfg.LLMApiStyle
 	if apiStyle == "" {
@@ -170,6 +176,7 @@ func provideFilter(p filterParams) (*contentfilter.Filter, error) {
 		Dispatch: p.Dispatch,
 	})
 	filter.SetWork(p.Work)
+	filter.SetNamePolicy(p.NamePolicy)
 	return filter, nil
 }
 

@@ -213,7 +213,7 @@ func (w *purgeWorker) runBatchSubmission(ctx context.Context, client batchWorker
 		return
 	}
 
-	run, err := createBatchRun(ctx, pool, w.cfg)
+	run, err := createBatchRun(ctx, pool, w.cfg, w.namePolicy)
 	if err != nil {
 		w.batchError("reserve", err)
 		return

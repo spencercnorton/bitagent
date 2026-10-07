@@ -29,6 +29,10 @@ func (c *crawler) runInfoHashTriage(ctx context.Context) {
 
 			reqMap := make(map[protocol.ID]nodeHasPeersForHash, len(reqs))
 			for _, r := range reqs {
+				if c.namePolicy.ExcludesHash(r.infoHash) {
+					c.namePolicy.Observe("crawler_existing", c.namePolicy.Evaluate(r.infoHash, ""))
+					continue
+				}
 				if _, ok := reqMap[r.infoHash]; ok {
 					continue
 				}
@@ -121,6 +125,7 @@ func (c *crawler) runInfoHashTriage(ctx context.Context) {
 			var result []*triageResult
 			if queryErr := c.dao.Torrent.WithContext(ctx).Select(
 				c.dao.Torrent.InfoHash,
+				c.dao.Torrent.Name,
 				c.dao.Torrent.FilesStatus,
 				c.dao.Torrent.FilesCount,
 				c.dao.TorrentsTorrentSource.Seeders,
@@ -144,6 +149,13 @@ func (c *crawler) runInfoHashTriage(ctx context.Context) {
 
 			for h := range filteredHashMap {
 				r := reqMap[h]
+				if t, ok := foundTorrents[h]; ok && t.Name != "" {
+					d := c.namePolicy.Evaluate(h, t.Name)
+					if !d.Eligible {
+						c.namePolicy.Observe("crawler_existing", d)
+						continue
+					}
+				}
 				if t, ok := foundTorrents[r.infoHash]; !ok ||
 					t.FilesStatus == model.FilesStatusNoInfo ||
 					(t.FilesStatus != model.FilesStatusSingle && !t.FilesCount.Valid) ||
@@ -169,6 +181,7 @@ func (c *crawler) runInfoHashTriage(ctx context.Context) {
 }
 
 type triageResult struct {
+	Name        string
 	InfoHash    protocol.ID
 	FilesStatus model.FilesStatus
 	FilesCount  model.NullUint

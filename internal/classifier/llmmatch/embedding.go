@@ -17,6 +17,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 )
 
 const embeddingShortlistAlgorithm = "embedding-cosine-shortlist-v1"
@@ -279,6 +280,9 @@ func candidatesByIDs(candidates []Candidate, ids []int64) []Candidate {
 // callEmbeddings reserves exactly one shared durable slot before dispatch.
 // It never retries. Terminal HTTP evidence is retained before fallback to chat.
 func (c *Client) callEmbeddings(ctx context.Context, t model.Torrent, body []byte, count int) ([][]float64, error) {
+	if !c.nameAllowed(ctx, t) {
+		return nil, namepolicy.ErrExcluded
+	}
 	if !c.Enabled() {
 		return nil, fmt.Errorf("matcher is disabled")
 	}

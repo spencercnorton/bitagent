@@ -82,7 +82,7 @@ func (c *Client) ExtractMany(ctx context.Context, torrents []model.Torrent, batc
 	pending := make([]model.Torrent, 0, len(torrents))
 	seen := make(map[string]struct{}, len(torrents))
 	for _, t := range torrents {
-		if c.nativePrivateBlocked(t) {
+		if !c.nameAllowed(ctx, t) || c.nativePrivateBlocked(t) {
 			st.Gated++
 			continue
 		}
@@ -114,7 +114,7 @@ func (c *Client) extractChunk(ctx context.Context, chunk []model.Torrent, st *Ba
 	// prospective capture is enabled, use the ordinary production single-item
 	// boundary so every actual extraction has an exact, independently
 	// replayable input. Disabled deployments retain the existing batching.
-	if c.capture != nil && c.capture.Enabled() {
+	if c.namePolicy.Enabled() || (c.capture != nil && c.capture.Enabled()) {
 		c.extractSingles(ctx, chunk, st)
 		return
 	}

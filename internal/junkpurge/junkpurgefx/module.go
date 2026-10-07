@@ -18,6 +18,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/junkpurge/quarantinehttp"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"go.uber.org/fx"
 )
 
@@ -50,10 +51,15 @@ func provideJudge(
 	pool lazy.Lazy[*pgxpool.Pool],
 	audit struct {
 		fx.In
-		Capture llmcapture.Capturer `optional:"true"`
+		Capture    llmcapture.Capturer `optional:"true"`
+		NamePolicy *namepolicy.Policy  `optional:"true"`
 	},
 ) junkpurge.Judge {
-	return junkpurge.NewAuditedJudge(
+	j := junkpurge.NewAuditedJudge(
 		cfg, metrics, llmmatch.NewPostgresJunkPurgeCallBudget(pool), audit.Capture,
 	)
+	if x, ok := j.(interface{ SetNamePolicy(*namepolicy.Policy) }); ok {
+		x.SetNamePolicy(audit.NamePolicy)
+	}
+	return j
 }

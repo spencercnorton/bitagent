@@ -9,6 +9,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/evaltrace"
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/telemetry/dualemit"
 )
 
@@ -51,11 +52,16 @@ func WithTitleEvidence(e *TitleEvidence) CanonicalOption {
 	return func(r *canonicalRunner) { r.titles = e }
 }
 
+func WithNamePolicy(p *namepolicy.Policy) CanonicalOption {
+	return func(r *canonicalRunner) { r.namePolicy = p }
+}
+
 type canonicalRunner struct {
-	inner   Runner
-	store   CanonicalStore
-	metrics *PreemptMetrics
-	titles  *TitleEvidence // nil unless CLASSIFIER_EVIDENCE_TITLE_IDENTITY
+	namePolicy *namepolicy.Policy
+	inner      Runner
+	store      CanonicalStore
+	metrics    *PreemptMetrics
+	titles     *TitleEvidence // nil unless CLASSIFIER_EVIDENCE_TITLE_IDENTITY
 }
 
 func (r *canonicalRunner) Run(
@@ -64,6 +70,11 @@ func (r *canonicalRunner) Run(
 	flags Flags,
 	t model.Torrent,
 ) (classification.Result, error) {
+	d := r.namePolicy.Evaluate(t.InfoHash, t.Name)
+	if !d.Eligible {
+		r.namePolicy.Observe("classifier", d)
+		return classification.Result{}, namepolicy.ErrExcluded
+	}
 	if evaltrace.SkipPreempt(ctx) {
 		// Replay skips the exact-infohash preempt because a torrent's own label
 		// would copy the answer back. Title evidence never counts a torrent's own

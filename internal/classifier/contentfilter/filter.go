@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 	"math"
 	"net/http"
 	"slices"
@@ -99,15 +101,16 @@ type Input struct {
 // is disabled or unconfigured, Decide() degrades to pure-Phase-1
 // behaviour with zero overhead.
 type Filter struct {
-	cfg       Config
-	llm       LLMClient
-	cache     *llmCache
-	miner     *ruleMiner
-	llmCb     LLMCallbacks // optional metrics+logging hooks
-	budget    *dailyBudget
-	admission Admission
-	work      *llmwork.Store
-	slots     chan struct{}
+	namePolicy *namepolicy.Policy
+	cfg        Config
+	llm        LLMClient
+	cache      *llmCache
+	miner      *ruleMiner
+	llmCb      LLMCallbacks // optional metrics+logging hooks
+	budget     *dailyBudget
+	admission  Admission
+	work       *llmwork.Store
+	slots      chan struct{}
 }
 
 type CallBudget interface {
@@ -195,6 +198,8 @@ func newWithLLM(cfg Config, llm LLMClient, cb LLMCallbacks, admission Admission)
 // on this — when false, all should be skipped entirely so a disabled
 // filter is a genuine no-op (no examined_total / keep_total leakage).
 // The config doc on Enabled is explicit: "no metrics are emitted."
+func (f *Filter) SetNamePolicy(p *namepolicy.Policy) { f.namePolicy = p }
+
 func (f *Filter) Enabled() bool { return f.cfg.Enabled }
 
 // dailyBudget is a UTC-day-bucketed counter that resets at 00:00
@@ -336,6 +341,11 @@ func (f *Filter) DecideDeterministic(in Input) Decision {
 // decide is the shared core for Decide / DecideDeterministic.
 // allowLLM=false short-circuits step 9.
 func (f *Filter) decide(ctx context.Context, in Input, allowLLM bool, source *AuditSource) (Decision, error) {
+	d := f.namePolicy.EvaluateContext(ctx, protocol.ID{}, in.Title, in.ContentType)
+	if !d.Eligible {
+		f.namePolicy.Observe("model", d)
+		return Decision{}, namepolicy.ErrExcluded
+	}
 	if !f.cfg.Enabled {
 		return Decision{Allow: true}, nil
 	}

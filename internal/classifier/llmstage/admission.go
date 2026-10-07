@@ -15,6 +15,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 )
 
 // CallBudget reserves one possible billed dispatch durably. Failures are never
@@ -44,6 +45,11 @@ func (s *Stage) admissionReady() error {
 }
 
 func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (Decision, error) {
+	d := s.namePolicy.EvaluateContext(ctx, t.InfoHash, t.Name, "")
+	if !d.Eligible {
+		s.namePolicy.Observe("model_dispatch", d)
+		return Decision{}, namepolicy.ErrExcluded
+	}
 	if err := s.cfg.Validate(); err != nil {
 		return Decision{}, err
 	}

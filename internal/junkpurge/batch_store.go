@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 	"strings"
 	"time"
 
@@ -183,7 +185,7 @@ type batchPayloadBuilder func(
 	items []batchItem,
 ) (payload []byte, filename, sha256 string, err error)
 
-func createBatchRun(ctx context.Context, pool *pgxpool.Pool, cfg Config) (*batchRun, error) {
+func createBatchRun(ctx context.Context, pool *pgxpool.Pool, cfg Config, policies ...*namepolicy.Policy) (*batchRun, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("junkpurge batch: begin reserve: %w", err)
@@ -210,6 +212,21 @@ WHERE state IN ('building','active','finalizing')`).Scan(&active); err != nil {
 	candidates, err := findCandidatesQuery(ctx, tx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("junkpurge batch: select candidates: %w", err)
+	}
+	if len(policies) > 0 && policies[0].Enabled() {
+		p := policies[0]
+		kept := candidates[:0]
+		for _, c := range candidates {
+			var h protocol.ID
+			copy(h[:], c.infoHash)
+			d := p.Evaluate(h, c.name)
+			if !d.Eligible {
+				p.Observe("task_enqueue", d)
+				continue
+			}
+			kept = append(kept, c)
+		}
+		candidates = kept
 	}
 	if len(candidates) == 0 {
 		return nil, nil

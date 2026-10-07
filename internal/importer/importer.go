@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/csamblocklist"
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/processor"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"gorm.io/gorm/clause"
@@ -48,6 +50,7 @@ type Info struct {
 }
 
 type importer struct {
+	namePolicy  *namepolicy.Policy
 	dao         *dao.Query
 	bufferSize  uint
 	maxWaitTime time.Duration
@@ -241,6 +244,39 @@ func (i *activeImport) gateItems(items []Item) ([]Item, error) {
 }
 
 func (i *activeImport) persistItems(items ...Item) error {
+	if i.namePolicy.Enabled() {
+		values := make([]driver.Valuer, len(items))
+		for j, it := range items {
+			values[j] = it.InfoHash
+		}
+		existing, err := i.dao.Torrent.WithContext(i.ctx).Select(i.dao.Torrent.InfoHash, i.dao.Torrent.Name).Where(i.dao.Torrent.InfoHash.In(values...)).Find()
+		if err != nil {
+			return err
+		}
+		names := map[protocol.ID]string{}
+		for _, t := range existing {
+			names[t.InfoHash] = t.Name
+		}
+		kept := make([]Item, 0, len(items))
+		for _, it := range items {
+			name := it.Name
+			if n, ok := names[it.InfoHash]; ok {
+				name = n
+			}
+			kind := ""
+			if it.ContentType.Valid {
+				kind = it.ContentType.ContentType.String()
+			}
+			d := i.namePolicy.EvaluateClassified(it.InfoHash, name, kind)
+			if !d.Eligible {
+				i.namePolicy.Observe("import", d)
+				continue
+			}
+			kept = append(kept, it)
+		}
+		items = kept
+	}
+
 	items, gateErr := i.gateItems(items)
 	if gateErr != nil {
 		return gateErr

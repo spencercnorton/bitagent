@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,10 +15,11 @@ import (
 )
 
 type Store struct {
-	cfg      Config
-	pool     lazy.Lazy[*pgxpool.Pool]
-	dispatch llmcapture.DispatchControl
-	metrics  *Metrics
+	namePolicy *namepolicy.Policy
+	cfg        Config
+	pool       lazy.Lazy[*pgxpool.Pool]
+	dispatch   llmcapture.DispatchControl
+	metrics    *Metrics
 }
 
 func NewStore(cfg Config, pool lazy.Lazy[*pgxpool.Pool]) (*Store, error) {
@@ -31,6 +33,8 @@ func (s *Store) Config() Config { return s.cfg }
 
 // SetDispatch is startup-only wiring. Automatic lease recovery requires the
 // same controller that fences every provider boundary for these tasks.
+func (s *Store) SetNamePolicy(p *namepolicy.Policy) { s.namePolicy = p }
+
 func (s *Store) SetDispatch(d llmcapture.DispatchControl) { s.dispatch = d }
 
 const publicSourceSQL = `EXISTS (
@@ -72,6 +76,9 @@ func (s *Store) Enqueue(ctx context.Context, d Draft) (outcome string, retErr er
 		return "unavailable", err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
+	if err = s.nameAdmission(ctx, tx, d.InfoHash, "task_enqueue"); err != nil {
+		return "name_policy", err
+	}
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('llm_work.'||$1))`, string(d.Kind)); err != nil {
 		return "unavailable", err
 	}
@@ -266,6 +273,9 @@ func (s *Store) Apply(ctx context.Context, l Lease, reason string, apply func(pg
 		return err
 	}
 	if apply != nil {
+		if err = s.nameAdmission(ctx, tx, l.Task.InfoHash, "model_apply"); err != nil {
+			return err
+		}
 		if err = apply(tx); err != nil {
 			return err
 		}

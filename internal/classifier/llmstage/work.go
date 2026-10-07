@@ -3,6 +3,7 @@ package llmstage
 import (
 	"context"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 
 	"github.com/spencercnorton/bitagent/internal/classifier"
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
@@ -37,7 +38,7 @@ func (s *Stage) SetWork(work *llmwork.Store, policy classifier.Config) {
 func (s *Stage) WorkPolicy(p WorkPayload) any {
 	cfg := s.cfg
 	cfg.APIKey = ""
-	return []any{WorkPolicyVersion, cfg, s.workPolicy, p}
+	return namepolicy.BindWorkPolicy(s.namePolicy, []any{WorkPolicyVersion, cfg, s.workPolicy, p})
 }
 
 func (s *Stage) submitWork(ctx context.Context, t model.Torrent) error {

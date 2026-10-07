@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"io"
 	"net/http"
 	"slices"
@@ -47,6 +48,7 @@ type Decision struct {
 // result and error; live predictions continue through the workflow's policy.
 // Runners without that boundary can only contribute shadow observations.
 type Stage struct {
+	namePolicy  *namepolicy.Policy
 	cfg         Config
 	inner       classifier.Runner
 	privacy     PrivacyStore
@@ -118,6 +120,8 @@ func NewStage(
 	return s
 }
 
+func (s *Stage) SetNamePolicy(p *namepolicy.Policy) { s.namePolicy = p }
+
 // EvalMatch delegates to the inner runner. This llmstage decorator is a
 // type-only fallback unrelated to the TMDB matcher the eval path measures.
 func (s *Stage) EvalMatch(ctx context.Context, t model.Torrent, ct model.NullContentType) (classifier.MatchDecision, error) {
@@ -133,6 +137,12 @@ func (s *Stage) Run(
 	flags classifier.Flags,
 	t model.Torrent,
 ) (classification.Result, error) {
+	d := s.namePolicy.Evaluate(t.InfoHash, t.Name)
+	if !d.Eligible {
+		s.namePolicy.Observe("classifier", d)
+		return classification.Result{}, namepolicy.ErrExcluded
+	}
+	ctx = namepolicy.WithSource(ctx, t.InfoHash, t.Name, "")
 	ctx = context.WithValue(ctx, workRunKey{}, WorkPayload{Workflow: workflow, Flags: flags})
 	if llmwork.ExecutionFrom(ctx) == nil && s.work != nil && s.work.Enabled() {
 		p := WorkPayload{Workflow: workflow, Flags: flags}
@@ -322,6 +332,11 @@ func (s *Stage) plausibleMedia(t model.Torrent) bool {
 // classify is the cache-check + HTTP call. Returns a Decision or
 // error. Callers map error to a gate-reject metric.
 func (s *Stage) classify(ctx context.Context, t model.Torrent) (Decision, error) {
+	d := s.namePolicy.Evaluate(t.InfoHash, t.Name)
+	if !d.Eligible {
+		s.namePolicy.Observe("model", d)
+		return Decision{}, namepolicy.ErrExcluded
+	}
 	if err := s.submitWork(ctx, t); err != nil {
 		if errors.Is(err, llmwork.ErrReplayOnly) {
 			ctx = llmwork.WithReplayOnly(ctx)

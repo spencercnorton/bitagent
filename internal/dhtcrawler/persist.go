@@ -57,6 +57,11 @@ func (c *crawler) runPersistTorrents(ctx context.Context) {
 			flushHashesToClassify()
 
 			for _, i := range is {
+				d := c.namePolicy.Evaluate(i.infoHash, i.metaInfo.BestName())
+				if !d.Eligible {
+					c.namePolicy.Observe("crawler_acquisition", d)
+					continue
+				}
 				if _, ok := hashMap[i.infoHash]; ok {
 					continue
 				}
