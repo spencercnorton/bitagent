@@ -308,6 +308,23 @@ func (gq *genericQuery[T]) doItems() {
 // primitive. Hydration of the representative's Torrent/Content happens via the
 // usual callbacks. Grouped mode never races the default/CTE strategies.
 func (gq *genericQuery[T]) doItemsGrouped() {
+	if items, complete, err := gq.groupedPrefixItems(); err != nil {
+		gq.addError(err)
+		return
+	} else if complete {
+		if gq.builder.hasNextPage(len(items)) {
+			gq.result.HasNextPage = true
+			items = items[:len(items)-1]
+		}
+		if len(items) > 0 {
+			if err := gq.builder.applyCallbacks(gq.ctx, items); err != nil {
+				gq.addError(err)
+				return
+			}
+		}
+		gq.result.Items = items
+		return
+	}
 	spec := gq.builder.groupingSpec()
 
 	sqInner, sqErr := gq.newSubQuery(gq.ctx, true)
@@ -511,6 +528,7 @@ type optionBuilder struct {
 // (never user input — see search.TorrentContentGroupByContentOption), mirroring
 // the raw-SQL ordering fragments already used in order_torrent_content.go.
 type groupingSpec struct {
+	candidatePrefix bool
 	// distinctOnSQL is the DISTINCT ON (...) key expression list, e.g.
 	// "torrent_contents.content_type, torrent_contents.content_source, torrent_contents.content_id".
 	distinctOnSQL string
