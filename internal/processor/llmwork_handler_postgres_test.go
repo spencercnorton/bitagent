@@ -340,7 +340,7 @@ func TestPostgresNamePolicyAfterDispatchKeepsPaidResponseFenceUnapplied(t *testi
 }
 
 func TestPostgresDirectAdmissionAndApplicationUseCurrentStoredName(t *testing.T) {
-	pool, _ := deferredApplyFixture(t)
+	pool, backend := deferredApplyFixture(t)
 	ctx := context.Background()
 	hash := protocol.ID{45}
 	_, err := pool.Exec(ctx, `INSERT INTO torrents(info_hash,name,size,private,files_status,created_at,updated_at)VALUES($1,'Allowed.Stored.Name.mkv',1,false,'no_info',now(),now())`, hash.Bytes())
@@ -353,7 +353,10 @@ func TestPostgresDirectAdmissionAndApplicationUseCurrentStoredName(t *testing.T)
 	require.NoError(t, err)
 	p, err := namepolicy.New(namepolicy.Config{Enabled: true})
 	require.NoError(t, err)
-	c := processor{dao: dao.Use(g), namePolicy: p}
+	c := processor{dao: dao.Use(g), namePolicy: p, search: backend, logger: zap.NewNop().Sugar(), runner: processRunnerStub{run: func(model.Torrent) (classification.Result, error) {
+		return classification.Result{ContentAttributes: classification.ContentAttributes{ContentType: model.NewNullContentType(model.ContentTypeMovie)}}, nil
+	}}}
+	require.NoError(t, c.Process(ctx, MessageParams{InfoHashes: []protocol.ID{hash}, SkipContentFilter: true}), "allowed public names retain ordinary native matching")
 	source := namepolicy.Source{InfoHash: hash, Name: "Allowed.Stored.Name.mkv"}
 	d, err := c.providerNameAdmission(ctx, source)
 	require.NoError(t, err)
@@ -382,4 +385,11 @@ func TestPostgresDirectAdmissionAndApplicationUseCurrentStoredName(t *testing.T)
 	require.NoError(t, err)
 	require.False(t, d.Eligible)
 	require.Equal(t, namepolicy.ReasonNotServed, d.Reason)
+	_, err = pool.Exec(ctx, `UPDATE torrent_contents SET content_type='xxx' WHERE info_hash=$1`, hash.Bytes())
+	require.NoError(t, err)
+	c.runner = processRunnerStub{run: func(model.Torrent) (classification.Result, error) {
+		t.Fatal("known adult metadata reached classifier")
+		return classification.Result{}, nil
+	}}
+	require.NoError(t, c.Process(ctx, MessageParams{InfoHashes: []protocol.ID{hash}, SkipContentFilter: true}))
 }
