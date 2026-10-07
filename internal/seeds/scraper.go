@@ -23,13 +23,14 @@ type ScrapeOutcome struct {
 }
 
 // Positive reports a live swarm — the authoritative signal we surface. A hash
-// that is TrackerKnown but not Positive is a real dead swarm (known-zero); a
-// hash that is not TrackerKnown is an honest unknown.
+// that is TrackerKnown but not Positive has reported zero active peers
+// (known-zero). This observation alone does not establish swarm death.
+// A hash that is not TrackerKnown has unresolved tracker coverage.
 func (o ScrapeOutcome) Positive() bool { return o.Seeders > 0 || o.Leechers > 0 }
 
 // Class buckets the outcome for metrics/reporting: "positive" (live swarm),
-// "known_zero" (a tracker has the hash but it's dead), or "unknown" (no tracker
-// in the pool knows it).
+// "known_zero" (a tracker knows the hash but reports zero active peers), or
+// "unknown" (no tracker in the pool established knowledge of it).
 func (o ScrapeOutcome) Class() string {
 	switch {
 	case o.Positive():
