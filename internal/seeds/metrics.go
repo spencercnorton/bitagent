@@ -16,8 +16,8 @@ type Metrics struct {
 
 	hashesSelected  *dualemit.Counter
 	positiveTotal   *dualemit.Counter // scrape found seeders/leechers > 0
-	knownZeroTotal  *dualemit.Counter // a tracker has the hash but swarm is dead
-	unknownTotal    *dualemit.Counter // no tracker in the pool knows the hash
+	knownZeroTotal  *dualemit.Counter // a tracker knows the hash but reports zero active peers
+	unknownTotal    *dualemit.Counter // no tracker in the pool established knowledge of the hash
 	sourcesUpserted *dualemit.Counter // authoritative 'tracker' source rows written
 	sourcesCleared  *dualemit.Counter // stale 'tracker' source rows removed
 	denormSynced    *dualemit.Counter // torrent_contents rows refreshed from sources
@@ -59,8 +59,8 @@ func NewMetrics() *Metrics {
 		cycleErrors:     cv("cycle_errors_total", "Cycle errors by stage: select | scrape | persist | denorm.", []string{"stage"}),
 		hashesSelected:  c("hashes_selected_total", "Info-hashes selected for scraping across all cycles."),
 		positiveTotal:   c("positive_total", "Scrapes that found a live swarm (seeders or leechers > 0)."),
-		knownZeroTotal:  c("known_zero_total", "Scrapes where a tracker knew the hash but the swarm was dead."),
-		unknownTotal:    c("unknown_total", "Scrapes where no tracker in the pool knew the hash."),
+		knownZeroTotal:  c("known_zero_total", "Scrapes where a tracker knew the hash but reported zero active peers; not a confirmed-dead verdict."),
+		unknownTotal:    c("unknown_total", "Scrapes where no tracker in the pool established knowledge of the hash, including failed coverage."),
 		sourcesUpserted: c("sources_upserted_total", "Authoritative 'tracker' source rows written."),
 		sourcesCleared:  c("sources_cleared_total", "Stale 'tracker' source rows removed after a non-positive re-scrape."),
 		denormSynced:    c("denorm_synced_total", "torrent_contents rows whose denormalized seeders/leechers were refreshed."),

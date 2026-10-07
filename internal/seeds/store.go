@@ -62,7 +62,7 @@ insert into torrent_tracker_seeds
   (info_hash, tracker_known, seeders, leechers, completed, best_tracker, checked_at,
    peak_seeders, last_positive_at)
 select $1, $2, $3::int, $4::int, $5::int, $6, now(),
-   $3::int, case when $3::int > 0 then now() end
+   $3::int, case when $3::int > 0 or $4::int > 0 then now() end
 where exists (select 1 from torrents where info_hash = $1)
 on conflict (info_hash) do update set
   tracker_known = excluded.tracker_known,
@@ -76,7 +76,7 @@ on conflict (info_hash) do update set
                        else greatest(coalesce(torrent_tracker_seeds.peak_seeders, 0), excluded.seeders)
                      end,
   last_positive_at = case
-                       when excluded.seeders > 0 then excluded.checked_at
+                       when excluded.seeders > 0 or excluded.leechers > 0 then excluded.checked_at
                        else torrent_tracker_seeds.last_positive_at
                      end,
   seeders       = excluded.seeders,
@@ -242,7 +242,7 @@ func (s *Store) CoverageCounts(ctx context.Context) (ledger, trackerKnown, posit
 select
   count(*),
   count(*) filter (where tracker_known),
-  count(*) filter (where seeders is not null and seeders > 0)
+  count(*) filter (where seeders > 0 or leechers > 0)
 from torrent_tracker_seeds`
 	err = pool.QueryRow(ctx, q).Scan(&ledger, &trackerKnown, &positive)
 	if err != nil {

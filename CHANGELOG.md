@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Preserve tracker-positive history and standing coverage for leechers-only
+  swarms, matching the existing seeder-or-leecher live signal. Keep known zero
+  and failed coverage separate from confirmed-dead claims.
+
 - Measure matcher HTTP latency through bounded response reading and envelope
   decoding. Count model/stage outcomes and failures consistently for ordinary,
   controlled and embedding attempts, excluding admission, cache and replay.
