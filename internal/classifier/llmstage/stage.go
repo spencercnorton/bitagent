@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"io"
 	"net/http"
 	"slices"
@@ -47,6 +48,7 @@ type Decision struct {
 // result and error; live predictions continue through the workflow's policy.
 // Runners without that boundary can only contribute shadow observations.
 type Stage struct {
+	namePolicy  *namepolicy.Policy
 	cfg         Config
 	inner       classifier.Runner
 	privacy     PrivacyStore
@@ -118,6 +120,8 @@ func NewStage(
 	return s
 }
 
+func (s *Stage) SetNamePolicy(p *namepolicy.Policy) { s.namePolicy = p }
+
 // EvalMatch delegates to the inner runner. This llmstage decorator is a
 // type-only fallback unrelated to the TMDB matcher the eval path measures.
 func (s *Stage) EvalMatch(ctx context.Context, t model.Torrent, ct model.NullContentType) (classifier.MatchDecision, error) {
@@ -133,6 +137,12 @@ func (s *Stage) Run(
 	flags classifier.Flags,
 	t model.Torrent,
 ) (classification.Result, error) {
+	d := s.namePolicy.Evaluate(t.InfoHash, t.Name)
+	if !d.Eligible {
+		s.namePolicy.Observe("classifier", d)
+		return classification.Result{}, namepolicy.ErrExcluded
+	}
+	ctx = namepolicy.WithSource(ctx, t.InfoHash, t.Name, "")
 	ctx = context.WithValue(ctx, workRunKey{}, WorkPayload{Workflow: workflow, Flags: flags})
 	if llmwork.ExecutionFrom(ctx) == nil && s.work != nil && s.work.Enabled() {
 		p := WorkPayload{Workflow: workflow, Flags: flags}
@@ -161,7 +171,11 @@ func (s *Stage) Run(
 			return result, nil
 		}
 		reached = true
-		updated, changed := s.fallback(ctx, t, result)
+		updated, changed, nameErr := s.fallback(ctx, t, result)
+		if nameErr != nil {
+			fallbackErr = nameErr
+			return result, nameErr
+		}
 		if deferred := llmwork.LastDeferral(ctx); deferred != nil {
 			fallbackErr = *deferred
 			return result, fallbackErr
@@ -199,13 +213,16 @@ func (s *Stage) Run(
 		s.metrics.gateRejectsTotal.WithLabelValues("policy_live_unavailable").Inc()
 		return innerResult, innerErr
 	}
-	s.fallback(ctx, t, innerResult)
+	_, _, nameErr := s.fallback(ctx, t, innerResult)
+	if nameErr != nil {
+		return innerResult, nameErr
+	}
 	return innerResult, innerErr
 }
 
 // fallback changes only the content type. The caller must continue through the
 // workflow's policy before counting an application or allowing persistence.
-func (s *Stage) fallback(ctx context.Context, t model.Torrent, innerResult classification.Result) (classification.Result, bool) {
+func (s *Stage) fallback(ctx context.Context, t model.Torrent, innerResult classification.Result) (classification.Result, bool, error) {
 	s.metrics.invocationsTotal.WithLabelValues("unmatched").Inc()
 
 	// The metainfo private flag is authoritative and requires no evidence
@@ -214,17 +231,17 @@ func (s *Stage) fallback(ctx context.Context, t model.Torrent, innerResult class
 	// list to the external model. The deterministic inner result is preserved.
 	if t.Private {
 		s.metrics.gateRejectsTotal.WithLabelValues("privacy").Inc()
-		return innerResult, false
+		return innerResult, false, nil
 	}
 	if err := s.cfg.Validate(); err != nil {
 		s.metrics.gateRejectsTotal.WithLabelValues("config").Inc()
-		return innerResult, false
+		return innerResult, false, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.Timeout)
 	defer cancel()
 
 	if !s.plausibleMedia(t) {
-		return innerResult, false
+		return innerResult, false, nil
 	}
 
 	// Privacy gate. If the store errors (DB down) we MUST fail
@@ -232,49 +249,52 @@ func (s *Stage) fallback(ctx context.Context, t model.Torrent, innerResult class
 	// leaking private-tracker content.
 	if s.privacy == nil {
 		s.metrics.gateRejectsTotal.WithLabelValues("privacy").Inc()
-		return innerResult, false
+		return innerResult, false, nil
 	} else {
 		isPriv, err := s.privacy.IsPrivateInfoHash(ctx, t.InfoHash.Bytes())
 		if err != nil {
 			s.metrics.gateRejectsTotal.WithLabelValues("privacy").Inc()
 			s.logger.Warnw("privacy gate errored; failing closed", "err", err)
-			return innerResult, false
+			return innerResult, false, nil
 		}
 		if isPriv {
 			s.metrics.gateRejectsTotal.WithLabelValues("privacy").Inc()
-			return innerResult, false
+			return innerResult, false, nil
 		}
 	}
 
 	decision, err := s.classify(ctx, t)
+	if errors.Is(err, namepolicy.ErrExcluded) {
+		return innerResult, false, err
+	}
 	if err != nil {
-		return innerResult, false
+		return innerResult, false, nil
 	}
 	if err := s.recordDecision(ctx, t, decision, false); err != nil {
-		return innerResult, false
+		return innerResult, false, nil
 	}
 
 	s.metrics.decisionsTotal.WithLabelValues(string(decision.MediaType)).Inc()
 
 	if !s.cfg.EnableLive {
 		s.metrics.shadowSkippedTotal.Inc()
-		return innerResult, false
+		return innerResult, false, nil
 	}
 	if decision.Confidence < s.cfg.MinConfidence {
-		return innerResult, false
+		return innerResult, false, nil
 	}
 	contentType, ok := mediaTypeToContentType(decision.MediaType)
 	if !ok {
-		return innerResult, false
+		return innerResult, false, nil
 	}
 	if !llmcapture.TypeLiveAllowed(string(decision.MediaType), s.cfg.LiveAllowedTypes) {
 		s.metrics.gateRejectsTotal.WithLabelValues("type_policy_declined").Inc()
-		return innerResult, false
+		return innerResult, false, nil
 	}
 
 	result := innerResult
 	result.ContentType = model.NewNullContentType(contentType)
-	return result, true
+	return result, true, nil
 }
 
 // onlyUnmatched permits the sentinel and ordinary single-error wrappers such
@@ -322,6 +342,11 @@ func (s *Stage) plausibleMedia(t model.Torrent) bool {
 // classify is the cache-check + HTTP call. Returns a Decision or
 // error. Callers map error to a gate-reject metric.
 func (s *Stage) classify(ctx context.Context, t model.Torrent) (Decision, error) {
+	d, admissionErr := s.namePolicy.AdmitContext(ctx, t.InfoHash, t.Name, "")
+	if admissionErr != nil || !d.Eligible {
+		s.namePolicy.Observe("model", d)
+		return Decision{}, namepolicy.ErrExcluded
+	}
 	if err := s.submitWork(ctx, t); err != nil {
 		if errors.Is(err, llmwork.ErrReplayOnly) {
 			ctx = llmwork.WithReplayOnly(ctx)

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/catalogueguard"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,10 +16,11 @@ import (
 )
 
 type Store struct {
-	cfg      Config
-	pool     lazy.Lazy[*pgxpool.Pool]
-	dispatch llmcapture.DispatchControl
-	metrics  *Metrics
+	namePolicy *namepolicy.Policy
+	cfg        Config
+	pool       lazy.Lazy[*pgxpool.Pool]
+	dispatch   llmcapture.DispatchControl
+	metrics    *Metrics
 }
 
 func NewStore(cfg Config, pool lazy.Lazy[*pgxpool.Pool]) (*Store, error) {
@@ -31,12 +34,14 @@ func (s *Store) Config() Config { return s.cfg }
 
 // SetDispatch is startup-only wiring. Automatic lease recovery requires the
 // same controller that fences every provider boundary for these tasks.
+func (s *Store) SetNamePolicy(p *namepolicy.Policy) { s.namePolicy = p }
+
 func (s *Store) SetDispatch(d llmcapture.DispatchControl) { s.dispatch = d }
 
-const publicSourceSQL = `EXISTS (
+var publicSourceSQL = `EXISTS (
  SELECT 1 FROM torrents t WHERE t.info_hash=$1 AND t.private=false
  AND NOT EXISTS (SELECT 1 FROM label_evidence e WHERE e.info_hash=t.info_hash
-   AND e.source='qbittorrent' AND lower(e.category) IN ('private','bitgrab'))
+   AND ` + catalogueguard.QBPrivacySQL("e.source", "e.category", "$2") + `)
 )`
 
 // Enqueue bounds both storage and database waiting. A full/unavailable queue
@@ -72,11 +77,14 @@ func (s *Store) Enqueue(ctx context.Context, d Draft) (outcome string, retErr er
 		return "unavailable", err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
+	if err = s.nameAdmission(ctx, tx, d.InfoHash, "task_enqueue"); err != nil {
+		return "name_policy", err
+	}
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('llm_work.'||$1))`, string(d.Kind)); err != nil {
 		return "unavailable", err
 	}
 	var public bool
-	if err = tx.QueryRow(ctx, `SELECT `+publicSourceSQL, d.InfoHash).Scan(&public); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT `+publicSourceSQL, d.InfoHash, catalogueguard.TagWhitespace).Scan(&public); err != nil {
 		return "unavailable", err
 	}
 	if !public {
@@ -162,13 +170,13 @@ func (s *Store) Claim(ctx context.Context, owner string) (*Lease, error) {
 	task, err := scanTask(tx.QueryRow(ctx, `SELECT `+taskColumns+` FROM llm_work_tasks w
  WHERE state IN ('queued','deferred') AND retry_after<=now() AND expires_at>now()
  AND EXISTS(SELECT 1 FROM torrents t WHERE t.info_hash=w.info_hash AND t.private=false
-   AND NOT EXISTS(SELECT 1 FROM label_evidence e WHERE e.info_hash=t.info_hash AND e.source='qbittorrent' AND lower(e.category) IN ('private','bitgrab')))
+   AND NOT EXISTS(SELECT 1 FROM label_evidence e WHERE e.info_hash=t.info_hash AND `+catalogueguard.QBPrivacySQL("e.source", "e.category", "$2")+`))
  AND (NOT $1 OR priority>0 OR daily_limit>0 AND now()>=
    ((now() AT TIME ZONE 'UTC')::date AT TIME ZONE 'UTC') + interval '1 day' * COALESCE((SELECT CASE WHEN b.day_start=(now() AT TIME ZONE 'UTC')::date THEN b.daily_calls ELSE 0 END::float8
       FROM llm_request_budgets b WHERE b.scope=w.kind AND b.month_start=date_trunc('month',now() AT TIME ZONE 'UTC')::date),0)/daily_limit)
  ORDER BY priority DESC,
    (SELECT max(done.completed_at) FROM llm_work_tasks done WHERE done.kind=w.kind AND done.time_bucket=w.time_bucket AND done.completed_at>now()-interval '1 day') ASC NULLS FIRST,
-   created_at,task_key FOR UPDATE OF w SKIP LOCKED LIMIT 1`, s.cfg.SpreadAdmission))
+   created_at,task_key FOR UPDATE OF w SKIP LOCKED LIMIT 1`, s.cfg.SpreadAdmission, catalogueguard.TagWhitespace))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, tx.Commit(ctx)
 	}
@@ -266,6 +274,9 @@ func (s *Store) Apply(ctx context.Context, l Lease, reason string, apply func(pg
 		return err
 	}
 	if apply != nil {
+		if err = s.nameAdmission(ctx, tx, l.Task.InfoHash, "model_apply"); err != nil {
+			return err
+		}
 		if err = apply(tx); err != nil {
 			return err
 		}

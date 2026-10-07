@@ -24,6 +24,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -53,9 +54,10 @@ func WrapWithLLMStage(
 	policy classifier.Config,
 	optional struct {
 		fx.In
-		Matcher  *llmmatch.Client           `optional:"true"`
-		Work     *llmwork.Store             `optional:"true"`
-		Dispatch llmcapture.DispatchControl `optional:"true"`
+		NamePolicy *namepolicy.Policy         `optional:"true"`
+		Matcher    *llmmatch.Client           `optional:"true"`
+		Work       *llmwork.Store             `optional:"true"`
+		Dispatch   llmcapture.DispatchControl `optional:"true"`
 	},
 ) lazy.Lazy[classifier.Runner] {
 	return lazy.New(func() (classifier.Runner, error) {
@@ -70,6 +72,7 @@ func WrapWithLLMStage(
 			Budget: llmmatch.NewPostgresTypeCallBudget(pool), Capture: capture, Dispatch: optional.Dispatch,
 		})
 		stage.SetWork(optional.Work, policy)
+		stage.SetNamePolicy(optional.NamePolicy)
 		stage.SetMatcherWork(optional.Matcher)
 		return stage, nil
 	})

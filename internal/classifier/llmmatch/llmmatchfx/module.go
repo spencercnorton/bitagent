@@ -17,6 +17,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -39,6 +40,7 @@ func New() fx.Option {
 // provideClient builds the matcher client. The evidence store satisfies the
 // privacy gate (never sends private-tracker names to the LLM).
 type clientParams struct {
+	NamePolicy *namepolicy.Policy `optional:"true"`
 	fx.In
 	Config   llmmatch.Config
 	Store    *evidence.Store
@@ -75,5 +77,6 @@ func provideClient(p clientParams) (*llmmatch.Client, error) {
 		llmmatch.NewPostgresCallBudget(p.Pool),
 	).WithDispatchControl(p.Dispatch)
 	client.SetWork(p.Work, p.Policy)
+	client.SetNamePolicy(p.NamePolicy)
 	return client, nil
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/search"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
 	"go.uber.org/zap"
@@ -40,6 +41,7 @@ type Processor interface {
 const contentFilterDeferRetryDelay = 15 * time.Minute
 
 type processor struct {
+	namePolicy      *namepolicy.Policy
 	defaultWorkflow string
 	search          search.Search
 	runner          classifier.Runner
@@ -93,6 +95,16 @@ func (e MissingHashesError) Error() string {
 }
 
 func (c processor) Process(ctx context.Context, params MessageParams) error {
+	if c.namePolicy.Enabled() {
+		hashes, err := c.admitNames(ctx, params.InfoHashes)
+		if err != nil {
+			return err
+		}
+		params.InfoHashes = hashes
+		if len(hashes) == 0 {
+			return nil
+		}
+	}
 	workflowName := params.ClassifierWorkflow
 	if workflowName == "" {
 		workflowName = c.defaultWorkflow
@@ -163,6 +175,11 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		go func(torrent model.Torrent) {
 			defer wg.Done()
 
+			d := c.namePolicy.Evaluate(torrent.InfoHash, torrent.Name)
+			if !d.Eligible {
+				c.namePolicy.Observe("processor", d)
+				return
+			}
 			sourceTorrent := torrent
 			thisDeleteIDs := make(map[string]struct{}, len(torrent.Contents))
 			foundMatch := false
@@ -186,6 +203,9 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 			// Per-run sideband for the LLM matcher's English-track read —
 			// survives the find_match result discard on unmatched outcomes.
 			runCtx := llmwork.WithSourceTorrent(llmsignal.WithHolder(ctx), sourceTorrent)
+			if c.namePolicy.Enabled() {
+				runCtx = namepolicy.WithAdmission(runCtx, c.providerNameAdmission)
+			}
 
 			cl, classifyErr := c.runner.Run(runCtx, workflowName, params.ClassifierFlags, torrent)
 
@@ -193,6 +213,9 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 			defer mtx.Unlock()
 
 			if classifyErr != nil {
+				if errors.Is(classifyErr, namepolicy.ErrExcluded) {
+					return
+				}
 				if errors.Is(classifyErr, classification.ErrDeleteTorrent) {
 					infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
 					deleteObservations = append(deleteObservations, deleteObservation{cl.ContentType, classifyErr})
@@ -216,6 +239,15 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 					errs = append(errs, classifyErr)
 				}
 			} else {
+				kind := ""
+				if cl.ContentType.Valid {
+					kind = cl.ContentType.ContentType.String()
+				}
+				d := c.namePolicy.EvaluateClassified(torrent.InfoHash, torrent.Name, kind)
+				if !d.Eligible {
+					c.namePolicy.Observe("processor", d)
+					return
+				}
 				// Post-classifier content-filter hook. The classifier has
 				// emitted ContentType + Languages, so Filter.Decide can
 				// run the LLM tier on residual cases (Latin-script titles
@@ -248,6 +280,9 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 						InfoHash: torrent.InfoHash.Bytes(), GroupKey: groupKey,
 					})
 					if filterErr != nil {
+						if errors.Is(filterErr, namepolicy.ErrExcluded) {
+							return
+						}
 						failedHashes = append(failedHashes, torrent.InfoHash)
 						errs = append(errs, fmt.Errorf("contentfilter audited decision: %w", filterErr))
 						return

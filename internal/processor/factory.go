@@ -9,6 +9,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/search"
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -17,6 +18,7 @@ import (
 type Params struct {
 	fx.In
 	ClassifierConfig classifier.Config
+	NamePolicy       *namepolicy.Policy `optional:"true"`
 	Search           lazy.Lazy[search.Search]
 	Workflow         lazy.Lazy[classifier.Runner]
 	Dao              lazy.Lazy[*dao.Query]
@@ -70,6 +72,7 @@ func New(p Params) Result {
 
 			return processor{
 				dao:             d,
+				namePolicy:      p.NamePolicy,
 				search:          s,
 				blockingManager: bm,
 				runner:          w,

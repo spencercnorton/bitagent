@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -24,9 +26,10 @@ const (
 )
 
 type openAIBatchClient struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	namePolicy *namepolicy.Policy
+	baseURL    string
+	apiKey     string
+	http       *http.Client
 }
 
 var _ batchWorkerClient = (*openAIBatchClient)(nil)
@@ -79,6 +82,13 @@ func (c *openAIBatchClient) BuildInput(
 	}
 	var payload bytes.Buffer
 	for _, item := range items {
+		var h protocol.ID
+		copy(h[:], item.InfoHash)
+		d := c.namePolicy.Evaluate(h, item.TorrentName)
+		if !d.Eligible {
+			c.namePolicy.Observe("model_dispatch", d)
+			return nil, "", "", namepolicy.ErrExcluded
+		}
 		line, err := json.Marshal(inputLine{
 			CustomID: item.CustomID,
 			Method:   http.MethodPost,

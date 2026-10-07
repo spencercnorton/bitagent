@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 )
 
@@ -325,15 +326,14 @@ func (s *Store) IsPrivateInfoHash(ctx context.Context, infoHash []byte) (bool, e
 	// Strength is not a proxy for privacy: *arr grabs have higher
 	// strength but are not private. Adding a new private source
 	// later should extend this query, not reuse the strength axis.
-	const q = `
+	q := `
 select exists (
   select 1 from label_evidence
   where info_hash = $1
-    and source = 'qbittorrent'
-    and lower(category) in ('private', 'bitgrab')
+    and ` + catalogueguard.QBPrivacySQL("source", "category", "$2") + `
 )`
 	var isPrivate bool
-	if err := pool.QueryRow(ctx, q, infoHash).Scan(&isPrivate); err != nil {
+	if err := pool.QueryRow(ctx, q, infoHash, catalogueguard.TagWhitespace).Scan(&isPrivate); err != nil {
 		return false, fmt.Errorf("evidence: is_private lookup: %w", err)
 	}
 	return isPrivate, nil

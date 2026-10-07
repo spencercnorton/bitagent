@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add an optional, default-off release-name policy shared by acquisition,
+  import, processing and model admission. Exclude exact Han/Cyrillic names,
+  clear adult composites and configured hashes while retaining raw sources.
+  Recheck current names at provider and application boundaries, retain paid
+  responses/fences after denial, and offer a bounded internal name-only check.
+- Normalize independent qB privacy source/category facts consistently at
+  direct, queued and final application gates, including padded Unicode space.
+
 - Preserve tracker-positive history and standing coverage for leechers-only
   swarms, matching the existing seeder-or-leecher live signal. Keep known zero
   and failed coverage separate from confirmed-dead claims.

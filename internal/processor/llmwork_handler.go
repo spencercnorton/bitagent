@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"strconv"
 	"strings"
 
@@ -26,6 +27,7 @@ import (
 // DeferredApplyHandler runs only the specific source-bound stage. It never
 // enters Processor.Process, a general workflow, deletion or redispatch.
 type DeferredApplyHandler struct {
+	NamePolicy *namepolicy.Policy
 	Pool       lazy.Lazy[*pgxpool.Pool]
 	Search     lazy.Lazy[search.Search]
 	Runner     lazy.Lazy[classifier.Runner]
@@ -45,6 +47,7 @@ func decodeDeferredPayload(raw []byte, out any) error {
 }
 
 func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) error {
+	ctx = namepolicy.WithPolicy(ctx, h.NamePolicy)
 	e := llmwork.ExecutionFrom(ctx)
 	if e == nil || e.Store == nil || !bytes.Equal(e.Lease.Task.Key, task.Key) {
 		return llmwork.ErrLease
@@ -65,6 +68,11 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 		if x != nil {
 			return x
 		}
+		d := h.NamePolicy.Evaluate(source.InfoHash, source.Name)
+		if !d.Eligible {
+			h.NamePolicy.Observe("model_apply", d)
+			return llmwork.ErrHeld
+		}
 		target, x = lockedDeferredTarget(c, tx, source, task.Kind == llmwork.Type, task.Kind == llmwork.Language)
 		if x != nil {
 			return x
@@ -78,6 +86,11 @@ func (h *DeferredApplyHandler) Handle(ctx context.Context, task llmwork.Task) er
 		current, x := lockedDeferredSource(c, tx, task)
 		if x != nil {
 			return x
+		}
+		d := h.NamePolicy.Evaluate(current.InfoHash, current.Name)
+		if !d.Eligible {
+			h.NamePolicy.Observe("model_apply", d)
+			return llmwork.ErrHeld
 		}
 		nowTarget, x := lockedDeferredTarget(c, tx, current, task.Kind == llmwork.Type, task.Kind == llmwork.Language)
 		if x != nil {

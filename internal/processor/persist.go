@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"sort"
@@ -129,6 +130,9 @@ func (c processor) persist(ctx context.Context, payload persistPayload) error {
 	ordinary.deleteInfoHashes = nil
 	if !ordinary.isEmpty() {
 		if err := c.dao.Transaction(func(tx *dao.Query) error {
+			if err := c.guardNameApplications(ctx, tx, sourceNames); err != nil {
+				return err
+			}
 			if err := guardPreservedApplications(ctx, tx, payload.applications); err != nil {
 				return err
 			}
@@ -293,7 +297,7 @@ func guardPreservedApplications(ctx context.Context, tx *dao.Query, guards map[p
 			return llmwork.ErrHeld
 		}
 		var blocked bool
-		if err = db.Raw(`SELECT EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=? AND source='qbittorrent' AND lower(category) IN('private','bitgrab')) OR EXISTS(SELECT 1 FROM torrent_verdict_state WHERE info_hash=? AND verdict IN('quarantined','blacklisted','tombstoned')) OR EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=? AND expired_at IS NULL)`, hash.Bytes(), hash.Bytes(), hash.Bytes()).Scan(&blocked).Error; err != nil {
+		if err = db.Raw(`SELECT EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=? AND `+catalogueguard.QBPrivacySQL("source", "category", "?")+`) OR EXISTS(SELECT 1 FROM torrent_verdict_state WHERE info_hash=? AND verdict IN('quarantined','blacklisted','tombstoned')) OR EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=? AND expired_at IS NULL)`, hash.Bytes(), catalogueguard.TagWhitespace, catalogueguard.TagWhitespace, hash.Bytes(), hash.Bytes()).Scan(&blocked).Error; err != nil {
 			return err
 		}
 		if blocked {

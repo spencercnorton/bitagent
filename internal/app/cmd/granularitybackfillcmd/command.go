@@ -20,6 +20,8 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/processor"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -27,8 +29,9 @@ import (
 
 type Params struct {
 	fx.In
-	Dao    lazy.Lazy[*dao.Query]
-	Logger *zap.SugaredLogger
+	NamePolicy *namepolicy.Policy `optional:"true"`
+	Dao        lazy.Lazy[*dao.Query]
+	Logger     *zap.SugaredLogger
 }
 
 type Result struct {
@@ -65,9 +68,10 @@ func New(p Params) (Result, error) {
 				return err
 			}
 			st, err := run(ctx.Context, d, opts{
-				pageSize: ctx.Int("pageSize"),
-				limit:    int(ctx.Uint("limit")),
-				write:    ctx.Bool("write"),
+				pageSize:   ctx.Int("pageSize"),
+				limit:      int(ctx.Uint("limit")),
+				write:      ctx.Bool("write"),
+				namePolicy: p.NamePolicy,
 			}, p.Logger)
 			if err != nil {
 				return err
@@ -79,9 +83,10 @@ func New(p Params) (Result, error) {
 }
 
 type opts struct {
-	pageSize int
-	limit    int
-	write    bool
+	namePolicy *namepolicy.Policy
+	pageSize   int
+	limit      int
+	write      bool
 }
 
 type stats struct {
@@ -115,7 +120,7 @@ func run(ctx context.Context, d *dao.Query, o opts, logger *zap.SugaredLogger) (
 			remaining = o.limit - st.scanned
 		}
 
-		rows, findErr := d.TorrentContent.WithContext(ctx).
+		rows, findErr := d.TorrentContent.WithContext(ctx).Scopes(processor.NamePolicyScope(o.namePolicy)).
 			Select(
 				d.TorrentContent.ID,
 				d.TorrentContent.InfoHash,
@@ -165,7 +170,7 @@ func run(ctx context.Context, d *dao.Query, o opts, logger *zap.SugaredLogger) (
 
 		if o.write && (len(buckets) > 0 || len(dates) > 0 || len(absEps) > 0 ||
 			len(engAudio) > 0 || len(flagTrue) > 0 || len(flagFalse) > 0) {
-			if updErr := applyChanges(ctx, d, buckets, dates, absEps, engAudio, flagTrue, flagFalse); updErr != nil {
+			if updErr := applyChanges(ctx, d, buckets, dates, absEps, engAudio, flagTrue, flagFalse, func(tx *dao.Query) error { return processor.GuardNameRows(ctx, tx, o.namePolicy, rows) }); updErr != nil {
 				return st, updErr
 			}
 		}
@@ -317,8 +322,13 @@ func englishAudioChanges(rows []*model.TorrentContent) []englishAudioChange {
 // applyChanges writes granularity buckets and per-row dates with UpdateColumn
 // — deliberately NOT Update, so the backfill does not bump updated_at: this is
 // a metadata population, not a re-classification.
-func applyChanges(ctx context.Context, d *dao.Query, buckets map[string][]string, dates []dateChange, absEps []absoluteChange, engAudio []englishAudioChange, flagTrue, flagFalse []string) error {
+func applyChanges(ctx context.Context, d *dao.Query, buckets map[string][]string, dates []dateChange, absEps []absoluteChange, engAudio []englishAudioChange, flagTrue, flagFalse []string, guards ...func(*dao.Query) error) error {
 	return d.Transaction(func(tx *dao.Query) error {
+		for _, guard := range guards {
+			if err := guard(tx); err != nil {
+				return err
+			}
+		}
 		for label, ids := range buckets {
 			val := model.NullReleaseGranularity{}
 			if label != nullLabel {

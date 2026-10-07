@@ -14,6 +14,8 @@ import (
 
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
 // ErrLLMUnavailable marks an LLM failure caused by the endpoint being
@@ -96,10 +98,11 @@ type AuditedLLMClient interface {
 // instructions block. Per `feedback_openai_gpt5_temperature.md`,
 // gpt-5* models reject the `temperature` parameter — we omit it.
 type openaiClient struct {
-	apiKey  string
-	model   string
-	baseURL string // override for self-hosted (defaults to OpenAI)
-	http    *http.Client
+	namePolicy *namepolicy.Policy
+	apiKey     string
+	model      string
+	baseURL    string // override for self-hosted (defaults to OpenAI)
+	http       *http.Client
 
 	// apiStyle is "responses" (OpenAI Responses API) or "chat"
 	// (OpenAI /chat/completions, used for self-hosted Ollama/vLLM).
@@ -246,6 +249,14 @@ func (c *openaiClient) ClassifyWithResult(
 	ctx context.Context,
 	title string,
 ) (LLMVerdict, llmcapture.HTTPResult, error) {
+	d, admissionErr := c.namePolicy.AdmitContext(ctx, protocol.ID{}, title, "")
+	if admissionErr != nil || !d.Eligible {
+		c.namePolicy.Observe("model_dispatch", d)
+		return LLMVerdict{}, llmcapture.HTTPResult{ErrorClass: "name_policy"}, namepolicy.ErrExcluded
+	}
+	if _, exists := namepolicy.SourceFrom(ctx); !exists {
+		ctx = namepolicy.WithSource(ctx, protocol.ID{}, title, "")
+	}
 	const openAIDefaultBase = "https://api.openai.com/v1"
 	if c.apiKey == "" && c.baseURL == openAIDefaultBase {
 		return LLMVerdict{}, llmcapture.HTTPResult{}, errors.New("openai client: empty API key (required for api.openai.com; set CONTENT_FILTER_LLM_BASE_URL for a self-hosted endpoint that doesn't need auth)")
@@ -279,6 +290,11 @@ func (c *openaiClient) doJSON(
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	d, admissionErr := c.namePolicy.AdmitContext(ctx, protocol.ID{}, "", "")
+	if admissionErr != nil || !d.Eligible {
+		c.namePolicy.Observe("model_dispatch", d)
+		return nil, llmcapture.HTTPResult{ErrorClass: "name_policy"}, namepolicy.ErrExcluded
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// Connection refused / DNS / timeout / context deadline —
@@ -666,3 +682,5 @@ func truncate(s string, n int) string {
 	}
 	return s
 }
+
+func (c *openaiClient) SetNamePolicy(p *namepolicy.Policy) { c.namePolicy = p }

@@ -8,6 +8,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"github.com/spencercnorton/bitagent/internal/classifier/parsers"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/protobuf"
 )
 
@@ -19,6 +20,12 @@ type runner struct {
 }
 
 func (r runner) EvalMatch(ctx context.Context, t model.Torrent, ct model.NullContentType) (MatchDecision, error) {
+	d := r.namePolicy.Evaluate(t.InfoHash, t.Name)
+	if !d.Eligible {
+		r.namePolicy.Observe("classifier", d)
+		return MatchDecision{}, namepolicy.ErrExcluded
+	}
+	ctx = namepolicy.WithSource(ctx, t.InfoHash, t.Name, "")
 	// Rebuild the same independent parser evidence that the production action
 	// has already accumulated before it reaches the matcher. Without this the
 	// canary-only source-title gate sees an empty title and the evaluator
@@ -44,6 +51,12 @@ func (r runner) EvalMatch(ctx context.Context, t model.Torrent, ct model.NullCon
 }
 
 func (r runner) Run(ctx context.Context, workflow string, flags Flags, t model.Torrent) (classification.Result, error) {
+	d := r.namePolicy.Evaluate(t.InfoHash, t.Name)
+	if !d.Eligible {
+		r.namePolicy.Observe("classifier", d)
+		return classification.Result{}, namepolicy.ErrExcluded
+	}
+	ctx = namepolicy.WithSource(ctx, t.InfoHash, t.Name, "")
 	w, ok := r.workflows[workflow]
 	if !ok {
 		return classification.Result{}, fmt.Errorf("workflow not found: %s", workflow)

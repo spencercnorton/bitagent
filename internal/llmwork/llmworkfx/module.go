@@ -15,6 +15,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/processor"
 	"github.com/spencercnorton/bitagent/internal/worker"
 	"go.uber.org/fx"
@@ -32,6 +33,7 @@ func New() fx.Option {
 }
 
 type handlerParams struct {
+	NamePolicy *namepolicy.Policy `optional:"true"`
 	fx.In
 	Pool       lazy.Lazy[*pgxpool.Pool]
 	Search     lazy.Lazy[search.Search]
@@ -43,7 +45,7 @@ type handlerParams struct {
 }
 
 func provideHandler(p handlerParams) llmwork.Handler {
-	return &processor.DeferredApplyHandler{Pool: p.Pool, Search: p.Search, Runner: p.Runner, Filter: p.Filter, Matcher: p.Matcher, Classifier: p.Classifier, Observer: p.Observer}
+	return &processor.DeferredApplyHandler{NamePolicy: p.NamePolicy, Pool: p.Pool, Search: p.Search, Runner: p.Runner, Filter: p.Filter, Matcher: p.Matcher, Classifier: p.Classifier, Observer: p.Observer}
 }
 
 func provideWorker(store *llmwork.Store, handler llmwork.Handler, logger *zap.SugaredLogger) (worker.Worker, error) {
@@ -55,6 +57,7 @@ func provideWorker(store *llmwork.Store, handler llmwork.Handler, logger *zap.Su
 }
 
 type storeParams struct {
+	NamePolicy *namepolicy.Policy `optional:"true"`
 	fx.In
 	Config     llmwork.Config
 	Pool       lazy.Lazy[*pgxpool.Pool]
@@ -96,5 +99,6 @@ func provideStore(p storeParams) (*llmwork.Store, error) {
 		return nil, err
 	}
 	store.SetDispatch(p.Dispatch)
+	store.SetNamePolicy(p.NamePolicy)
 	return store, nil
 }

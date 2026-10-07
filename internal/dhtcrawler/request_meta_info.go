@@ -11,6 +11,7 @@ import (
 	anacrolixmetainfo "github.com/anacrolix/torrent/metainfo"
 
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/protocol/metainfo/metainforequester"
 )
@@ -157,6 +158,11 @@ func (c *crawler) doRequestMetaInfo(
 	hash protocol.ID,
 	peers []netip.AddrPort,
 ) (metainforequester.Response, error) {
+	if c.namePolicy.ExcludesHash(hash) {
+		d := c.namePolicy.Evaluate(hash, "")
+		c.namePolicy.Observe("crawler_acquisition", d)
+		return metainforequester.Response{}, namepolicy.ErrExcluded
+	}
 	// Defense-in-depth: even though infohash_triage already ran the
 	// CSAM blocklist Filter on this hash's batch, re-check at the
 	// point of network egress. Triage and request_meta_info are
@@ -188,6 +194,11 @@ func (c *crawler) doRequestMetaInfo(
 			continue
 		}
 
+		decision := c.namePolicy.Evaluate(hash, res.Info.BestName())
+		if !decision.Eligible {
+			c.namePolicy.Observe("crawler_acquisition", decision)
+			return metainforequester.Response{}, namepolicy.ErrExcluded
+		}
 		if banErr := c.banningChecker.Check(res.Info); banErr != nil {
 			_ = c.blockingManager.Block(ctx, []protocol.ID{hash}, false)
 			// Phase-C: dual-write a blocking verdict for the ban-driven

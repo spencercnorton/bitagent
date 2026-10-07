@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/csamblocklist"
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/processor"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"gorm.io/gorm/clause"
@@ -48,6 +50,7 @@ type Info struct {
 }
 
 type importer struct {
+	namePolicy  *namepolicy.Policy
 	dao         *dao.Query
 	bufferSize  uint
 	maxWaitTime time.Duration
@@ -241,12 +244,100 @@ func (i *activeImport) gateItems(items []Item) ([]Item, error) {
 }
 
 func (i *activeImport) persistItems(items ...Item) error {
-	items, gateErr := i.gateItems(items)
-	if gateErr != nil {
-		return gateErr
-	}
 	if len(items) == 0 {
-		return nil // whole batch filtered out — nothing to persist
+		return nil
+	}
+	if !i.namePolicy.Enabled() {
+		var err error
+		items, err = i.gateItems(items)
+		if err != nil || len(items) == 0 {
+			return err
+		}
+	}
+	var committedSources []string
+	err := i.dao.Transaction(func(tx *dao.Query) error {
+		return i.persistItemsTx(tx, items, &committedSources)
+	})
+	if errors.Is(err, namepolicy.ErrExcluded) {
+		// No imported fact or job commits if a concurrent insert introduced
+		// an excluded authoritative name. A denied import is terminal.
+		return nil
+	}
+	if err == nil {
+		for _, source := range committedSources {
+			i.importedSources[source] = struct{}{}
+		}
+	}
+	return err
+}
+
+// admitNamesTx locks existing raw rows in stable hash order. Child classification
+// reads follow the parent locks so both updates and new FK-backed classifications
+// remain stable until the admission/write transaction commits. Missing rows are
+// checked again after insertion; caller names never authorize an existing hash.
+func (i *activeImport) admitNamesTx(tx *dao.Query, items []Item) ([]Item, error) {
+	if !i.namePolicy.Enabled() {
+		return items, nil
+	}
+	values := make([]driver.Valuer, len(items))
+	for j, it := range items {
+		values[j] = it.InfoHash
+	}
+	existing, err := tx.Torrent.WithContext(i.ctx).Select(tx.Torrent.InfoHash, tx.Torrent.Name).
+		Where(tx.Torrent.InfoHash.In(values...)).Order(tx.Torrent.InfoHash).
+		Clauses(clause.Locking{Strength: "UPDATE"}).Find()
+	if err != nil {
+		return nil, err
+	}
+	names := map[protocol.ID]string{}
+	for _, t := range existing {
+		names[t.InfoHash] = t.Name
+	}
+	contents, err := tx.TorrentContent.WithContext(i.ctx).Select(tx.TorrentContent.InfoHash, tx.TorrentContent.ContentType).
+		Where(tx.TorrentContent.InfoHash.In(values...)).Clauses(clause.Locking{Strength: "SHARE"}).Find()
+	if err != nil {
+		return nil, err
+	}
+	adult := map[protocol.ID]bool{}
+	for _, c := range contents {
+		adult[c.InfoHash] = adult[c.InfoHash] || c.ContentType.Valid && c.ContentType.ContentType == model.ContentTypeXxx
+	}
+	kept := make([]Item, 0, len(items))
+	for _, it := range items {
+		name := it.Name
+		if n, ok := names[it.InfoHash]; ok {
+			name = n
+		}
+		kind := ""
+		if it.ContentType.Valid {
+			kind = it.ContentType.ContentType.String()
+		}
+		if adult[it.InfoHash] {
+			kind = "xxx"
+		}
+		d := i.namePolicy.EvaluateClassified(it.InfoHash, name, kind)
+		if !d.Eligible {
+			i.namePolicy.Observe("import", d)
+			continue
+		}
+		kept = append(kept, it)
+	}
+	return kept, nil
+}
+
+func (i *activeImport) persistItemsTx(tx *dao.Query, items []Item, committedSources *[]string) error {
+	var err error
+	items, err = i.admitNamesTx(tx, items)
+	if err != nil || len(items) == 0 {
+		return err
+	}
+
+	if i.namePolicy.Enabled() {
+		var gateErr error
+		items, gateErr = i.gateItems(items)
+		if gateErr != nil || len(items) == 0 {
+			return gateErr
+		}
 	}
 
 	var sources []*model.TorrentSource
@@ -292,41 +383,51 @@ func (i *activeImport) persistItems(items ...Item) error {
 		return jobErr
 	}
 
-	return i.dao.Transaction(func(tx *dao.Query) error {
-		if len(sources) > 0 {
-			if createSourcesErr := tx.TorrentSource.WithContext(i.ctx).Clauses(clause.OnConflict{
-				DoNothing: true,
-			}).CreateInBatches(sources, 100); createSourcesErr != nil {
-				return createSourcesErr
-			}
-
-			for _, s := range sources {
-				i.importedSources[s.Key] = struct{}{}
-			}
-		}
-
-		if createTorrentsErr := tx.Torrent.WithContext(i.ctx).Clauses(clause.OnConflict{
+	if len(sources) > 0 {
+		if createSourcesErr := tx.TorrentSource.WithContext(i.ctx).Clauses(clause.OnConflict{
 			DoNothing: true,
-		}).CreateInBatches(torrents, 100); createTorrentsErr != nil {
-			return createTorrentsErr
+		}).CreateInBatches(sources, 100); createSourcesErr != nil {
+			return createSourcesErr
 		}
-
-		if len(torrentHints) > 0 {
-			if createTorrentHintsErr := tx.TorrentHint.WithContext(i.ctx).Clauses(clause.OnConflict{
-				UpdateAll: true,
-			}).CreateInBatches(torrentHints, 100); createTorrentHintsErr != nil {
-				return createTorrentHintsErr
-			}
+		for _, source := range sources {
+			*committedSources = append(*committedSources, source.Key)
 		}
+	}
 
-		if createTorrentsTorrentSourcesErr := tx.TorrentsTorrentSource.WithContext(i.ctx).Clauses(clause.OnConflict{
+	if createTorrentsErr := tx.Torrent.WithContext(i.ctx).Clauses(clause.OnConflict{
+		DoNothing: true,
+	}).CreateInBatches(torrents, 100); createTorrentsErr != nil {
+		return createTorrentsErr
+	}
+
+	// A previously absent hash may have been inserted by another writer
+	// during ON CONFLICT. Lock and re-read its actual name/classification
+	// before any hints, source memberships or processor jobs are written.
+	if i.namePolicy.Enabled() {
+		current, err := i.admitNamesTx(tx, items)
+		if err != nil {
+			return err
+		}
+		if len(current) != len(items) {
+			return namepolicy.ErrExcluded
+		}
+	}
+
+	if len(torrentHints) > 0 {
+		if createTorrentHintsErr := tx.TorrentHint.WithContext(i.ctx).Clauses(clause.OnConflict{
 			UpdateAll: true,
-		}).CreateInBatches(torrentsTorrentSources, 100); createTorrentsTorrentSourcesErr != nil {
-			return createTorrentsTorrentSourcesErr
+		}).CreateInBatches(torrentHints, 100); createTorrentHintsErr != nil {
+			return createTorrentHintsErr
 		}
+	}
 
-		return tx.QueueJob.Create(&job)
-	})
+	if createTorrentsTorrentSourcesErr := tx.TorrentsTorrentSource.WithContext(i.ctx).Clauses(clause.OnConflict{
+		UpdateAll: true,
+	}).CreateInBatches(torrentsTorrentSources, 100); createTorrentsTorrentSourcesErr != nil {
+		return createTorrentsTorrentSourcesErr
+	}
+
+	return tx.QueueJob.Create(&job)
 }
 
 func createTorrentModel(info Info, item Item) model.Torrent {

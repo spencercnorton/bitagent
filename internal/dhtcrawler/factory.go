@@ -12,6 +12,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/database/search"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/protocol/dht/client"
 	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
@@ -28,7 +29,8 @@ import (
 
 type Params struct {
 	fx.In
-	Config Config
+	Config     Config
+	NamePolicy *namepolicy.Policy `optional:"true"`
 	// ContentFilter + ContentFilterMetrics are now provided by
 	// contentfilterfx so the SAME *contentfilter.Filter (and its
 	// LLM cache + daily budget + rule miner) is shared with the
@@ -76,6 +78,7 @@ func New(params Params) Result {
 	active := &concurrency.AtomicValue[bool]{}
 
 	var c crawler
+	c.namePolicy = params.NamePolicy
 
 	persistedTotal := dualemit.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "bitagent",

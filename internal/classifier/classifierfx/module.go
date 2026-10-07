@@ -68,7 +68,7 @@ func provideRunner(
 	metrics *classifier.PreemptMetrics,
 ) classifier.Result {
 	res := classifier.New(params)
-	var opts []classifier.CanonicalOption
+	opts := []classifier.CanonicalOption{classifier.WithNamePolicy(params.NamePolicy)}
 	if params.Config.EvidenceTitleIdentity {
 		opts = append(opts, classifier.WithTitleEvidence(classifier.NewTitleEvidence(store)))
 	}

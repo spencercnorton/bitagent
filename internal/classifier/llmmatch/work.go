@@ -5,6 +5,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 )
 
 type WorkPayload struct{ Type model.NullContentType }
@@ -23,7 +24,7 @@ func (c *Client) WorkPolicy(p WorkPayload) any {
 	cfg := c.cfg
 	cfg.APIKey = ""
 	cfg.Embeddings.APIKey = ""
-	return []any{WorkPolicyVersion, cfg, c.workPolicy, p}
+	return namepolicy.BindWorkPolicy(c.namePolicy, []any{WorkPolicyVersion, cfg, c.workPolicy, p})
 }
 func (c *Client) submitWork(ctx context.Context, t model.Torrent) error {
 	if c.work == nil || !c.work.Config().Accepts(llmwork.Matcher) {

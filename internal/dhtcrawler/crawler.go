@@ -12,6 +12,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/concurrency"
 	"github.com/spencercnorton/bitagent/internal/csamblocklist"
 	"github.com/spencercnorton/bitagent/internal/database/dao"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/protocol/dht/client"
 	"github.com/spencercnorton/bitagent/internal/protocol/dht/ktable"
@@ -26,6 +27,7 @@ import (
 )
 
 type crawler struct {
+	namePolicy                   *namepolicy.Policy
 	kTable                       ktable.Table
 	client                       client.Client
 	metainfoRequester            metainforequester.Requester

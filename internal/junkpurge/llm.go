@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 	"io"
 	"math"
 	"net/http"
@@ -179,6 +181,7 @@ choose real_mangled. Reserve "junk" for cases CLEARLY in the not-a-movie/TV list
 Output ONLY the JSON.`
 
 type ollamaJudge struct {
+	namePolicy        *namepolicy.Policy
 	baseURL           string
 	model             string
 	apiStyle          string
@@ -231,7 +234,14 @@ func NewAuditedJudge(cfg Config, metrics *Metrics, budget CallBudget, capture ll
 	return j
 }
 
+func (j *ollamaJudge) SetNamePolicy(p *namepolicy.Policy) { j.namePolicy = p }
+
 func (j *ollamaJudge) Judge(ctx context.Context, torrentName string) (Judgment, error) {
+	d := j.namePolicy.EvaluateContext(ctx, protocol.ID{}, torrentName, "")
+	if !d.Eligible {
+		j.namePolicy.Observe("model_dispatch", d)
+		return Judgment{}, namepolicy.ErrExcluded
+	}
 	ctx = withJunkCall(ctx)
 	switch j.apiStyle {
 	case "ollama":
@@ -286,6 +296,13 @@ func batchMaxTokens(n int) int {
 // JudgeBatch sends one grouped request. n==1 delegates to Judge so a
 // tail group of one is byte-identical to the classic request shape.
 func (j *ollamaJudge) JudgeBatch(ctx context.Context, names []string) ([]Judgment, error) {
+	for _, name := range names {
+		d := j.namePolicy.EvaluateContext(ctx, protocol.ID{}, name, "")
+		if !d.Eligible {
+			j.namePolicy.Observe("model_dispatch", d)
+			return nil, namepolicy.ErrExcluded
+		}
+	}
 	switch len(names) {
 	case 0:
 		return nil, nil

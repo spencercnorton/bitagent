@@ -5,11 +5,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 )
 
@@ -183,7 +186,7 @@ type batchPayloadBuilder func(
 	items []batchItem,
 ) (payload []byte, filename, sha256 string, err error)
 
-func createBatchRun(ctx context.Context, pool *pgxpool.Pool, cfg Config) (*batchRun, error) {
+func createBatchRun(ctx context.Context, pool *pgxpool.Pool, cfg Config, policies ...*namepolicy.Policy) (*batchRun, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("junkpurge batch: begin reserve: %w", err)
@@ -210,6 +213,21 @@ WHERE state IN ('building','active','finalizing')`).Scan(&active); err != nil {
 	candidates, err := findCandidatesQuery(ctx, tx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("junkpurge batch: select candidates: %w", err)
+	}
+	if len(policies) > 0 && policies[0].Enabled() {
+		p := policies[0]
+		kept := candidates[:0]
+		for _, c := range candidates {
+			var h protocol.ID
+			copy(h[:], c.infoHash)
+			d := p.Evaluate(h, c.name)
+			if !d.Eligible {
+				p.Observe("task_enqueue", d)
+				continue
+			}
+			kept = append(kept, c)
+		}
+		candidates = kept
 	}
 	if len(candidates) == 0 {
 		return nil, nil
@@ -1433,13 +1451,14 @@ ORDER BY ordinal`, attemptID)
 	return out, rows.Err()
 }
 
-func batchAttemptPrivacySafe(
-	ctx context.Context,
-	pool *pgxpool.Pool,
-	attemptID int64,
-	expectedItems int,
-	leaseOwner string,
-) (bool, error) {
+func batchAttemptPrivacySafe(ctx context.Context, pool *pgxpool.Pool, attemptID int64, expectedItems int, leaseOwner string) (bool, error) {
+	return withBatchAttemptAdmission(ctx, pool, attemptID, expectedItems, leaseOwner, nil, nil)
+}
+
+// withBatchAttemptAdmission checks current authoritative names and privacy while
+// holding the parent/evidence locks through an optional provider operation.
+// The operation uses the caller's bounded provider timeout and durable markers.
+func withBatchAttemptAdmission(ctx context.Context, pool *pgxpool.Pool, attemptID int64, expectedItems int, leaseOwner string, p *namepolicy.Policy, submit func() error) (bool, error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return false, err
@@ -1460,7 +1479,7 @@ func batchAttemptPrivacySafe(
 SELECT ingested_at IS NULL AND provider_batch_id IS NULL
 FROM junkpurge_batch_attempts
 WHERE id=$1 AND lease_owner=$2
-FOR UPDATE`,
+`,
 		attemptID, leaseOwner,
 	).Scan(&active)
 	if err != nil {
@@ -1496,33 +1515,75 @@ FOR UPDATE OF t`, attemptID)
 		return false, err
 	}
 
-	var represented, unsafe int
-	err = tx.QueryRow(ctx, `
-SELECT
-  count(*),
-  count(*) FILTER (
-    WHERE t.info_hash IS NULL
-       OR t.private
-       OR EXISTS (
-         SELECT 1 FROM label_evidence private_evidence
-         WHERE private_evidence.info_hash=i.info_hash
-           AND private_evidence.source='qbittorrent'
-           AND lower(private_evidence.category) IN ('private','bitgrab')
-       )
-  )
-FROM junkpurge_batch_items i
-LEFT JOIN torrents t ON t.info_hash=i.info_hash
-WHERE i.last_attempt_id=$1`,
-		attemptID,
-	).Scan(&represented, &unsafe)
+	// Parent locks block new FK-backed content rows; lock existing rows too
+	// before reading a classification that may deny the provider request.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM torrent_contents c JOIN junkpurge_batch_items i ON i.info_hash=c.info_hash WHERE i.last_attempt_id=$1 FOR SHARE OF c`, attemptID); err != nil {
+		return false, err
+	}
+	rows, err = tx.Query(ctx, `
+SELECT i.info_hash,t.name,coalesce(t.private,true),
+       coalesce(t.name=i.torrent_name,false),
+       EXISTS(SELECT 1 FROM label_evidence e WHERE e.info_hash=i.info_hash AND `+catalogueguard.QBPrivacySQL("e.source", "e.category", "$2")+`),
+       EXISTS(SELECT 1 FROM torrent_contents c WHERE c.info_hash=i.info_hash AND c.content_type='xxx')
+FROM junkpurge_batch_items i LEFT JOIN torrents t ON t.info_hash=i.info_hash
+WHERE i.last_attempt_id=$1 ORDER BY i.ordinal`, attemptID, catalogueguard.TagWhitespace)
 	if err != nil {
 		return false, err
 	}
+	var represented, unsafe int
+	var nameDenied bool
+	for rows.Next() {
+		var hash []byte
+		var name *string
+		var private, sameName, evidencePrivate, adult bool
+		if err := rows.Scan(&hash, &name, &private, &sameName, &evidencePrivate, &adult); err != nil {
+			rows.Close()
+			return false, err
+		}
+		represented++
+		if private || evidencePrivate || !sameName {
+			unsafe++
+		}
+		if p.Enabled() {
+			var h protocol.ID
+			copy(h[:], hash)
+			n := ""
+			if name != nil {
+				n = *name
+			}
+			kind := ""
+			if adult {
+				kind = "xxx"
+			}
+			d := p.EvaluateClassified(h, n, kind)
+			if !d.Eligible {
+				p.Observe("model_dispatch", d)
+				nameDenied = true
+			}
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return false, err
+	}
+	if nameDenied {
+		return false, namepolicy.ErrExcluded
+	}
+
 	if represented != expectedItems {
 		return false, fmt.Errorf(
 			"junkpurge batch: provider-boundary manifest has %d/%d represented items",
 			represented, expectedItems,
 		)
+	}
+	if unsafe == 0 && submit != nil {
+		// Keep native row/evidence locks through the bounded provider call.
+		// Attempt ownership is already fenced by its advisory lock and lease;
+		// it is not row-locked here because callback markers use their own tx.
+		if err := submit(); err != nil {
+			return false, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return false, err
@@ -2081,6 +2142,7 @@ func finalizeBatchRun(
 	pool *pgxpool.Pool,
 	run batchRun,
 	currentPurgeEnabled bool,
+	policies ...*namepolicy.Policy,
 ) (batchFinalizeSummary, error) {
 	summary := batchFinalizeSummary{
 		RunID:          run.ID,
@@ -2162,6 +2224,26 @@ FOR UPDATE`, run.ID)
 	}
 	if err := lockBatchTorrentContentsTx(ctx, tx, run.ID); err != nil {
 		return summary, err
+	}
+	if len(policies) > 0 && policies[0].Enabled() {
+		for _, item := range items {
+			var name string
+			var adult bool
+			if err := tx.QueryRow(ctx, `SELECT t.name, EXISTS(SELECT 1 FROM torrent_contents tc WHERE tc.info_hash=t.info_hash AND tc.content_type='xxx') FROM torrents t WHERE t.info_hash=$1`, item.hash).Scan(&name, &adult); err != nil {
+				return summary, err
+			}
+			var h protocol.ID
+			copy(h[:], item.hash)
+			kind := ""
+			if adult {
+				kind = "xxx"
+			}
+			d := policies[0].EvaluateClassified(h, name, kind)
+			if !d.Eligible {
+				policies[0].Observe("model_apply", d)
+				return summary, namepolicy.ErrExcluded
+			}
+		}
 	}
 	current, err := currentBatchCandidatesTx(ctx, tx, run.ID, run.MinAge)
 	if err != nil {

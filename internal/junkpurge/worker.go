@@ -15,6 +15,8 @@ import (
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmprovider"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
 	"github.com/spencercnorton/bitagent/internal/worker"
 	"go.uber.org/fx"
@@ -46,6 +48,7 @@ const (
 )
 
 type Params struct {
+	NamePolicy *namepolicy.Policy `optional:"true"`
 	fx.In
 	Config  Config
 	Pool    lazy.Lazy[*pgxpool.Pool]
@@ -73,6 +76,7 @@ type Result struct {
 func New(p Params) Result {
 	w := &purgeWorker{
 		cfg:             p.Config,
+		namePolicy:      p.NamePolicy,
 		pool:            p.Pool,
 		gormDB:          p.GormDB,
 		judge:           p.Judge,
@@ -89,13 +93,14 @@ func New(p Params) Result {
 }
 
 type purgeWorker struct {
-	cfg     Config
-	pool    lazy.Lazy[*pgxpool.Pool]
-	gormDB  lazy.Lazy[*gorm.DB]
-	judge   Judge
-	metrics *Metrics
-	logger  *zap.SugaredLogger
-	capture llmcapture.Capturer
+	namePolicy *namepolicy.Policy
+	cfg        Config
+	pool       lazy.Lazy[*pgxpool.Pool]
+	gormDB     lazy.Lazy[*gorm.DB]
+	judge      Judge
+	metrics    *Metrics
+	logger     *zap.SugaredLogger
+	capture    llmcapture.Capturer
 	// verdicts is the T3 phase-A dual-write hook (nil-safe): quarantine,
 	// expiry-blacklist and operator actions are mirrored into the verdict
 	// ledger alongside the existing bookkeeping. Best-effort — a ledger
@@ -186,6 +191,7 @@ func (w *purgeWorker) start(context.Context) error {
 	}
 	if plan.startBatchLoop {
 		client := newOpenAIBatchClient(w.cfg)
+		client.namePolicy = w.namePolicy
 		w.wg.Add(1)
 		go w.batchLoop(
 			ctx,
@@ -582,6 +588,13 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 	// exactly as an unclaimed item would have been.
 	var toJudge []candidate
 	for _, c := range candidates {
+		var h protocol.ID
+		copy(h[:], c.infoHash)
+		d := w.namePolicy.Evaluate(h, c.name)
+		if !d.Eligible {
+			w.namePolicy.Observe("model", d)
+			continue
+		}
 		if ctx.Err() != nil {
 			cycleOutcome = cycleOutcomeCanceled
 			return

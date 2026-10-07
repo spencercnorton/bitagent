@@ -7,12 +7,14 @@ import (
 	"github.com/spencercnorton/bitagent/internal/csamblocklist"
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"go.uber.org/fx"
 )
 
 type Params struct {
 	fx.In
-	Dao lazy.Lazy[*dao.Query]
+	Dao        lazy.Lazy[*dao.Query]
+	NamePolicy *namepolicy.Policy `optional:"true"`
 	// CsamBlocklist + BlockingManager are the /import gate (design §2.3).
 	// Both are always-provided fx singletons — the SAME instances the
 	// dhtcrawler uses (csam has a NoOp fallback when no feeds configured).
@@ -41,6 +43,7 @@ func New(p Params) Result {
 			}
 			return importer{
 				dao:             d,
+				namePolicy:      p.NamePolicy,
 				bufferSize:      100,
 				maxWaitTime:     500 * time.Millisecond,
 				csamBlocklist:   p.CsamBlocklist,

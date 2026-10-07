@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 )
 
 type WorkPayload struct {
@@ -20,7 +21,7 @@ func (f *Filter) SetWork(work *llmwork.Store) { f.work = work }
 func (f *Filter) WorkPolicy() any {
 	cfg := f.cfg
 	cfg.LLMOpenaiApiKey = ""
-	return []any{WorkPolicyVersion, cfg}
+	return namepolicy.BindWorkPolicy(f.namePolicy, []any{WorkPolicyVersion, cfg})
 }
 func (f *Filter) SubmitWork(ctx context.Context, in Input, source AuditSource) error {
 	if f.work == nil || !f.work.Config().Accepts(llmwork.Language) {

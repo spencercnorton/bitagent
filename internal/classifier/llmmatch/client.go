@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"math"
 	"net/http"
 	"strings"
@@ -31,12 +32,13 @@ type PrivacyStore interface {
 // Client performs the two LLM stages plus gating and caching. It is safe to
 // construct when disabled — Enabled()/Live() gate all work.
 type Client struct {
-	cfg     Config
-	privacy PrivacyStore
-	cache   *lruCache
-	metrics *Metrics
-	logger  *zap.SugaredLogger
-	http    *http.Client
+	namePolicy *namepolicy.Policy
+	cfg        Config
+	privacy    PrivacyStore
+	cache      *lruCache
+	metrics    *Metrics
+	logger     *zap.SugaredLogger
+	http       *http.Client
 	// httpLong has no client-level timeout — batch extract calls scale their
 	// deadline with batch size via a request context, which a fixed
 	// client Timeout would override.
@@ -187,7 +189,24 @@ func (c *Client) nativePrivateBlocked(t model.Torrent) bool {
 }
 
 // Allow runs the plausibility + privacy gates. Fails closed on privacy error.
+func (c *Client) SetNamePolicy(p *namepolicy.Policy) { c.namePolicy = p }
+
+func (c *Client) CheckNameAdmission(ctx context.Context, t model.Torrent) error {
+	d, err := c.namePolicy.AdmitContext(ctx, t.InfoHash, t.Name, "")
+	c.namePolicy.Observe("model", d)
+	if err != nil || !d.Eligible {
+		return namepolicy.ErrExcluded
+	}
+	return nil
+}
+func (c *Client) nameAllowed(ctx context.Context, t model.Torrent) bool {
+	return c.CheckNameAdmission(ctx, t) == nil
+}
+
 func (c *Client) Allow(ctx context.Context, t model.Torrent) bool {
+	if !c.nameAllowed(ctx, t) {
+		return false
+	}
 	if c.nativePrivateBlocked(t) {
 		return false
 	}
@@ -254,6 +273,9 @@ func extractionModelFiles(t model.Torrent) []string {
 
 // Extract is stage 1: read the canonical identity from the release name.
 func (c *Client) Extract(ctx context.Context, t model.Torrent) (Extraction, error) {
+	if !c.nameAllowed(ctx, t) {
+		return Extraction{}, namepolicy.ErrExcluded
+	}
 	if c.nativePrivateBlocked(t) {
 		return Extraction{}, nil
 	}
@@ -334,6 +356,9 @@ func (c *Client) RerankForMediaType(
 	cands []Candidate,
 	source llmcapture.CandidateSource,
 ) (int64, float64, error) {
+	if !c.nameAllowed(ctx, t) {
+		return 0, 0, namepolicy.ErrExcluded
+	}
 	if c.nativePrivateBlocked(t) {
 		return 0, 0, nil
 	}
@@ -518,6 +543,7 @@ const extractSystemPrompt = `You extract the canonical media identity from a tor
 const rerankSystemPrompt = `You match a torrent to the correct TMDB entry. You are given the raw release name and a numbered list of TMDB candidates (id, title, year, overview). Choose the single candidate the torrent is a release of. Output ONLY compact JSON: {"tmdb_id":int,"confidence":float}. confidence in [0,1]. Prefer an exact year match. Do NOT pick a sequel, remake, or different-year entry unless the release name clearly indicates it. If none of the candidates clearly match, output {"tmdb_id":0,"confidence":0}. A wrong match is worse than no match.`
 
 func (c *Client) callExtract(ctx context.Context, t model.Torrent) (Extraction, error) {
+	ctx = namepolicy.WithSource(ctx, t.InfoHash, t.Name, "")
 	ctx = withPendingCapture(ctx)
 	modelFiles := extractionModelFiles(t)
 	user := ExtractInput(t.Name, modelFiles)
@@ -612,6 +638,7 @@ func (c *Client) callRerank(
 	embeddingAudit *embeddingShortlistAudit,
 ) (int64, float64, error) {
 	user := RerankInput(t.Name, ext, cands)
+	ctx = namepolicy.WithSource(ctx, t.InfoHash, t.Name, "")
 	ctx = withPendingCapture(ctx)
 	effectiveMediaType := "movie"
 	if isTV {
@@ -904,6 +931,11 @@ func (c *Client) captureEnvelope(ctx context.Context, req llmcapture.Request) er
 }
 
 func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, user string, maxTokens int) ([]byte, error) {
+	d, admissionErr := c.namePolicy.AdmitContext(ctx, model.Torrent{}.InfoHash, "", "")
+	if admissionErr != nil || !d.Eligible {
+		c.namePolicy.Observe("model_dispatch", d)
+		return nil, namepolicy.ErrExcluded
+	}
 	if !c.Enabled() {
 		return nil, fmt.Errorf("matcher is disabled")
 	}
@@ -965,7 +997,6 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, u
 		c.metrics.budgetSkips.WithLabelValues(reason).Inc()
 		return nil, ErrCallBudget
 	}
-	c.metrics.calls.WithLabelValues(c.cfg.Model, stage).Inc()
 
 	if c.cfg.ChatBackend.Effective() == llmprovider.ChatBackendOllama {
 		// Keep both ordinary and long batch requests on the validated route.
@@ -974,6 +1005,12 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, u
 		boundedClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		hc = &boundedClient
 	}
+	d, admissionErr = c.namePolicy.AdmitContext(ctx, model.Torrent{}.InfoHash, "", "")
+	if admissionErr != nil || !d.Eligible {
+		c.namePolicy.Observe("model_dispatch", d)
+		return nil, namepolicy.ErrExcluded
+	}
+	c.metrics.calls.WithLabelValues(c.cfg.Model, stage).Inc()
 	start := time.Now()
 	resp, err := hc.Do(httpReq)
 	if err != nil {

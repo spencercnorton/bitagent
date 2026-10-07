@@ -2,6 +2,7 @@ package classifier
 
 import (
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 
 	"github.com/spencercnorton/bitagent/internal/animedb"
 	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
@@ -14,6 +15,7 @@ import (
 type Params struct {
 	fx.In
 	Config     Config
+	NamePolicy *namepolicy.Policy `optional:"true"`
 	TmdbConfig tmdb.Config
 	Search     lazy.Lazy[search.Search]
 	TmdbClient lazy.Lazy[tmdb.Client]
@@ -61,6 +63,7 @@ func New(params Params) Result {
 				celEnvOption,
 			},
 			dependencies: dependencies{
+				namePolicy:            params.NamePolicy,
 				search:                NewLocalSearch(s, params.Config),
 				tmdbClient:            tmdbClient,
 				llmMatch:              params.LlmMatch,

@@ -3,10 +3,12 @@ package classifier
 import (
 	"github.com/spencercnorton/bitagent/internal/animedb"
 	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/tmdb"
 )
 
 type dependencies struct {
+	namePolicy *namepolicy.Policy
 	search     LocalSearch
 	tmdbClient tmdb.Client
 	// llmMatch is the two-stage LLM fallback matcher. May be nil (tests,
