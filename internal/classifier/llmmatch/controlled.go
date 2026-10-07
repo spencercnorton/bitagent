@@ -89,7 +89,6 @@ func (c *Client) callControlledWith(ctx context.Context, hc *http.Client, stage 
 	c.metrics.calls.WithLabelValues(c.cfg.Model, stage).Inc()
 	started := time.Now()
 	resp, requestErr := bounded.Do(req)
-	c.metrics.callDuration.WithLabelValues(stage).Observe(time.Since(started).Seconds())
 	result := llmcapture.HTTPResult{ErrorClass: "transport"}
 	var content []byte
 	if requestErr == nil {
@@ -100,6 +99,7 @@ func (c *Client) callControlledWith(ctx context.Context, hc *http.Client, stage 
 		result.ErrorClass = matcherResponseErrorClass(err)
 		requestErr = err
 	}
+	c.metrics.observeHTTP(c.cfg.Model, stage, started, result, requestErr)
 	c.recordUsage(stage, result.Body)
 	if err = c.recordCapturedResult(ctx, stage, result); err != nil {
 		return nil, err

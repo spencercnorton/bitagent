@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Measure matcher HTTP latency through bounded response reading and envelope
+  decoding. Count model/stage outcomes and failures consistently for ordinary,
+  controlled and embedding attempts, excluding admission, cache and replay.
+
 ## 4.4.0 — 2026-10-06
 
 - Repair missing codec claims only from the exact parser proposal, retaining
