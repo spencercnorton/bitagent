@@ -28,10 +28,7 @@ func TestAdultPolicyUsesPositiveNullableMetadataAndExactUnicodeBoundaries(t *tes
 	require.NoError(t, err)
 	expr := p.TorrentCondition("torrent_contents")
 	require.Contains(t, expr.SQL, "serving_c.adult IS TRUE")
-	require.True(t, strings.HasPrefix(expr.SQL, "CASE WHEN torrent_contents.content_type = 'xxx' THEN FALSE ELSE ("))
-	for _, table := range []string{"torrents", "torrent_files", "torrent_tags"} {
-		require.False(t, strings.HasPrefix(p.TorrentCondition(table).SQL, "CASE WHEN"))
-	}
+	require.True(t, p.ExcludesAdult())
 	require.NotContains(t, expr.SQL, "adult <> true")
 	require.NotContains(t, p.strongPattern, `\p{L}`)
 	require.NotContains(t, p.strongPattern, `\d`)

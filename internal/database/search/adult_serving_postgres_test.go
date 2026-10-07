@@ -336,6 +336,40 @@ func TestAdultServingPostgresExplicitHashAndTypeCannotBypass(t *testing.T) {
 	}
 }
 
+func TestAdultServingPostgresExcludedFacetPreservesSelfAggregation(t *testing.T) {
+	f := newAdultServingPostgresFixture(t)
+	for _, grouped := range []bool{false, true} {
+		for _, filter := range []query.FacetFilter{{"xxx": {}}, {"xxx": {}, "movie": {}}} {
+			options := append(adultServingExactOptions(model.TableNameTorrentContent),
+				query.WithFacet(TorrentContentTypeFacet(query.FacetIsAggregated(), query.FacetHasFilter(filter))))
+			if grouped {
+				options = append(options, TorrentContentGroupByContentOption())
+			}
+			result, err := f.serving(t, true).TorrentContent(context.Background(), options...)
+			require.NoError(t, err)
+			want := 0
+			if filter.HasKey("movie") {
+				want = 1
+			}
+			require.EqualValues(t, want, result.TotalCount)
+			require.Len(t, result.Items, want)
+			aggs := result.Aggregations[TorrentContentTypeFacetKey].Items
+			require.Zero(t, aggs["xxx"].Count)
+			require.False(t, aggs["xxx"].IsEstimate)
+			require.EqualValues(t, 1, aggs["movie"].Count, "OR self-aggregation retains ordinary values")
+			if !grouped {
+				require.EqualValues(t, 2, aggs["null"].Count)
+			}
+		}
+	}
+	off, err := f.serving(t, false).TorrentContent(context.Background(),
+		query.WithTotalCount(true), query.WithAggregationBudget(0),
+		query.WithFacet(TorrentContentTypeFacet(query.FacetHasFilter(query.FacetFilter{"xxx": {}}))))
+	require.NoError(t, err)
+	require.Positive(t, off.TotalCount, "optimization is bound to active adult exclusion")
+	require.NotEmpty(t, off.Items)
+}
+
 func TestAdultServingPostgresFlagOffRestoresAdultVisibilityWithoutMutation(t *testing.T) {
 	f := newAdultServingPostgresFixture(t)
 	before := f.snapshot(t)

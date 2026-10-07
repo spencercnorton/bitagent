@@ -80,7 +80,7 @@ func newServingPostgresDatabase(t *testing.T, ctx context.Context) (*pgxpool.Poo
 	return pool, dao.Use(gdb)
 }
 
-func TestServingPostgresTypedAdultSkipsExpensiveSubplans(t *testing.T) {
+func TestServingPostgresImpossibleAdultFacetDoesNotScan(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, q := newServingPostgresDatabase(t, ctx)
@@ -95,29 +95,34 @@ SELECT info_hash, 'xxx', now(), now() FROM torrents;`)
 	require.NoError(t, err)
 	policy, err := serving.NewPolicy(serving.Config{ExcludeAdult: true}, strong, media)
 	require.NoError(t, err)
-	sql := dao.ToSQL(q.TorrentContent.UnderlyingDB().
-		Where(policy.TorrentCondition("torrent_contents")).
-		Where("torrent_contents.content_type = ?", "xxx"))
+	consumer, err := search.New(search.Params{Query: lazy.New(func() (*dao.Query, error) { return q, nil }), ServingPolicy: policy}).ServingSearch.Get()
+	require.NoError(t, err)
+	countSQL := make(chan string, 1)
+	require.NoError(t, q.TorrentContent.UnderlyingDB().Callback().Row().After("gorm:row").Register("test:count", func(db *gorm.DB) {
+		countSQL <- db.Dialector.Explain(db.Statement.SQL.String(), db.Statement.Vars...)
+	}))
+	result, err := consumer.TorrentContent(ctx, query.WithTotalCount(true), query.WithAggregationBudget(0),
+		query.WithFacet(search.TorrentContentTypeFacet(query.FacetHasFilter(query.FacetFilter{"xxx": {}}))))
+	require.NoError(t, err)
+	require.Zero(t, result.TotalCount)
+	require.Empty(t, result.Items)
+	sql := <-countSQL
+	require.Contains(t, sql, "sources_snapshot", "the mandatory source guard must remain")
+	require.Contains(t, sql, "serving_c.adult", "cross-row attachment guard must remain")
+	require.Contains(t, sql, "serving_f", "native file guard must remain")
 	var raw []byte
 	require.NoError(t, pool.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+sql).Scan(&raw))
 	var plans []map[string]any
 	require.NoError(t, json.Unmarshal(raw, &plans))
-	root := plans[0]["Plan"].(map[string]any)
-	require.Zero(t, root["Actual Rows"])
-	subplans := 0
 	var visit func(map[string]any)
 	visit = func(node map[string]any) {
-		if node["Parent Relationship"] == "SubPlan" || node["Parent Relationship"] == "InitPlan" {
-			subplans++
-			require.Zero(t, node["Actual Loops"], "typed adult rows must not scan other evidence")
-		}
+		require.NotContains(t, node, "Relation Name", "an impossible selection must not scan tables")
 		children, _ := node["Plans"].([]any)
 		for _, child := range children {
 			visit(child.(map[string]any))
 		}
 	}
-	visit(root)
-	require.Positive(t, subplans, "the ordinary/unknown branch must retain the evidence guards")
+	visit(plans[0]["Plan"].(map[string]any))
 }
 
 func TestServingPostgresStrongEvidenceMatchesCoreBaseNameAndBasePath(t *testing.T) {

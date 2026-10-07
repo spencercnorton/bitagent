@@ -6,9 +6,9 @@
   decoding. Count model/stage outcomes and failures consistently for ordinary,
   controlled and embedding attempts, excluding admission, cache and replay.
 
-- Avoid global serving-evidence joins when a search selects typed adult rows
-  already excluded by policy. Retain all snapshot, attachment and native-file
-  eligibility checks for ordinary and unknown types.
+- Recognize adult facet selections and aggregation buckets already excluded by
+  mandatory serving policy without scanning global evidence. Preserve ordinary
+  query plans, every eligibility guard and OR-facet self-aggregation.
 
 ## 4.4.0 — 2026-10-06
 
