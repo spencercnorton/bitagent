@@ -22,6 +22,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
@@ -67,7 +68,7 @@ func equal(a, b any) bool         { return bytes.Equal(digest(a), digest(b)) }
 // selected hashes. Original names and paths are omitted; the planned index contains source
 // tokens and remains a private maintenance artefact. Historical
 // non-null source changes remain unauthorised until the plan is reviewed.
-func Freeze(ctx context.Context, pool *pgxpool.Pool, hashes []protocol.ID, noise bool) (Plan, error) {
+func Freeze(ctx context.Context, pool *pgxpool.Pool, hashes []protocol.ID, noise bool, names ...*namepolicy.Policy) (Plan, error) {
 	if len(hashes) == 0 || len(hashes) > 1000 {
 		return Plan{}, fmt.Errorf("cohort must contain 1..1000 hashes")
 	}
@@ -82,7 +83,7 @@ func Freeze(ctx context.Context, pool *pgxpool.Pool, hashes []protocol.ID, noise
 		if err != nil {
 			return plan, err
 		}
-		t, tc, err := current(ctx, tx, hash)
+		t, tc, err := current(ctx, tx, hash, names...)
 		if err != nil {
 			tx.Rollback(ctx)
 			return plan, err
@@ -150,7 +151,7 @@ func codecFilesAllow(t model.Torrent, proposed model.NullVideoCodec) error {
 	return nil
 }
 
-func current(ctx context.Context, tx pgx.Tx, hash protocol.ID) (model.Torrent, model.TorrentContent, error) {
+func current(ctx context.Context, tx pgx.Tx, hash protocol.ID, names ...*namepolicy.Policy) (model.Torrent, model.TorrentContent, error) {
 	var t model.Torrent
 	var tc model.TorrentContent
 	t.InfoHash = hash
@@ -162,8 +163,13 @@ func current(ctx context.Context, tx pgx.Tx, hash protocol.ID) (model.Torrent, m
 	if err != nil {
 		return t, tc, err
 	}
+	for _, policy := range names {
+		if !policy.Evaluate(hash, t.Name).Eligible {
+			return t, tc, namepolicy.ErrExcluded
+		}
+	}
 	var blocked bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM torrent_hints WHERE info_hash=$1) OR EXISTS(SELECT 1 FROM torrent_canonical_labels WHERE info_hash=$1) OR EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=$1 AND source='qbittorrent' AND lower(category) IN('private','bitgrab')) OR EXISTS(SELECT 1 FROM torrent_verdict_state WHERE info_hash=$1 AND verdict IN('quarantined','blacklisted','tombstoned')) OR EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=$1 AND expired_at IS NULL)`, hash.Bytes()).Scan(&blocked)
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM torrent_hints WHERE info_hash=$1) OR EXISTS(SELECT 1 FROM torrent_canonical_labels WHERE info_hash=$1) OR EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=$1 AND lower(btrim(source,$2))='qbittorrent' AND lower(btrim(category,$2)) IN('private','bitgrab')) OR EXISTS(SELECT 1 FROM torrent_verdict_state WHERE info_hash=$1 AND verdict IN('quarantined','blacklisted','tombstoned')) OR EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=$1 AND expired_at IS NULL)`, hash.Bytes(), catalogueguard.TagWhitespace).Scan(&blocked)
 	if err != nil {
 		return t, tc, err
 	}
@@ -290,7 +296,7 @@ func validate(plan Plan) error {
 // Apply executes one short transaction per frozen entry. The journal and any
 // associated application snapshot change commit with the field update. Restart
 // resumes from that journal without reapplying a completed entry.
-func Apply(ctx context.Context, pool *pgxpool.Pool, plan Plan, write bool) ([]Outcome, error) {
+func Apply(ctx context.Context, pool *pgxpool.Pool, plan Plan, write bool, names ...*namepolicy.Policy) ([]Outcome, error) {
 	if err := validate(plan); err != nil {
 		return nil, err
 	}
@@ -301,7 +307,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, plan Plan, write bool) ([]Ou
 		if err != nil {
 			return out, err
 		}
-		state, err := applyEntry(ctx, tx, key, e, plan.NoiseV2, write)
+		state, err := applyEntry(ctx, tx, key, e, plan.NoiseV2, write, names...)
 		if err != nil {
 			tx.Rollback(ctx)
 			return out, err
@@ -313,8 +319,8 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, plan Plan, write bool) ([]Ou
 	}
 	return out, nil
 }
-func applyEntry(ctx context.Context, tx pgx.Tx, key []byte, e Entry, noise, write bool) (string, error) {
-	t, tc, err := current(ctx, tx, e.InfoHash)
+func applyEntry(ctx context.Context, tx pgx.Tx, key []byte, e Entry, noise, write bool, names ...*namepolicy.Policy) (string, error) {
+	t, tc, err := current(ctx, tx, e.InfoHash, names...)
 	if err != nil {
 		return "", err
 	}
@@ -468,7 +474,7 @@ func repairApplications(ctx context.Context, tx pgx.Tx, hash protocol.ID, old, n
 
 // Rollback restores only still-current journalled fields and application facts.
 // An intervening edit or refresh requires a new reviewed plan instead.
-func Rollback(ctx context.Context, pool *pgxpool.Pool, plan Plan, write bool) ([]Outcome, error) {
+func Rollback(ctx context.Context, pool *pgxpool.Pool, plan Plan, write bool, names ...*namepolicy.Policy) ([]Outcome, error) {
 	if err := validate(plan); err != nil {
 		return nil, err
 	}
@@ -479,7 +485,7 @@ func Rollback(ctx context.Context, pool *pgxpool.Pool, plan Plan, write bool) ([
 		if err != nil {
 			return out, err
 		}
-		state, err := rollbackEntry(ctx, tx, key, e, write)
+		state, err := rollbackEntry(ctx, tx, key, e, write, names...)
 		if err != nil {
 			tx.Rollback(ctx)
 			return out, err
@@ -491,8 +497,8 @@ func Rollback(ctx context.Context, pool *pgxpool.Pool, plan Plan, write bool) ([
 	}
 	return out, nil
 }
-func rollbackEntry(ctx context.Context, tx pgx.Tx, key []byte, e Entry, write bool) (string, error) {
-	t, tc, err := current(ctx, tx, e.InfoHash)
+func rollbackEntry(ctx context.Context, tx pgx.Tx, key []byte, e Entry, write bool, names ...*namepolicy.Policy) (string, error) {
+	t, tc, err := current(ctx, tx, e.InfoHash, names...)
 	if err != nil {
 		return "", err
 	}

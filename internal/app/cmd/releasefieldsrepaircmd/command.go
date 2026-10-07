@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/spencercnorton/bitagent/internal/classifier"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/releasefields"
 	"github.com/urfave/cli/v2"
@@ -22,6 +23,7 @@ type Params struct {
 	fx.In
 	Pool       lazy.Lazy[*pgxpool.Pool]
 	Classifier classifier.Config
+	NamePolicy *namepolicy.Policy `optional:"true"`
 }
 type Result struct {
 	fx.Out
@@ -44,7 +46,7 @@ func New(p Params) (Result, error) {
 			if err != nil {
 				return err
 			}
-			plan, err := releasefields.Freeze(ctx.Context, pool, hashes, p.Classifier.ParseNoiseV2)
+			plan, err := releasefields.Freeze(ctx.Context, pool, hashes, p.Classifier.ParseNoiseV2, p.NamePolicy)
 			if err != nil {
 				return err
 			}
@@ -69,9 +71,9 @@ func (p Params) run(ctx *cli.Context, rollback bool) error {
 	}
 	var outcomes []releasefields.Outcome
 	if rollback {
-		outcomes, err = releasefields.Rollback(ctx.Context, pool, plan, ctx.Bool("write"))
+		outcomes, err = releasefields.Rollback(ctx.Context, pool, plan, ctx.Bool("write"), p.NamePolicy)
 	} else {
-		outcomes, err = releasefields.Apply(ctx.Context, pool, plan, ctx.Bool("write"))
+		outcomes, err = releasefields.Apply(ctx.Context, pool, plan, ctx.Bool("write"), p.NamePolicy)
 	}
 	if err != nil {
 		return err

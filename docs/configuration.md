@@ -56,6 +56,37 @@ BitAgent's HTTP server has no opinions about auth — it trusts whoever connects
 | `TORZNAB_API_KEY` | *(none)* | When set, every `/torznab/api` request must include `apikey=<value>`. Empty leaves `/torznab` open — fine on a tailnet or behind a reverse proxy with its own auth, **not fine on the open internet.** Constant-time compare. |
 | `EVIDENCE_WEBHOOK_SECRET` | *(none)* | Shared secret for the `*arr` webhook ingester. Mirror this value as the `X-Evidence-Token` Custom Header on every Sonarr/Radarr/Lidarr/Readarr Connect → Webhook configuration. Operator-internal stack only. |
 
+## Release-name eligibility
+
+This policy is disabled by default. Enabling it rejects releases whose names
+contain Han or Cyrillic script, clear combinations of adult tokens, or an
+explicitly configured info hash. It uses the release name and existing adult
+classification; it does not infer audio language or origin from metadata,
+accents, transliteration or support-file paths. Standalone ambiguous terms and
+the film title *xXx* remain eligible for the existing checks.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `NAME_POLICY_ENABLED` | `false` | Apply the shared deterministic eligibility policy to consumer views and processing. Stored data and recovery evidence remain intact. |
+| `NAME_POLICY_EXCLUDED_INFO_HASHES` | *(empty)* | Bounded comma-separated list of exact info hashes excluded by operator policy. Invalid hashes fail startup. |
+| `NAME_POLICY_INTERNAL_CHECK_TOKEN` | *(empty)* | A 32–256 byte bearer credential for internal eligibility checks. Prefer the `_FILE` form. The credential is redacted in config display and excluded from policy fingerprints. |
+
+Both internal POST endpoints require an enabled policy and configured bearer
+credential; otherwise they return 404. `/internal/name-policy/check` accepts at
+most 32 trusted-caller release names for a separate private catalogue.
+`/internal/name-policy/check-public` accepts only `infoHashes`, resolves their
+actual stored names through the mandatory consumer view, and cannot accept a
+substitute caller name. It bounds requests to 32 hashes/4 KiB and lookup to five
+seconds. Unknown, private or suppressed records are ineligible for public grabs.
+Neither response echoes names or hashes. Successful responses contain `enabled`,
+`version` and results bound to request positions with `eligible` and `reason`.
+These checks do not grant private membership or download authority.
+
+Metadata repairs also recheck current eligibility, including previously frozen
+plans. A plan for an excluded release remains held. Existing privacy,
+manual/reference/wanted/bitgrab, identity and non-NULL field protections remain
+in force.
+
 ## Classifier
 
 The classifier runs locally with no external dependencies. TMDB enrichment is optional and improves movie/TV title resolution.

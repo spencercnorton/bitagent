@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/spencercnorton/bitagent/internal/keywords"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"gorm.io/gorm/clause"
 )
 
@@ -21,11 +22,15 @@ type Policy struct {
 	excludeAdult    bool
 	strongPattern   string
 	mediaExtensions []string
+	names           *namepolicy.Policy
 }
 
 // NewPolicy uses only the core classifier's precision-vetted strong keywords.
 // Weak keywords and the matcher's abstention heuristic are not serving evidence.
-func NewPolicy(cfg Config, strongKeywords, mediaExtensions []string) (*Policy, error) {
+func NewPolicy(cfg Config, strongKeywords, mediaExtensions []string, names ...*namepolicy.Policy) (*Policy, error) {
+	if len(names) > 1 {
+		return nil, fmt.Errorf("serving name policy must be a single instance")
+	}
 	if len(strongKeywords) == 0 || len(mediaExtensions) == 0 {
 		return nil, fmt.Errorf("serving adult evidence is empty")
 	}
@@ -38,7 +43,11 @@ func NewPolicy(cfg Config, strongKeywords, mediaExtensions []string) (*Policy, e
 	// keyword boundaries on C-locale databases. Go's \d is ASCII, too.
 	pattern := strings.ReplaceAll(r.String(), `\p{L}`, postgresLetterRanges())
 	pattern = strings.ReplaceAll(pattern, `\d`, `0-9`)
-	return &Policy{excludeAdult: cfg.ExcludeAdult, strongPattern: pattern, mediaExtensions: append([]string(nil), mediaExtensions...)}, nil
+	p := &Policy{excludeAdult: cfg.ExcludeAdult, strongPattern: pattern, mediaExtensions: append([]string(nil), mediaExtensions...)}
+	if len(names) == 1 {
+		p.names = names[0]
+	}
+	return p, nil
 }
 
 func postgresLetterRanges() string {
@@ -135,6 +144,18 @@ func (p *Policy) TorrentCondition(table string) clause.Expr {
 			}
 		}
 		args = append(args, p.strongPattern, p.strongPattern)
+	}
+	if p.names.Enabled() {
+		nameColumn, hashColumn := "torrents.name", root
+		if table != "torrents" {
+			nameColumn, hashColumn = "serving_name.name", "serving_name.info_hash"
+		}
+		allowed, nameArgs := p.names.AllowsSQL(nameColumn, hashColumn)
+		if table != "torrents" {
+			allowed = "EXISTS (SELECT 1 FROM torrents serving_name WHERE serving_name.info_hash = " + root + " AND (" + allowed + "))"
+		}
+		sql += " AND (" + allowed + ")"
+		args = append(args, nameArgs...)
 	}
 	return clause.Expr{SQL: sql, Vars: args}
 }

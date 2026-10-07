@@ -5,6 +5,12 @@
 - Preserve tracker-positive history and standing coverage for leechers-only
   swarms, matching the existing seeder-or-leecher live signal. Keep known zero
   and failed coverage separate from confirmed-dead claims.
+- Add an opt-in release-name eligibility policy shared by consumer views,
+  public hash checks and metadata repair. Han/Cyrillic names, clear adult
+  combinations and explicitly configured hashes stay ineligible without
+  deleting stored data or changing audio/origin metadata.
+- Normalize independent privacy evidence when freezing or applying metadata
+  repairs, including protected facts committed after the plan was frozen.
 
 - Measure matcher HTTP latency through bounded response reading and envelope
   decoding. Count model/stage outcomes and failures consistently for ordinary,
