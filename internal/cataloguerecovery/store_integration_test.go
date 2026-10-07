@@ -24,6 +24,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/database/search"
 	"github.com/spencercnorton/bitagent/internal/lazy"
+	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/torznab"
 	"github.com/spencercnorton/bitagent/internal/torznab/adapter"
@@ -606,4 +607,57 @@ func TestPostgresConcurrentDuplicateRemovalAndAtomicBatch(t *testing.T) {
 	require.Error(t, e)
 	_, e = s.Remove(ctx, hash(99), "synthetic", time.Now())
 	require.ErrorIs(t, e, cataloguerecovery.ErrConflict, "an unsnapshotted historical loss cannot be recovered")
+}
+
+func TestPostgresRestoreRetainsReleaseClaimsAndIndependentHistories(t *testing.T) {
+	pool := recoveryPool(t)
+	s := store(t, pool)
+	h := hash(91)
+	seed(t, pool, h, false)
+	name := "SyntheticRecovery.2031.2160p.HEVC.DV.HDR10.DDP5.1.Atmos.REPACK.x265.ENG.mkv"
+	attrs := model.InferReleaseAttributes(name, "HEVC.DV.HDR10.DDP5.1.Atmos.REPACK.x265.ENG")
+	require.NotNil(t, attrs)
+	require.NotEmpty(t, attrs.HDRFormats)
+	require.NotEmpty(t, attrs.AudioFormats)
+	require.NotEmpty(t, attrs.AudioFeatures)
+	require.NotEmpty(t, attrs.Revisions)
+	require.NotNil(t, attrs.AudioChannels)
+	require.NotNil(t, attrs.Encoder)
+	body, err := json.Marshal(attrs)
+	require.NoError(t, err)
+	// Synthetic history checks retention only. These digest-only fixtures
+	// cannot qualify provider replay, committed application or human labels.
+	_, err = pool.Exec(ctx, `update torrents set name=$2 where info_hash=$1;
+update torrent_contents set release_attributes=$3::jsonb where info_hash=$1;
+insert into llm_work_tasks(task_key,kind,info_hash,source_digest,policy_digest,input_digest,family_digest,payload,priority,time_bucket,daily_limit,monthly_limit,state,expires_at,completed_at)
+values(decode(repeat('11',32),'hex'),'classifier_type',$1,decode(repeat('22',32),'hex'),decode(repeat('33',32),'hex'),decode(repeat('44',32),'hex'),decode(repeat('55',32),'hex'),'{}',50,0,0,0,'completed',now()+interval '1 day',now());
+insert into llm_work_events(task_key,state,reason) values(decode(repeat('11',32),'hex'),'completed','synthetic');
+insert into llm_work_applications(task_key,info_hash,source_digest,policy_digest,applied_snapshot)
+values(decode(repeat('11',32),'hex'),$1,decode(repeat('22',32),'hex'),decode(repeat('33',32),'hex'),'{"synthetic_history":true}');
+insert into llm_capture_dispatch_attempts(capture_key,semantic_key,task,task_key,state,reason)
+values(decode(repeat('66',32),'hex'),decode(repeat('77',32),'hex'),'classifier_type',decode(repeat('11',32),'hex'),'result','synthetic');
+insert into llm_capture_dispatch_aliases(capture_key,fence_key) values(decode(repeat('88',32),'hex'),decode(repeat('66',32),'hex'));
+insert into release_field_repair_journal(plan_digest,target_id,info_hash,source_name_sha256,before_fields,after_fields,application_before,application_after,applied_updated_at)
+values(decode(repeat('99',32),'hex'),'synthetic-history',$1,$4,'{}','{}','{}','{}',now());`, h, name, string(body), attrs.SourceNameSHA256)
+	require.NoError(t, err)
+	histories := func() map[string]string {
+		out := map[string]string{}
+		for _, table := range []string{"llm_work_tasks", "llm_work_events", "llm_work_applications", "llm_capture_dispatch_attempts", "llm_capture_dispatch_aliases", "release_field_repair_journal"} {
+			var data string
+			require.NoError(t, pool.QueryRow(ctx, `select jsonb_agg(to_jsonb(r) order by to_jsonb(r)::text)::text from `+pgx.Identifier{table}.Sanitize()+` r`).Scan(&data))
+			out[table] = data
+		}
+		return out
+	}
+	before, retained := raw(t, pool, h), histories()
+	now := time.Now().UTC()
+	snap, err := s.Remove(ctx, h, "synthetic compatibility removal", now)
+	require.NoError(t, err)
+	require.Zero(t, count(t, pool, "torrent_contents"))
+	require.Equal(t, retained, histories(), "independent task/dispatch/application/repair history must survive raw cascade")
+	restored, err := s.Restore(ctx, snap.ID, now.Add(time.Minute))
+	require.NoError(t, err)
+	require.True(t, restored)
+	require.Equal(t, before, raw(t, pool, h), "all non-NULL release claims and all raw source fields must roundtrip exactly")
+	require.Equal(t, retained, histories(), "restore cannot rewrite or refund permanent histories")
 }
