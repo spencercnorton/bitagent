@@ -45,3 +45,10 @@ func PrivacyTagSQL(column, whitespace string) string {
 	normal := fmt.Sprintf("lower(btrim(%s,%s))", column, whitespace)
 	return fmt.Sprintf("(%s='bitgrab' or (left(%s,7)='bitgrab' and substring(%s from 8 for 1) in(':','/','-','_')))", normal, normal, normal)
 }
+
+// QBPrivacySQL uses the same case/Unicode-whitespace interpretation as the
+// in-memory independent privacy readers. Expressions are trusted columns and
+// a trusted parameter placeholder; request text must be passed as values.
+func QBPrivacySQL(source, category, whitespace string) string {
+	return fmt.Sprintf("(lower(btrim(%s,%s))='qbittorrent' AND lower(btrim(%s,%s)) IN('private','bitgrab'))", source, whitespace, category, whitespace)
+}

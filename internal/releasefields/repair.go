@@ -169,7 +169,8 @@ func current(ctx context.Context, tx pgx.Tx, hash protocol.ID, names ...*namepol
 		}
 	}
 	var blocked bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM torrent_hints WHERE info_hash=$1) OR EXISTS(SELECT 1 FROM torrent_canonical_labels WHERE info_hash=$1) OR EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=$1 AND lower(btrim(source,$2))='qbittorrent' AND lower(btrim(category,$2)) IN('private','bitgrab')) OR EXISTS(SELECT 1 FROM torrent_verdict_state WHERE info_hash=$1 AND verdict IN('quarantined','blacklisted','tombstoned')) OR EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=$1 AND expired_at IS NULL)`, hash.Bytes(), catalogueguard.TagWhitespace).Scan(&blocked)
+	privacy := catalogueguard.QBPrivacySQL("source", "category", "$2")
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM torrent_hints WHERE info_hash=$1) OR EXISTS(SELECT 1 FROM torrent_canonical_labels WHERE info_hash=$1) OR EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=$1 AND `+privacy+`) OR EXISTS(SELECT 1 FROM torrent_verdict_state WHERE info_hash=$1 AND verdict IN('quarantined','blacklisted','tombstoned')) OR EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=$1 AND expired_at IS NULL)`, hash.Bytes(), catalogueguard.TagWhitespace).Scan(&blocked)
 	if err != nil {
 		return t, tc, err
 	}

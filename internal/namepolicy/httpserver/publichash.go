@@ -75,8 +75,7 @@ func (b publicHashBuilder) check(c *gin.Context) {
 	result, err := s.TorrentsWithMissingInfoHashes(ctx, unique,
 		query.WithTotalCount(false), query.Limit(32),
 		query.Where(query.DBCriteria{SQL: "torrents.private = FALSE"}, query.DBCriteria{
-			SQL: `NOT EXISTS(SELECT 1 FROM label_evidence public_privacy WHERE public_privacy.info_hash=torrents.info_hash
-AND lower(btrim(public_privacy.source,?))='qbittorrent' AND lower(btrim(public_privacy.category,?)) IN('private','bitgrab'))`,
+			SQL:  `NOT EXISTS(SELECT 1 FROM label_evidence public_privacy WHERE public_privacy.info_hash=torrents.info_hash AND ` + catalogueguard.QBPrivacySQL("public_privacy.source", "public_privacy.category", "?") + `)`,
 			Args: []interface{}{catalogueguard.TagWhitespace, catalogueguard.TagWhitespace},
 		}))
 	if err != nil {
