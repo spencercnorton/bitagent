@@ -43,6 +43,12 @@ source locks through its bounded provider operation; already-paid results can
 be reconciled without a new POST and are held before settlement after denial.
 Batch admission and complete recovery remain separately configured features.
 
+Explicit operator maintenance commands `derived-backfill`, `episodes-backfill`
+and `anime-backfill` still operate through their existing direct DAO paths.
+They are outside this policy's promoted runtime and guarded release-repair
+scope. They do not authorize model calls or grab links; the name-policy feature
+is not a blanket assertion that every maintenance command is filtered.
+
 ## Internal name-only check
 
 `POST /internal/name-policy/check` accepts an operator-authenticated batch of
