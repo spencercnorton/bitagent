@@ -38,9 +38,11 @@ func (s *Store) selectionAdmission() (string, []any) {
 }
 
 // withAdmission freezes only the minimum current facts around an egress or
-// persistence operation. Table SHARE locks exclude independently inserted
-// privacy and classification facts; parent SHARE locks exclude name/private
-// changes. A source lookup failure is returned, never stamped as tracker-unknown.
+// persistence operation. Evidence/canonical SHARE locks exclude independently
+// inserted privacy facts, which have no parent FK. Ordered parent UPDATE locks
+// exclude name/privacy changes and FK-backed child inserts; existing child
+// SHARE locks exclude in-place classification/tag changes. A source lookup
+// failure is returned, never stamped as tracker-unknown.
 // Network callers bound the complete transaction with the packet timeout.
 func (s *Store) withAdmission(ctx context.Context, hashes [][]byte, write bool, use func(pgx.Tx, [][]byte) error) error {
 	if len(hashes) == 0 {
@@ -64,19 +66,52 @@ func (s *Store) withAdmission(ctx context.Context, hashes [][]byte, write bool, 
 		defer cancel()
 		_ = tx.Rollback(cleanup)
 	}()
-	if _, err = tx.Exec(ctx, `SET LOCAL lock_timeout='2s'; LOCK TABLE label_evidence,torrent_canonical_labels,torrent_tags IN SHARE MODE`); err != nil {
+	if _, err = tx.Exec(ctx, `SET LOCAL lock_timeout='2s'`); err != nil {
 		return err
 	}
+	locks := []string{`SELECT 1 FROM torrents WHERE info_hash=ANY($1::bytea[]) ORDER BY info_hash FOR UPDATE`}
 	if s.names.Enabled() {
-		// Row locks cannot exclude a newly inserted XXX sibling. Keep the
-		// existing classification table stable through this bounded operation.
-		mode := "SHARE"
-		if write {
-			mode = "SHARE ROW EXCLUSIVE"
+		locks = append(locks, `SELECT 1 FROM torrent_contents WHERE info_hash=ANY($1::bytea[]) ORDER BY info_hash,id FOR SHARE`)
+	}
+	for _, sql := range locks {
+		locked, e := tx.Query(ctx, sql, hashes)
+		if e != nil {
+			return e
 		}
-		if _, err = tx.Exec(ctx, `LOCK TABLE torrent_contents IN `+mode+` MODE`); err != nil {
+		for locked.Next() {
+			var one int
+			if e = locked.Scan(&one); e != nil {
+				locked.Close()
+				return e
+			}
+		}
+		e = locked.Err()
+		locked.Close()
+		if e != nil {
+			return e
+		}
+	}
+	// Take the per-hash parent lock before shared evidence locks. A packet
+	// waiting behind another packet must not retain an evidence SHARE lock
+	// that prevents an already-queued private writer from making progress.
+	if _, err = tx.Exec(ctx, `LOCK TABLE label_evidence,torrent_canonical_labels IN SHARE MODE`); err != nil {
+		return err
+	}
+	locked, err := tx.Query(ctx, `SELECT 1 FROM torrent_tags WHERE info_hash=ANY($1::bytea[]) ORDER BY info_hash,name FOR SHARE`, hashes)
+	if err != nil {
+		return err
+	}
+	for locked.Next() {
+		var one int
+		if err = locked.Scan(&one); err != nil {
+			locked.Close()
 			return err
 		}
+	}
+	err = locked.Err()
+	locked.Close()
+	if err != nil {
+		return err
 	}
 	rows, err := tx.Query(ctx, `SELECT t.info_hash,t.name,`+privacySQL("t", "$2")+`,
  EXISTS(SELECT 1 FROM torrent_contents c WHERE c.info_hash=t.info_hash AND c.content_type='xxx')

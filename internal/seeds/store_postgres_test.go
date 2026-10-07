@@ -46,8 +46,8 @@ create table torrents_torrent_sources(source text,info_hash bytea,seeders int,le
 create table torrent_liveness(info_hash bytea primary key,status text,last_qb_state text,suspect_first_seen_at timestamptz,suspect_observations int default 0,last_observed_at timestamptz,blacklisted_at timestamptz,next_revalidate_at timestamptz,alive_source text,updated_at timestamptz);
 create table label_evidence(info_hash bytea,source text,category text);
 create table torrent_canonical_labels(info_hash bytea,category text);
-create table torrent_tags(info_hash bytea,name text);
-create table torrent_contents(id text primary key,info_hash bytea,content_type text,seeders int,leechers int);`)
+create table torrent_tags(info_hash bytea references torrents(info_hash),name text);
+create table torrent_contents(id text primary key,info_hash bytea references torrents(info_hash),content_type text,seeders int,leechers int);`)
 	require.NoError(t, err)
 	return pool
 }

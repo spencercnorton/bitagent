@@ -104,6 +104,7 @@ func (s *Scraper) ScrapeBatch(ctx context.Context, hashes [][]byte) (map[string]
 	sem := make(chan struct{}, max(1, s.cfg.Concurrency))
 	var wg sync.WaitGroup
 	var admissionErr error
+	withheld := make(map[string]bool)
 	reportAdmissionError := func(err error) {
 		mu.Lock()
 		if admissionErr == nil {
@@ -127,7 +128,7 @@ func (s *Scraper) ScrapeBatch(ctx context.Context, hashes [][]byte) (map[string]
 		go func(trackerURL string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s.scrapeOneTracker(ctx, trackerURL, ihs, hashes, out, &mu, reportAdmissionError)
+			s.scrapeOneTracker(ctx, trackerURL, ihs, hashes, out, &mu, packetAdmission{fail: reportAdmissionError, withheld: withheld})
 		}(url)
 	}
 	wg.Wait()
@@ -148,7 +149,7 @@ func (s *Scraper) scrapeOneTracker(
 	hashes [][]byte,
 	out map[string]*ScrapeOutcome,
 	mu *sync.Mutex,
-	reportAdmissionError func(error),
+	admission packetAdmission,
 ) {
 	var connected chunkScrapeFunc
 	var closeClient func()
@@ -187,7 +188,14 @@ func (s *Scraper) scrapeOneTracker(
 		}
 		return connected(cctx, chunk)
 	}
-	s.scrapeTrackerChunks(ctx, trackerURL, ihs, hashes, out, mu, scrape, reportAdmissionError)
+	s.scrapeTrackerChunks(ctx, trackerURL, ihs, hashes, out, mu, scrape, admission)
+}
+
+// A denial is monotonic within one batch. A delayed earlier tracker response
+// cannot recreate a withheld hash; a later ordinary batch may recheck it.
+type packetAdmission struct {
+	fail     func(error)
+	withheld map[string]bool
 }
 
 const (
@@ -234,8 +242,12 @@ func (s *Scraper) scrapeTrackerChunks(
 	out map[string]*ScrapeOutcome,
 	mu *sync.Mutex,
 	scrape chunkScrapeFunc,
-	admissionErrors ...func(error),
+	admissions ...packetAdmission,
 ) {
+	var admission packetAdmission
+	if len(admissions) > 0 {
+		admission = admissions[0]
+	}
 	limit := s.cfg.MaxHashesPerPacket
 	if limit <= 0 {
 		limit = 70
@@ -257,18 +269,29 @@ func (s *Scraper) scrapeTrackerChunks(
 				return
 			}
 			call := func(allowed [][]byte) error {
-				admitted = allowed
 				allowedSet := map[string]bool{}
-				filtered := make([]infohash.T, len(allowed))
-				for i, h := range allowed {
-					copy(filtered[i][:], h)
+				for _, h := range allowed {
 					allowedSet[string(h)] = true
 				}
 				mu.Lock()
 				for _, h := range hashes[start:end] {
 					if !allowedSet[string(h)] {
+						if admission.withheld != nil {
+							admission.withheld[string(h)] = true
+						}
 						delete(out, string(h))
 					}
+				}
+				admitted = nil
+				filtered := make([]infohash.T, 0, len(allowed))
+				for _, h := range allowed {
+					if admission.withheld[string(h)] {
+						continue
+					}
+					admitted = append(admitted, h)
+					var id infohash.T
+					copy(id[:], h)
+					filtered = append(filtered, id)
 				}
 				mu.Unlock()
 				if len(filtered) == 0 {
@@ -285,8 +308,8 @@ func (s *Scraper) scrapeTrackerChunks(
 				gateErr := s.admit(packetCtx, hashes[start:end], func(allowed [][]byte) error { networkErr = call(allowed); return networkErr })
 				packetCancel()
 				if gateErr != nil && networkErr == nil {
-					if len(admissionErrors) > 0 {
-						admissionErrors[0](gateErr)
+					if admission.fail != nil {
+						admission.fail(gateErr)
 					}
 					return
 				}
@@ -326,6 +349,9 @@ func (s *Scraper) scrapeTrackerChunks(
 		for i := 0; i < len(items) && i < len(admitted); i++ {
 			it := items[i]
 			key := string(admitted[i])
+			if admission.withheld[key] {
+				continue
+			}
 			if out[key] == nil {
 				out[key] = &ScrapeOutcome{}
 			}

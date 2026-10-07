@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -284,4 +285,142 @@ func TestCancelledScrapeBatchReturnsErrorBeforeNetwork(t *testing.T) {
 	cancel()
 	_, err := s.ScrapeBatch(ctx, [][]byte{admissionHash(1)})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestPostgresQueuedPrivacyWriterPrecedesNextPacket(t *testing.T) {
+	pool := seedsTestPool(t)
+	hash := admissionInsert(t, pool, 1, "Allowed.Release")
+	r := admissionRunner(t, pool, true)
+	ctx := context.Background()
+	writer, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	defer writer.Release()
+	pid := writer.Conn().PgConn().PID()
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- r.store.withAdmission(ctx, [][]byte{hash}, false, func(pgx.Tx, [][]byte) error { close(firstEntered); <-releaseFirst; return nil })
+	}()
+	<-firstEntered
+	writeDone := make(chan error, 1)
+	go func() {
+		_, e := writer.Exec(ctx, `insert into label_evidence values($1,'qbittorrent','private')`, hash)
+		writeDone <- e
+	}()
+	require.Eventually(t, func() bool {
+		var blocked bool
+		e := pool.QueryRow(ctx, `select coalesce(wait_event_type='Lock',false) from pg_stat_activity where pid=$1`, pid).Scan(&blocked)
+		return e == nil && blocked
+	}, time.Second, 10*time.Millisecond)
+	secondDone := make(chan error, 1)
+	var secondPackets atomic.Int32
+	go func() {
+		secondDone <- r.store.withAdmission(ctx, [][]byte{hash}, false, func(_ pgx.Tx, allowed [][]byte) error {
+			if len(allowed) > 0 {
+				secondPackets.Add(1)
+			}
+			return nil
+		})
+	}()
+	select {
+	case e := <-secondDone:
+		t.Fatalf("packet2 passed queued writer before packet1 released: %v", e)
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(releaseFirst)
+	require.NoError(t, <-firstDone)
+	require.NoError(t, <-writeDone)
+	require.NoError(t, <-secondDone)
+	require.Zero(t, secondPackets.Load(), "fresh packet2 must see the queued privacy fact")
+}
+
+func TestPostgresDisjointPacketAdmissionsCanOverlap(t *testing.T) {
+	pool := seedsTestPool(t)
+	a := admissionInsert(t, pool, 1, "Allowed.A")
+	b := admissionInsert(t, pool, 2, "Allowed.B")
+	r := admissionRunner(t, pool, true)
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	done := make(chan error, 2)
+	for _, hash := range [][]byte{a, b} {
+		go func(h []byte) {
+			done <- r.store.withAdmission(context.Background(), [][]byte{h}, false, func(pgx.Tx, [][]byte) error { entered <- struct{}{}; <-release; return nil })
+		}(hash)
+	}
+	for range 2 {
+		select {
+		case <-entered:
+		case <-time.After(time.Second):
+			close(release)
+			t.Fatal("disjoint packet admissions serialized")
+		}
+	}
+	close(release)
+	require.NoError(t, <-done)
+	require.NoError(t, <-done)
+}
+
+func TestPostgresPacketCancellationReleasesSourceLocks(t *testing.T) {
+	pool := seedsTestPool(t)
+	hash := admissionInsert(t, pool, 1, "Allowed.Release")
+	r := admissionRunner(t, pool, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	entered := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- r.store.withAdmission(ctx, [][]byte{hash}, false, func(pgx.Tx, [][]byte) error { close(entered); <-ctx.Done(); return ctx.Err() })
+	}()
+	<-entered
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+	writerCtx, writerCancel := context.WithTimeout(context.Background(), time.Second)
+	defer writerCancel()
+	_, err := pool.Exec(writerCtx, `update torrents set private=true where info_hash=$1`, hash)
+	require.NoError(t, err)
+	var count int
+	require.NoError(t, pool.QueryRow(writerCtx, `select count(*) from torrent_tracker_seeds`).Scan(&count))
+	require.Zero(t, count)
+}
+
+func TestConcurrentLaterDenialCannotBeUndoneByEarlierMerge(t *testing.T) {
+	pool := seedsTestPool(t)
+	hash := admissionInsert(t, pool, 1, "Allowed.Release")
+	r := admissionRunner(t, pool, true)
+	a := NewScraper(r.cfg, nil, zap.NewNop().Sugar())
+	b := NewScraper(r.cfg, nil, zap.NewNop().Sugar())
+	ready := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	a.admit = func(ctx context.Context, h [][]byte, use func([][]byte) error) error {
+		err := r.scraper.admit(ctx, h, use)
+		close(ready)
+		<-release
+		return err
+	}
+	b.admit = r.scraper.admit
+	out := map[string]*ScrapeOutcome{string(hash): {}}
+	withheld := map[string]bool{}
+	var mu sync.Mutex
+	var id infohash.T
+	copy(id[:], hash)
+	hs := []infohash.T{id}
+	hashes := [][]byte{hash}
+	success := func(context.Context, []infohash.T) ([]scrapeItem, error) { return []scrapeItem{{Leechers: 2}}, nil }
+	gate := packetAdmission{withheld: withheld, fail: func(err error) { t.Error(err) }}
+	go func() {
+		defer close(done)
+		a.scrapeTrackerChunks(context.Background(), "synthetic-a", hs, hashes, out, &mu, success, gate)
+	}()
+	<-ready
+	_, err := pool.Exec(context.Background(), `update torrents set private=true where info_hash=$1`, hash)
+	require.NoError(t, err)
+	b.scrapeTrackerChunks(context.Background(), "synthetic-b", hs, hashes, out, &mu, func(context.Context, []infohash.T) ([]scrapeItem, error) {
+		t.Fatal("denied packet dispatched")
+		return nil, nil
+	}, gate)
+	close(release)
+	<-done
+	require.True(t, withheld[string(hash)])
+	require.NotContains(t, out, string(hash))
 }
