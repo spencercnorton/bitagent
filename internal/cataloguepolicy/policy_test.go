@@ -28,12 +28,23 @@ func TestEnglishClaimsSeparateTitleOriginalAndTracks(t *testing.T) {
 		{"Film.2031.1080p.[No English audio]", false, false, "ineligible_review"},
 		{"Film.2031.1080p.No.English.Dub", false, false, "ineligible_review"},
 		{"Film.2031.1080p.No.English.Dubbed", false, false, "ineligible_review"},
+		{"Film.2031.1080p.English.Audio.Unavailable", false, false, "ineligible_review"},
+		{"Film.2031.1080p.English.Dub.Not.Included", false, false, "ineligible_review"},
+		{"Show.S01E01.1080p.English.Subtitles.Unavailable", true, true, "unknown"},
 		{"Film.2031.1080p.[Audio: no English]", false, false, "ineligible_review"},
 		{"Film.2031.1080p.[Audio: without English]", false, false, "ineligible_review"},
 		{"Film.2031.1080p.[Audio: English unavailable]", false, false, "ineligible_review"},
+		{"Film.2031.1080p.[Audio: English Audio Unavailable]", false, false, "ineligible_review"},
+		{"Show.S01E01.1080p.[Subtitles: English Subtitles Unavailable]", true, true, "unknown"},
 		{"Show.S01E01.1080p.[Subtitles: no English]", true, true, "unknown"},
 		{"Show.S01E01.1080p.[Audio only: Japanese; Subtitles: no English]", true, true, "ineligible_review"},
 		{"Film.2031.1080p.[Audio: no English, English]", false, false, "conflicting"},
+		{"Film.2031.1080p.[Audio: Japanese / English Subs]", false, false, "unknown"},
+		{"Film.2031.1080p.[Audio: Japanese, Subtitles: English]", false, false, "unknown"},
+		{"Show.S01E01.1080p.[Audio: Japanese / English Subs]", true, true, "eligible_anime_subtitles"},
+		{"Show.S01E01.1080p.[Audio: Japanese, Subtitles: English]", true, true, "eligible_anime_subtitles"},
+		{"Show.S01E01.1080p.[Audio only: Japanese, Subtitles: English]", true, true, "eligible_anime_subtitles"},
+		{"Show.S01E01.1080p.[Audio only: Japanese / No English Subs]", true, true, "ineligible_review"},
 		{"Film.2031.1080p.[English Audio; No English audio]", false, false, "conflicting"},
 		{"English Audio", false, false, "unknown"},
 		{"Show.S01E01.1080p.Dubbed.Multi.Sub", true, true, "unknown"},
@@ -52,6 +63,11 @@ func TestEnglishClaimsSeparateTitleOriginalAndTracks(t *testing.T) {
 	require.Equal(t, "mixed_review", EvaluateEnglish([]EnglishEvidence{english, missing}, false, false, false).State)
 	require.Equal(t, "mixed_review", EvaluateEnglish([]EnglishEvidence{english, foreign}, false, false, false).State)
 	require.Equal(t, "unknown", EvaluateEnglish([]EnglishEvidence{english}, false, false, true).State)
+	for _, name := range []string{"Film.2031.1080p.[Audio: Japanese / English Subs]", "Film.2031.1080p.[Audio: Japanese, Subtitles: English]"} {
+		e := ParseEnglishClaims(name, "release_name", now)
+		require.Equal(t, TrackUnknown, e.Audio)
+		require.Equal(t, TrackYes, e.Subtitles)
+	}
 }
 
 func TestAvailabilityFreshnessOutagesAndRecovery(t *testing.T) {

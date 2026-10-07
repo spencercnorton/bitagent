@@ -141,8 +141,7 @@ func (s *Store) Evaluate(ctx context.Context, hash []byte, write, allowAnimeSubs
 	evidence := []EnglishEvidence{ParseEnglishClaims(in.Name, "release_name", in.UpdatedAt)}
 	media := []EnglishEvidence{}
 	for _, f := range in.Files {
-		ft := (model.TorrentFile{Path: f.Path}).FileType()
-		if (ft.Valid && ft.FileType == model.FileTypeVideo) || strings.HasSuffix(strings.ToLower(f.Path), ".m2ts") {
+		if videoMember(f.Path) {
 			media = append(media, ParseEnglishClaims(f.Path, "media_file_name", f.UpdatedAt))
 		}
 	}
@@ -193,6 +192,20 @@ func packHeaderVeto(header, member Track) Track {
 		return TrackConflict
 	}
 	return member
+}
+
+func videoMember(path string) bool {
+	ft := (model.TorrentFile{Path: path}).FileType()
+	if ft.Valid && ft.FileType == model.FileTypeVideo {
+		return true
+	}
+	// Existing matcher/stage and anime parsers also support these containers
+	// outside the model's extension table; none may hide pack-member evidence.
+	switch model.FileExtensionFromPath(path).String {
+	case "m2ts", "webm", "ogm", "rmvb":
+		return true
+	}
+	return false
 }
 
 func loadInput(ctx context.Context, tx pgx.Tx, hash []byte, now time.Time, cfg AvailabilityConfig) (Input, error) {

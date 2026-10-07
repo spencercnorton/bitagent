@@ -182,7 +182,7 @@ func TestPostgresPackIncludesSupportedVideoMembersAndHeaderVeto(t *testing.T) {
 	ctx := context.Background()
 	store := NewStore(pool)
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	extensions := append(append([]string(nil), model.FileTypeVideo.Extensions()...), "m2ts")
+	extensions := append(append([]string(nil), model.FileTypeVideo.Extensions()...), "m2ts", "webm", "ogm", "rmvb")
 	for i, ext := range extensions {
 		t.Run(ext, func(t *testing.T) {
 			hash := make([]byte, 20)

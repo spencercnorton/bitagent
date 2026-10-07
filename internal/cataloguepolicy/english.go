@@ -44,11 +44,11 @@ var (
 	brackets          = regexp.MustCompile(`\[([^\]]+)\]`)
 	englishAudio      = regexp.MustCompile(`(?i)\b(?:eng(?:lish)?[ ._-]+(?:audio|dub(?:bed)?)|(?:audio|dub(?:bed)?)[ ._-]+eng(?:lish)?)\b`)
 	englishSubs       = regexp.MustCompile(`(?i)\b(?:eng(?:lish)?[ ._-]*(?:subs?|subtitles?)|(?:subs?|subtitles?)[ ._-]+eng(?:lish)?)\b`)
-	trackList         = regexp.MustCompile(`(?i)\b(audio|subs?|subtitles?)([ ._-]+only)?\s*:\s*([^;\]\)]+)`)
+	trackList         = regexp.MustCompile(`(?i)\b(audio|subs?|subtitles?)([ ._-]+only)?\s*:\s*`)
 	englishWord       = regexp.MustCompile(`(?i)\b(?:english|eng|en)\b`)
 	negatedEnglish    = regexp.MustCompile(`(?i)\b(?:(?:no|not|without|except|excluding)[ ._-]+(?:english|eng|en)|non[ ._-]?(?:english|eng|en)|(?:english|eng|en)[ ._-]+(?:absent|unavailable|excluded|not[ ._-]+(?:available|included|present)))\b`)
-	noAudio           = regexp.MustCompile(`(?i)\b(?:no[ ._-]+eng(?:lish)?[ ._-]+(?:audio|dub(?:bed)?)|(?:japanese|jpn|french|german|spanish|hindi)[ ._-]+audio[ ._-]+only)\b`)
-	noSubs            = regexp.MustCompile(`(?i)\b(?:no[ ._-]+eng(?:lish)?[ ._-]+(?:subs?|subtitles?)|no[ ._-]+(?:subs?|subtitles?))\b`)
+	noAudio           = regexp.MustCompile(`(?i)\b(?:(?:no|not|without)[ ._-]+eng(?:lish)?[ ._-]+(?:audio|dub(?:bed)?)|eng(?:lish)?[ ._-]+(?:audio|dub(?:bed)?)[ ._-]+(?:is[ ._-]+)?(?:absent|unavailable|excluded|not[ ._-]+(?:available|included|present))|(?:japanese|jpn|french|german|spanish|hindi)[ ._-]+audio[ ._-]+only)\b`)
+	noSubs            = regexp.MustCompile(`(?i)\b(?:(?:no|not|without)[ ._-]+eng(?:lish)?[ ._-]+(?:subs?|subtitles?)|eng(?:lish)?[ ._-]+(?:subs?|subtitles?)[ ._-]+(?:is[ ._-]+)?(?:absent|unavailable|excluded|not[ ._-]+(?:available|included|present))|no[ ._-]+(?:subs?|subtitles?))\b`)
 	foreignWord       = regexp.MustCompile(`(?i)\b(?:japanese|jpn|ja|french|fra|fr|german|deu|de|spanish|spa|es|hindi|hin|hi|italian|ita|it|portuguese|por|pt|russian|rus|ru|chinese|zho|zh|korean|kor|ko)\b`)
 )
 
@@ -90,18 +90,39 @@ func ParseEnglishClaims(name, source string, at time.Time) EnglishEvidence {
 		for _, m := range noSubs.FindAllString(text, -1) {
 			add("subtitles", TrackNo, m)
 		}
-		for _, m := range trackList.FindAllStringSubmatch(text, -1) {
-			kind := strings.ToLower(m[1])
+		lists := trackList.FindAllStringSubmatchIndex(text, -1)
+		for i, m := range lists {
+			kind := strings.ToLower(text[m[2]:m[3]])
 			if kind != "audio" {
 				kind = "subtitles"
 			}
-			if negatedEnglish.MatchString(m[3]) {
-				add(kind, TrackNo, m[0])
+			end := len(text)
+			if i+1 < len(lists) {
+				end = lists[i+1][0]
 			}
-			if englishWord.MatchString(negatedEnglish.ReplaceAllString(m[3], "")) {
-				add(kind, TrackYes, m[0])
-			} else if m[2] != "" && foreignWord.MatchString(m[3]) {
-				add(kind, TrackNo, m[0])
+			if delimiter := strings.IndexAny(text[m[1]:end], ";])"); delimiter >= 0 {
+				end = m[1] + delimiter
+			}
+			claim := text[m[0]:end]
+			value := text[m[1]:end]
+			// Explicitly labelled claims for the other track type cannot
+			// supply this list's English language, even inside one clause.
+			if kind == "audio" {
+				value = noSubs.ReplaceAllString(value, "")
+				value = englishSubs.ReplaceAllString(value, "")
+				value = noAudio.ReplaceAllString(value, "")
+			} else {
+				value = noAudio.ReplaceAllString(value, "")
+				value = englishAudio.ReplaceAllString(value, "")
+				value = noSubs.ReplaceAllString(value, "")
+			}
+			if negatedEnglish.MatchString(value) {
+				add(kind, TrackNo, claim)
+			}
+			if englishWord.MatchString(negatedEnglish.ReplaceAllString(value, "")) {
+				add(kind, TrackYes, claim)
+			} else if m[4] >= 0 && foreignWord.MatchString(value) {
+				add(kind, TrackNo, claim)
 			}
 		}
 	}
