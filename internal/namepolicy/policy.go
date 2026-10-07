@@ -15,6 +15,7 @@ import (
 
 	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/telemetry/dualemit"
 )
 
 const Version = "release-name-policy-v1"
@@ -28,6 +29,7 @@ const (
 	ReasonCyrillic       = "cyrillic_release_name"
 	ReasonAdultComposite = "explicit_adult_name"
 	ReasonAdultType      = "explicit_adult_classification"
+	ReasonNotServed      = "not_served"
 )
 
 var ErrExcluded = errors.New("release excluded by name policy")
@@ -45,13 +47,16 @@ type Policy struct {
 	internalToken  SecretToken
 	terms          []*regexp.Regexp
 	strong         []bool
+	termNames      []string
+	explicitPairs  [][2]string
+	denied         *dualemit.CounterVec
 }
 
 func New(c Config) (*Policy, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
-	p := &Policy{enabled: c.Enabled, excluded: map[protocol.ID]struct{}{}, internalToken: c.InternalCheckToken}
+	p := &Policy{enabled: c.Enabled, excluded: map[protocol.ID]struct{}{}, internalToken: c.InternalCheckToken, denied: newDeniedMetric()}
 	for _, value := range c.ExcludedInfoHashes {
 		h, _ := protocol.ParseID(value)
 		p.excluded[h] = struct{}{}
@@ -60,9 +65,12 @@ func New(c Config) (*Policy, error) {
 		p.excludedHashes = append(p.excludedHashes, h)
 	}
 	sort.Slice(p.excludedHashes, func(i, j int) bool { return p.excludedHashes[i].String() < p.excludedHashes[j].String() })
-	for _, t := range specification().AdultTerms {
+	spec := specification()
+	p.explicitPairs = spec.ExplicitAdultPairs
+	for _, t := range spec.AdultTerms {
 		p.terms = append(p.terms, regexp.MustCompile(t.Pattern))
 		p.strong = append(p.strong, t.Strong)
+		p.termNames = append(p.termNames, t.Name)
 	}
 	return p, nil
 }
@@ -131,13 +139,19 @@ func (p *Policy) Evaluate(h protocol.ID, name string) Decision {
 		}
 	}
 	count, strong := 0, false
+	matched := map[string]bool{}
 	for i, t := range p.terms {
 		if t.MatchString(name) {
 			count++
 			strong = strong || p.strong[i]
+			matched[p.termNames[i]] = true
 		}
 	}
-	if count >= 2 && strong {
+	explicitPair := false
+	for _, pair := range p.explicitPairs {
+		explicitPair = explicitPair || (matched[pair[0]] && matched[pair[1]])
+	}
+	if (count >= 2 && strong) || explicitPair {
 		d.Eligible = false
 		d.Reason = ReasonAdultComposite
 	}
@@ -167,6 +181,7 @@ type Specification struct {
 	Han, Cyrillic             []RuneRange
 	AdultTerms                []Term
 	MinimumDistinctAdultTerms int
+	ExplicitAdultPairs        [][2]string
 }
 
 func (p *Policy) Specification() Specification { return specification() }
@@ -213,12 +228,19 @@ func termPattern(words ...string) string {
 }
 
 func specification() Specification {
-	s := Specification{Version: Version, UnicodeVersion: unicode.Version, Whitespace: catalogueguard.TagWhitespace, Han: scriptRanges(unicode.Han), Cyrillic: scriptRanges(unicode.Cyrillic), MinimumDistinctAdultTerms: 2}
-	for _, w := range []string{"fetish", "porno", "hentai", "milf", "anal", "blowjob", "gangbang", "bukkake", "cumshot"} {
+	s := Specification{Version: Version, UnicodeVersion: unicode.Version, Whitespace: catalogueguard.TagWhitespace, Han: scriptRanges(unicode.Han), Cyrillic: scriptRanges(unicode.Cyrillic), MinimumDistinctAdultTerms: 2, ExplicitAdultPairs: [][2]string{{"porn", "xxx"}, {"porno", "xxx"}}}
+	// Fetish is the owner's explicit anchor; the other strong anchors are
+	// acts from the existing precision-qualified tier. Anal/MILF/Porno remain
+	// ambiguous title vocabulary and cannot supply strong evidence alone.
+	s.AdultTerms = append(s.AdultTerms, Term{"fetish", termPattern("fetish", "fetishxxx", "fetishporn", "fetishporno"), true})
+	for _, w := range []string{"blowjob", "gangbang", "bukkake", "cumshot"} {
 		s.AdultTerms = append(s.AdultTerms, Term{w, termPattern(w), true})
 	}
-	s.AdultTerms = append(s.AdultTerms, Term{"porn", termPattern("porn", "p0rn", "pr0n"), true})
-	for _, w := range []string{"xxx", "adult", "nsfw", "hardcore"} {
+	s.AdultTerms = append(s.AdultTerms, Term{"gaping_anal", termPattern("gapinganal"), true})
+	s.AdultTerms = append(s.AdultTerms, Term{"porn", termPattern("porn", "p0rn", "pr0n", "fetishporn", "pornxxx"), false})
+	s.AdultTerms = append(s.AdultTerms, Term{"porno", termPattern("porno", "fetishporno", "pornoxxx"), false})
+	s.AdultTerms = append(s.AdultTerms, Term{"xxx", termPattern("xxx", "fetishxxx", "pornxxx", "pornoxxx"), false})
+	for _, w := range []string{"hentai", "milf", "anal", "adult", "nsfw", "hardcore"} {
 		s.AdultTerms = append(s.AdultTerms, Term{w, termPattern(w), false})
 	}
 	s.AdultTerms = append(s.AdultTerms, Term{"sex", termPattern("sex", "s3x"), false})

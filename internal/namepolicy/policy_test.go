@@ -17,12 +17,49 @@ import (
 func TestReleaseNamePolicyExplicitScopeAndLookalikes(t *testing.T) {
 	p, err := New(Config{Enabled: true})
 	require.NoError(t, err)
-	for _, name := range []string{"Synthetic.电影.ENG.DUB.mkv", "Synthetic.Фильм.English.mkv", "Synthetic.Ж.2024.mkv", "Fetish.XXX.2024.mkv", "f.e.t.i.s.h.x-x-x.mkv", "FETISH+S3X.mkv", "Fetish\u00a0Porn.mkv", "Hentai.XXX.mkv", "Fetish.p0rn.mkv"} {
+	for _, name := range []string{
+		"Synthetic.电影.ENG.DUB.mkv",
+		"Synthetic.Фильм.English.mkv",
+		"Synthetic.Ж.2024.mkv",
+		"Fetish.XXX.2024.mkv",
+		"f.e.t.i.s.h.x-x-x.mkv",
+		"FETISH+S3X.mkv",
+		"Fetish\u00a0Porn.mkv",
+		"Fetish.p0rn.mkv",
+		"FetishXXX.mkv",
+		"F.e.t.i.s.h.X.X.X.mkv",
+		"FetishPorn.mkv",
+		"PornXXX.mkv",
+		"Porno.XXX.mkv",
+		"P0rn.X.X.X.mkv",
+		"Gaping.Anal.XXX.mkv",
+	} {
 		d := p.Evaluate(protocol.ID{}, name)
 		require.False(t, d.Eligible, name)
 		require.Equal(t, Version, d.Version)
 	}
-	for _, name := range []string{"Café.2024.ENG.mkv", "České.Film.2024.mkv", "Shen.Ming.2024.ENG.mkv", "Zhui.Qin.Ai.2024.mkv", "Synthetic.Greek.Α.ENG.mkv", "Synthetic.한국어.ENG.mkv", "xXx.2002.1080p.mkv", "xXx.Return.of.Xander.Cage.mkv", "Fetish.2024.Documentary.mkv", "Sex.Education.S01.mkv", "Hardcore.Henry.2015.mkv", "Caféfetish.xxx.mkv", "Fetish.xxxé.mkv", "FetishFiction.xxx.mkv", "pornography.2024.mkv"} {
+	for _, name := range []string{
+		"Café.2024.ENG.mkv",
+		"České.Film.2024.mkv",
+		"Shen.Ming.2024.ENG.mkv",
+		"Zhui.Qin.Ai.2024.mkv",
+		"Synthetic.Greek.Α.ENG.mkv",
+		"Synthetic.한국어.ENG.mkv",
+		"xXx.2002.1080p.mkv",
+		"xXx.Return.of.Xander.Cage.mkv",
+		"Fetish.2024.Documentary.mkv",
+		"Sex.Education.S01.mkv",
+		"Hardcore.Henry.2015.mkv",
+		"Caféfetish.xxx.mkv",
+		"Fetish.xxxé.mkv",
+		"FetishFiction.xxx.mkv",
+		"pornography.2024.mkv",
+		"South.Park.Cartman.Gets.an.Anal.Probe.Season.XXX.mkv",
+		"MILF.2018.adult.comedy.mkv",
+		"Porno.2019.Adult.Comedy.mkv",
+		"Hentai.Documentary.XXX.mkv",
+		"FétishXXX.mkv",
+	} {
 		d := p.Evaluate(protocol.ID{}, name)
 		require.True(t, d.Eligible, name)
 	}

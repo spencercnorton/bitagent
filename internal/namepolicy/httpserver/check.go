@@ -115,6 +115,7 @@ func CheckName(p *namepolicy.Policy) gin.HandlerFunc {
 				}
 			}
 			decision := p.Evaluate(hash, item.Name)
+			p.Observe("private_name_check", decision)
 			results = append(results, Result{index, decision.Eligible, decision.Reason, decision.Version})
 		}
 		c.JSON(http.StatusOK, Response{Enabled: true, Version: namepolicy.Version, Results: results})
