@@ -670,6 +670,18 @@ func recoveryMigrationProvider(t *testing.T, pool *pgxpool.Pool) *goose.Provider
 	require.NoError(t, err)
 	return provider
 }
+
+// These guards protect the recovery foundation's 59 -> 58 boundary. Newer
+// independent migrations may legitimately unwind before that boundary; capture
+// the before-state only after reaching it so every rejection assertion remains
+// about the protected recovery operation and its migration receipt.
+func recoveryFoundationProvider(t *testing.T, pool *pgxpool.Pool) *goose.Provider {
+	t.Helper()
+	provider := recoveryMigrationProvider(t, pool)
+	_, err := provider.DownTo(ctx, 59)
+	require.NoError(t, err)
+	return provider
+}
 func recoveryHistory(t *testing.T, pool *pgxpool.Pool) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -684,7 +696,7 @@ func TestPostgresRecoveryDowngradeRetainsRemovedRestoredExpiredAndBudgets(t *tes
 	for _, state := range []string{"removed", "restored", "expired", "snapshot_budget_only", "payload_budget_only"} {
 		t.Run(state, func(t *testing.T) {
 			pool := recoveryPool(t)
-			provider := recoveryMigrationProvider(t, pool)
+			provider := recoveryFoundationProvider(t, pool)
 			h := hash(92)
 			seed(t, pool, h, false)
 			now := time.Now().UTC()
@@ -729,7 +741,7 @@ func TestPostgresRecoveryDowngradeRetainsRemovedRestoredExpiredAndBudgets(t *tes
 }
 func TestPostgresRecoveryEmptyDowngradeAndRetry(t *testing.T) {
 	pool := recoveryPool(t)
-	provider := recoveryMigrationProvider(t, pool)
+	provider := recoveryFoundationProvider(t, pool)
 	h := hash(93)
 	seed(t, pool, h, true)
 	before := raw(t, pool, h)
@@ -751,7 +763,7 @@ func TestPostgresRecoveryEmptyDowngradeAndRetry(t *testing.T) {
 
 func TestPostgresRecoveryDowngradeSerializesWithPendingBudgetWriter(t *testing.T) {
 	pool := recoveryPool(t)
-	provider := recoveryMigrationProvider(t, pool)
+	provider := recoveryFoundationProvider(t, pool)
 	h := hash(94)
 	seed(t, pool, h, true)
 	before := raw(t, pool, h)
@@ -1049,4 +1061,43 @@ func TestPostgresRestoredBloomTagPrivacyPreservesPublicAuthority(t *testing.T) {
 			check(" \t"+strings.ToUpper(prefix)+separator+"synthetic\r\n", prefix == "bitgrab")
 		}
 	}
+}
+
+func TestPostgresGroupedPagingIndexMigrationPreservesCatalogueAndRecovery(t *testing.T) {
+	pool := recoveryPool(t)
+	provider := recoveryMigrationProvider(t, pool)
+	h := hash(110)
+	seed(t, pool, h, true)
+	before := raw(t, pool, h)
+	history := recoveryHistory(t, pool)
+	delete(history, "goose_db_version") // A successful index migration records its own version.
+	checkHistory := func() {
+		current := recoveryHistory(t, pool)
+		delete(current, "goose_db_version")
+		require.Equal(t, history, current)
+	}
+	indexExists := func() bool {
+		var exists bool
+		require.NoError(t, pool.QueryRow(ctx, `select exists(select 1 from pg_indexes where schemaname=current_schema() and indexname='torrent_contents_matched_seeder_page_idx')`).Scan(&exists))
+		return exists
+	}
+	require.True(t, indexExists())
+	down, err := provider.DownTo(ctx, 59)
+	require.NoError(t, err)
+	require.Len(t, down, 1)
+	require.False(t, indexExists())
+	require.Equal(t, before, raw(t, pool, h))
+	checkHistory()
+	up, err := provider.UpTo(ctx, 60)
+	require.NoError(t, err)
+	require.Len(t, up, 1)
+	require.True(t, indexExists())
+	require.Equal(t, before, raw(t, pool, h))
+	checkHistory()
+	var valid bool
+	var definition string
+	require.NoError(t, pool.QueryRow(ctx, `select i.indisvalid,pg_get_indexdef(i.indexrelid) from pg_index i join pg_class c on c.oid=i.indexrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname=current_schema() and c.relname='torrent_contents_matched_seeder_page_idx'`).Scan(&valid, &definition))
+	require.True(t, valid)
+	require.Contains(t, definition, "INCLUDE (content_type, content_source, content_id)")
+	require.Contains(t, definition, "WHERE (content_id IS NOT NULL)")
 }
