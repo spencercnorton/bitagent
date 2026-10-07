@@ -1,6 +1,7 @@
 package serving
 
 import (
+	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"strings"
 	"testing"
 
@@ -18,7 +19,13 @@ func TestPolicyOffRetainsQuarantineGuardWithoutAdultCriteria(t *testing.T) {
 		require.Contains(t, expr.SQL, "serving_q.torrent_snapshot->>'name'")
 		require.NotContains(t, expr.SQL, "expired_at")
 		require.NotContains(t, expr.SQL, "serving_tc")
-		require.Empty(t, expr.Vars)
+		require.Contains(t, expr.SQL, "private = FALSE")
+		require.Contains(t, expr.SQL, "label_evidence")
+		require.Contains(t, expr.SQL, "torrent_canonical_labels")
+		require.Len(t, expr.Vars, 6)
+		for _, value := range expr.Vars {
+			require.Equal(t, catalogueguard.TagWhitespace, value)
+		}
 	}
 	require.Equal(t, "TRUE", p.ContentCondition().SQL)
 }
