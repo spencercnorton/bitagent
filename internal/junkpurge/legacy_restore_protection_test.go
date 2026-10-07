@@ -98,3 +98,59 @@ func TestPostgresLegacyRestoreSeesPrivateAuthorityBeforeFirstSnapshot(t *testing
 	require.NoError(t, pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM torrents) OR EXISTS(SELECT 1 FROM queue_jobs) OR EXISTS(SELECT 1 FROM torrent_verdict_events WHERE verdict='restored')`).Scan(&changed))
 	require.False(t, changed)
 }
+
+func TestPostgresLegacyRestoreDoesNotProjectOversizedSnapshot(t *testing.T) {
+	for _, kind := range []string{"bytes", "rows"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx, pool, vs := expiryIntegrationPool(t)
+			h := expiryHash(44)
+			seedExpirySnapshot(t, ctx, pool, vs, h)
+			update := `UPDATE junkpurge_quarantine SET files_snapshot=(SELECT jsonb_agg(0) FROM generate_series(1,65536)) WHERE info_hash=$1`
+			if kind == "bytes" {
+				update = `UPDATE junkpurge_quarantine SET torrent_snapshot=jsonb_set(torrent_snapshot,'{name}',to_jsonb(repeat('x',67108865))) WHERE info_hash=$1`
+			}
+			_, err := pool.Exec(ctx, update, h)
+			require.NoError(t, err)
+			var torrent, files, sources []byte
+			var observed time.Time
+			var snapshotBytes, snapshotRows int64
+			require.NoError(t, pool.QueryRow(ctx, boundedLegacySnapshotSQL, h, legacySnapshotMaxBytes, legacySnapshotMaxRows).Scan(&torrent, &files, &sources, &observed, &snapshotBytes, &snapshotRows))
+			require.Nil(t, torrent)
+			require.Nil(t, files)
+			require.Nil(t, sources)
+			err = RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h))
+			require.ErrorIs(t, err, cataloguerecovery.ErrCapacity)
+			var modified bool
+			require.NoError(t, pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM torrents) OR EXISTS(SELECT 1 FROM queue_jobs) OR NOT EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=$1)`, h).Scan(&modified))
+			require.False(t, modified)
+		})
+	}
+}
+
+func TestPostgresLegacyRestoreBoundsSnapshotRefreshedBeforeLock(t *testing.T) {
+	ctx, pool, vs := expiryIntegrationPool(t)
+	h := expiryHash(45)
+	seedExpirySnapshot(t, ctx, pool, vs, h)
+	_, err := pool.Exec(ctx, `CREATE FUNCTION synthetic_restore_capacity_barrier() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN PERFORM pg_advisory_xact_lock(9459,1); RETURN NEW; END$$;
+CREATE TRIGGER restore_capacity_barrier BEFORE INSERT ON torrents FOR EACH ROW EXECUTE FUNCTION synthetic_restore_capacity_barrier()`)
+	require.NoError(t, err)
+	actor, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = actor.Rollback(ctx) })
+	_, err = actor.Exec(ctx, `SELECT pg_advisory_xact_lock(9459,1)`)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() { done <- RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
+	require.Eventually(t, func() bool {
+		var waiting bool
+		err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%INSERT INTO torrents (info_hash, name, size, private%')`).Scan(&waiting)
+		return err == nil && waiting
+	}, time.Second, 10*time.Millisecond)
+	_, err = actor.Exec(ctx, `UPDATE junkpurge_quarantine SET files_snapshot=(SELECT jsonb_agg(0) FROM generate_series(1,65536)) WHERE info_hash=$1`, h)
+	require.NoError(t, err)
+	require.NoError(t, actor.Commit(ctx))
+	require.ErrorIs(t, <-done, cataloguerecovery.ErrCapacity)
+	var modified bool
+	require.NoError(t, pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM torrents) OR EXISTS(SELECT 1 FROM queue_jobs) OR EXISTS(SELECT 1 FROM torrent_verdict_events WHERE verdict='restored')`).Scan(&modified))
+	require.False(t, modified)
+}

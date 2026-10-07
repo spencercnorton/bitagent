@@ -64,6 +64,22 @@ LIMIT $2 OFFSET $3`, quarantineDays, limit, offset)
 	return out, total, rows.Err()
 }
 
+// Evaluate bounds and project the corresponding payload in one MVCC statement.
+// The locked re-read uses the same projection so a refreshed oversized snapshot
+// cannot be materialized before its version/capacity refusal.
+const boundedLegacySnapshotSQL = `SELECT
+CASE WHEN b.bytes <= $2 AND b.rows <= $3 THEN q.torrent_snapshot END,
+CASE WHEN b.bytes <= $2 AND b.rows <= $3 THEN q.files_snapshot END,
+CASE WHEN b.bytes <= $2 AND b.rows <= $3 THEN q.sources_snapshot END,
+q.quarantined_at,b.bytes,b.rows
+FROM junkpurge_quarantine q CROSS JOIN LATERAL (
+SELECT octet_length(q.torrent_snapshot::text)+coalesce(octet_length(q.files_snapshot::text),0)+coalesce(octet_length(q.sources_snapshot::text),0) AS bytes,
+1+coalesce(jsonb_array_length(q.files_snapshot),0)+coalesce(jsonb_array_length(q.sources_snapshot),0) AS rows
+) b WHERE q.info_hash=$1`
+
+const legacySnapshotMaxBytes = 64 << 20
+const legacySnapshotMaxRows = 65536
+
 // RestoreQuarantined restores torrent, files and retained authentic sources,
 // records local restore provenance with unknown counts, and queues a rematch
 // atomically with removing the snapshot. Legacy snapshots without sources work
@@ -100,21 +116,14 @@ LOCK TABLE torrent_verdict_state,torrent_verdict_events IN SHARE ROW EXCLUSIVE M
 		return err
 	}
 	var snapshotBytes, snapshotRows int64
-	if err := tx.QueryRow(ctx, `SELECT octet_length(torrent_snapshot::text)+coalesce(octet_length(files_snapshot::text),0)+coalesce(octet_length(sources_snapshot::text),0),
-1+coalesce(jsonb_array_length(files_snapshot),0)+coalesce(jsonb_array_length(sources_snapshot),0)
-FROM junkpurge_quarantine WHERE info_hash=$1`, ihBytes).Scan(&snapshotBytes, &snapshotRows); err != nil {
-		return fmt.Errorf("quarantine entry not found: %w", err)
-	}
-	if snapshotBytes > 64<<20 || snapshotRows > 65536 {
-		return cataloguerecovery.ErrCapacity
-	}
-
 	var torrentSnap, filesSnap, sourcesSnap []byte
 	var quarantinedAt time.Time
-	if err := tx.QueryRow(ctx,
-		`SELECT torrent_snapshot, files_snapshot, sources_snapshot, quarantined_at FROM junkpurge_quarantine WHERE info_hash = $1`,
-		ihBytes).Scan(&torrentSnap, &filesSnap, &sourcesSnap, &quarantinedAt); err != nil {
+	if err := tx.QueryRow(ctx, boundedLegacySnapshotSQL, ihBytes, legacySnapshotMaxBytes, legacySnapshotMaxRows).
+		Scan(&torrentSnap, &filesSnap, &sourcesSnap, &quarantinedAt, &snapshotBytes, &snapshotRows); err != nil {
 		return fmt.Errorf("quarantine entry not found: %w", err)
+	}
+	if snapshotBytes > legacySnapshotMaxBytes || snapshotRows > legacySnapshotMaxRows {
+		return cataloguerecovery.ErrCapacity
 	}
 	var bound bool
 	if err := tx.QueryRow(ctx, `SELECT (jsonb_populate_record(null::torrents,$2::jsonb)).info_hash=$1
@@ -142,10 +151,12 @@ ON CONFLICT (info_hash) DO NOTHING`, torrentSnap); err != nil {
 	}
 	var currentTorrent, currentFiles, currentSources []byte
 	var currentQuarantinedAt time.Time
-	if err := tx.QueryRow(ctx, `SELECT torrent_snapshot, files_snapshot, sources_snapshot, quarantined_at
-FROM junkpurge_quarantine WHERE info_hash=$1 FOR UPDATE`, ihBytes).
-		Scan(&currentTorrent, &currentFiles, &currentSources, &currentQuarantinedAt); err != nil {
+	if err := tx.QueryRow(ctx, boundedLegacySnapshotSQL+` FOR UPDATE OF q`, ihBytes, legacySnapshotMaxBytes, legacySnapshotMaxRows).
+		Scan(&currentTorrent, &currentFiles, &currentSources, &currentQuarantinedAt, &snapshotBytes, &snapshotRows); err != nil {
 		return fmt.Errorf("quarantine entry not found: %w", err)
+	}
+	if snapshotBytes > legacySnapshotMaxBytes || snapshotRows > legacySnapshotMaxRows {
+		return cataloguerecovery.ErrCapacity
 	}
 	if !quarantinedAt.Equal(currentQuarantinedAt) || !bytes.Equal(torrentSnap, currentTorrent) ||
 		!bytes.Equal(filesSnap, currentFiles) || !bytes.Equal(sourcesSnap, currentSources) {
@@ -168,10 +179,28 @@ FROM torrents t CROSS JOIN jsonb_populate_record(null::torrents,$2::jsonb) s WHE
 		return cataloguerecovery.ErrConflict
 	}
 	var tagCount, tagBytes int64
+	// Lock existing tags without returning their names first. The raw parent
+	// lock excludes inserts; these SHARE locks exclude edits between the byte
+	// measurement and the subsequent bounded name read.
+	tagLocks, err := tx.Query(ctx, `SELECT 1 FROM torrent_tags WHERE info_hash=$1 LIMIT 65537 FOR SHARE`, ihBytes)
+	if err != nil {
+		return err
+	}
+	for tagLocks.Next() {
+		tagCount++
+	}
+	err = tagLocks.Err()
+	tagLocks.Close()
+	if err != nil {
+		return err
+	}
+	if tagCount > legacySnapshotMaxRows {
+		return cataloguerecovery.ErrCapacity
+	}
 	if err := tx.QueryRow(ctx, `SELECT count(*),coalesce(sum(octet_length(name)),0) FROM (SELECT name FROM torrent_tags WHERE info_hash=$1 LIMIT 65537) bounded`, ihBytes).Scan(&tagCount, &tagBytes); err != nil {
 		return err
 	}
-	if tagCount > 65536 || tagBytes > 64<<20 {
+	if tagCount > legacySnapshotMaxRows || tagBytes > legacySnapshotMaxBytes {
 		return cataloguerecovery.ErrCapacity
 	}
 	tags, err := tx.Query(ctx, `SELECT name FROM torrent_tags WHERE info_hash=$1 LIMIT 65537 FOR SHARE`, ihBytes)

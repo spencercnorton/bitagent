@@ -361,7 +361,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		return err
 	}
 
-	// Count only successful removal transitions, never held decisions. The
+	// Count fully successful removal calls, never held decisions. The
 	// shared writer owns the bound verdict; do not overwrite it after commit.
 	for _, observation := range deleteObservations {
 		c.deleteMetrics.Observe(observation.contentType, observation.err)

@@ -7,7 +7,7 @@
   controlled and embedding attempts, excluding admission, cache and replay.
 - Fail closed on unqualified catalogue removal and crawler blocks. Route
   processor and content-type purge removal through the complete recovery
-  writer, retain ordinary keep/review work, and count only committed deletes.
+  writer, retain ordinary keep/review work, and count fully successful calls.
 - Hold legacy retention and both junk-quarantine writers before partial capture
   can discard source rows. Retain paid Batch receipts, historical quarantine
   maintenance and restore support without reporting held actions as applied.
