@@ -34,6 +34,8 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/processor"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -41,10 +43,11 @@ import (
 
 type Params struct {
 	fx.In
-	Dao      lazy.Lazy[*dao.Query]
-	Runner   lazy.Lazy[classifier.Runner]
-	LLMMatch *llmmatch.Client
-	Logger   *zap.SugaredLogger
+	NamePolicy *namepolicy.Policy `optional:"true"`
+	Dao        lazy.Lazy[*dao.Query]
+	Runner     lazy.Lazy[classifier.Runner]
+	LLMMatch   *llmmatch.Client
+	Logger     *zap.SugaredLogger
 }
 
 type Result struct {
@@ -120,6 +123,7 @@ func (p Params) action(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	ctx.Context = processor.WithNameAdmission(ctx.Context, d, p.NamePolicy)
 	runner, err := p.Runner.Get()
 	if err != nil {
 		return err
@@ -183,6 +187,14 @@ func (p Params) action(ctx *cli.Context) error {
 			return ctx.Context.Err()
 		}
 
+		d, admissionErr := p.NamePolicy.AdmitContext(ctx.Context, tc.InfoHash, tc.Torrent.Name, "")
+		if admissionErr != nil {
+			return admissionErr
+		}
+		if !d.Eligible {
+			p.NamePolicy.Observe("classifier", d)
+			continue
+		}
 		dec, decErr := runner.EvalMatch(ctx.Context, tc.Torrent, tc.ContentType)
 
 		rec := evalRecord{
@@ -254,7 +266,7 @@ func (p Params) loadSample(ctx *cli.Context, d *dao.Query, typeNames []string) (
 		if len(ids) == 0 {
 			return nil, fmt.Errorf("sample file %q is empty", path)
 		}
-		return d.TorrentContent.WithContext(ctx.Context).
+		return d.TorrentContent.WithContext(ctx.Context).Scopes(processor.NamePolicyScope(p.NamePolicy)).
 			Preload(d.TorrentContent.Torrent).
 			Preload(d.TorrentContent.Torrent.Files).
 			Where(d.TorrentContent.ID.In(ids...)).
@@ -266,7 +278,7 @@ func (p Params) loadSample(ctx *cli.Context, d *dao.Query, typeNames []string) (
 	if limit <= 0 {
 		limit = 300
 	}
-	return d.TorrentContent.WithContext(ctx.Context).
+	return d.TorrentContent.WithContext(ctx.Context).Scopes(processor.NamePolicyScope(p.NamePolicy)).
 		Preload(d.TorrentContent.Torrent).
 		Preload(d.TorrentContent.Torrent.Files).
 		Where(

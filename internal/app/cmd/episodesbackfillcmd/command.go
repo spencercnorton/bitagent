@@ -25,6 +25,8 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/processor"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -44,6 +46,7 @@ var candidateNameRegex = regexp.MustCompile(
 
 type Params struct {
 	fx.In
+	NamePolicy       *namepolicy.Policy `optional:"true"`
 	Dao              lazy.Lazy[*dao.Query]
 	ClassifierConfig classifier.Config
 	Logger           *zap.SugaredLogger
@@ -127,7 +130,7 @@ func (p Params) action(ctx *cli.Context) error {
 			remaining = limit - st.scanned
 		}
 
-		rows, findErr := d.TorrentContent.WithContext(ctx.Context).
+		rows, findErr := d.TorrentContent.WithContext(ctx.Context).Scopes(processor.NamePolicyScope(p.NamePolicy)).
 			Select(
 				d.TorrentContent.ID,
 				d.TorrentContent.InfoHash,
@@ -160,7 +163,7 @@ func (p Params) action(ctx *cli.Context) error {
 		}
 
 		if write && len(changes) > 0 {
-			if updErr := applyCorrections(ctx.Context, d, changes); updErr != nil {
+			if updErr := applyCorrections(ctx.Context, d, changes, func(tx *dao.Query) error { return processor.GuardNameRows(ctx.Context, tx, p.NamePolicy, rows) }); updErr != nil {
 				return updErr
 			}
 		}
@@ -243,8 +246,13 @@ func (p Params) computeChanges(rows []*model.TorrentContent, st *runStats) []cha
 // release_granularity for the changed rows. UpdateColumn is used deliberately
 // so the backfill does NOT bump updated_at — this is a metadata correction,
 // not a re-classification.
-func applyCorrections(ctx context.Context, d *dao.Query, changes []change) error {
+func applyCorrections(ctx context.Context, d *dao.Query, changes []change, guards ...func(*dao.Query) error) error {
 	return d.Transaction(func(tx *dao.Query) error {
+		for _, guard := range guards {
+			if err := guard(tx); err != nil {
+				return err
+			}
+		}
 		for _, c := range changes {
 			if _, err := tx.TorrentContent.WithContext(ctx).
 				Where(d.TorrentContent.ID.Eq(c.id)).

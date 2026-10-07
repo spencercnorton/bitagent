@@ -29,6 +29,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/processor"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/urfave/cli/v2"
@@ -42,10 +43,11 @@ const consecutiveFailureLimit = 5
 
 type Params struct {
 	fx.In
-	Dao       lazy.Lazy[*dao.Query]
-	Processor lazy.Lazy[processor.Processor]
-	LLMMatch  *llmmatch.Client
-	Logger    *zap.SugaredLogger
+	NamePolicy *namepolicy.Policy `optional:"true"`
+	Dao        lazy.Lazy[*dao.Query]
+	Processor  lazy.Lazy[processor.Processor]
+	LLMMatch   *llmmatch.Client
+	Logger     *zap.SugaredLogger
 }
 
 type Result struct {
@@ -100,6 +102,7 @@ func (p Params) action(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	ctx.Context = processor.WithNameAdmission(ctx.Context, d, p.NamePolicy)
 
 	pr, err := p.Processor.Get()
 	if err != nil {
@@ -140,7 +143,7 @@ func (p Params) action(ctx *cli.Context) error {
 	lastID := ""
 
 	for limit <= 0 || st.submitted < limit {
-		rows, findErr := d.TorrentContent.WithContext(ctx.Context).
+		rows, findErr := d.TorrentContent.WithContext(ctx.Context).Scopes(processor.NamePolicyScope(p.NamePolicy)).
 			Preload(d.TorrentContent.Torrent).
 			Preload(d.TorrentContent.Torrent.Files).
 			Where(

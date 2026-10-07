@@ -12,6 +12,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/processor"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/urfave/cli/v2"
@@ -23,6 +24,7 @@ const consecutiveFailureLimit = 5
 
 type Params struct {
 	fx.In
+	NamePolicy       *namepolicy.Policy `optional:"true"`
 	ClassifierConfig classifier.Config
 	Dao              lazy.Lazy[*dao.Query]
 	Processor        lazy.Lazy[processor.Processor]
@@ -95,6 +97,7 @@ func (p Params) action(ctx *cli.Context) error {
 	if err != nil {
 		return err
 	}
+	ctx.Context = processor.WithNameAdmission(ctx.Context, d, p.NamePolicy)
 
 	contentTypes, err := getContentTypes(ctx)
 	if err != nil {
@@ -139,7 +142,7 @@ func (p Params) action(ctx *cli.Context) error {
 	minSeeders := ctx.Int("minSeeders")
 
 	for limit <= 0 || st.submitted < limit {
-		q := d.TorrentContent.WithContext(ctx.Context).
+		q := d.TorrentContent.WithContext(ctx.Context).Scopes(processor.NamePolicyScope(p.NamePolicy)).
 			Preload(d.TorrentContent.Torrent).
 			Preload(d.TorrentContent.Torrent.Files).
 			Preload(d.TorrentContent.Torrent.Hint).
@@ -237,6 +240,11 @@ func (p Params) dryRunPage(
 	st *runStats,
 ) {
 	for _, t := range torrents {
+		d, admissionErr := p.NamePolicy.AdmitContext(ctx, t.InfoHash, t.Name, "")
+		if admissionErr != nil || !d.Eligible {
+			p.NamePolicy.Observe("classifier", d)
+			continue
+		}
 		cl, err := runner.Run(ctx, p.ClassifierConfig.Workflow, flags, t)
 		switch {
 		case errors.Is(err, classification.ErrDeleteTorrent):

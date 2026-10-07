@@ -9,10 +9,56 @@ import (
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/protocol"
+	"gorm.io/gen"
+	"gorm.io/gen/field"
 	"gorm.io/gorm/clause"
 	"sort"
 	"time"
 )
+
+type namePolicyCondition struct {
+	field.Expr
+	condition clause.Expr
+}
+
+func (c namePolicyCondition) BeCond() interface{} { return c.condition }
+func (c namePolicyCondition) CondError() error    { return nil }
+
+// NamePolicyScope admits existing content rows using the shared declaration and
+// any current adult row on their hash before files or metadata are hydrated.
+// The table/column expressions are fixed backend identifiers, never caller text.
+func NamePolicyScope(p *namepolicy.Policy) func(gen.Dao) gen.Dao {
+	return func(db gen.Dao) gen.Dao {
+		if !p.Enabled() {
+			return db
+		}
+		condition, args := p.AllowsSQL("name_source.name", "name_source.info_hash")
+		return db.Where(namePolicyCondition{Expr: field.EmptyExpr(), condition: clause.Expr{SQL: `EXISTS(SELECT 1 FROM torrents name_source WHERE name_source.info_hash=torrent_contents.info_hash AND (` + condition + `) AND NOT EXISTS(SELECT 1 FROM torrent_contents adult_source WHERE adult_source.info_hash=name_source.info_hash AND adult_source.content_type='xxx'))`, Vars: args}})
+	}
+}
+
+// WithNameAdmission reuses the processor's current stored name/classification
+// and independent privacy reader at direct provider boundaries.
+func WithNameAdmission(ctx context.Context, d *dao.Query, p *namepolicy.Policy) context.Context {
+	if !p.Enabled() {
+		return ctx
+	}
+	return namepolicy.WithAdmission(ctx, (processor{dao: d, namePolicy: p}).providerNameAdmission)
+}
+
+// GuardNameRows protects a selected maintenance batch in its actual write
+// transaction. It checks the captured name and ANY current adult row without
+// changing original non-NULL claims, protections or provider allowances.
+func GuardNameRows(ctx context.Context, tx *dao.Query, p *namepolicy.Policy, rows []*model.TorrentContent) error {
+	if !p.Enabled() {
+		return nil
+	}
+	names := map[protocol.ID]string{}
+	for _, row := range rows {
+		names[row.InfoHash] = row.Torrent.Name
+	}
+	return (processor{dao: tx, namePolicy: p}).guardNameApplications(ctx, tx, names)
+}
 
 // Resolve minimum authoritative names before loading files, attached metadata
 // or running the classifier. Denial is a terminal no-op, never a delete/retry.
