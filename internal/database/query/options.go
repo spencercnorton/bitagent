@@ -54,6 +54,10 @@ type TableJoin struct {
 	//revive:disable-next-line:nested-structs
 	Dependencies maps.InsertMap[string, struct{}]
 	Required     bool
+	// AtMostOne promises that the complete ON predicate matches a target
+	// unique key, producing at most one joined row per input row. Unknown or
+	// replacement joins leave this false and use the original grouped query.
+	AtMostOne bool
 }
 
 func Table(name string) Option {
@@ -112,6 +116,22 @@ func Group(columns ...clause.Column) Option {
 func GroupByDistinctOn(distinctOnSQL, innerOrderSQL string) Option {
 	return func(ctx OptionBuilder) (OptionBuilder, error) {
 		return ctx.GroupByDistinctOn(distinctOnSQL, innerOrderSQL), nil
+	}
+}
+
+// GroupedCandidatePrefix enables the bounded representative search for the
+// schema-backed matched torrent grouping. The caller also supplies its matched
+// content_id predicate; schema checks then guarantee non-NULL type and ID keys.
+func GroupedCandidatePrefix() Option {
+	return func(ctx OptionBuilder) (OptionBuilder, error) {
+		b, ok := ctx.(optionBuilder)
+		if !ok || b.grouping == nil {
+			return ctx, nil
+		}
+		spec := *b.grouping
+		spec.candidatePrefix = true
+		b.grouping = &spec
+		return b, nil
 	}
 }
 

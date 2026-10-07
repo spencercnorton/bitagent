@@ -77,7 +77,8 @@ func TorrentContentCoreJoins() query.Option {
 					On: []field.Expr{
 						q.TorrentContent.InfoHash.EqCol(q.Torrent.InfoHash),
 					},
-					Type: query.TableJoinTypeInner,
+					Type:      query.TableJoinTypeInner,
+					AtMostOne: true, // full torrents primary key
 				},
 				{
 					Table: q.Content,
@@ -86,7 +87,8 @@ func TorrentContentCoreJoins() query.Option {
 						q.TorrentContent.ContentSource.EqCol(q.Content.Source),
 						q.TorrentContent.ContentID.EqCol(q.Content.ID),
 					},
-					Type: query.TableJoinTypeLeft,
+					Type:      query.TableJoinTypeLeft,
+					AtMostOne: true, // full content primary key
 				},
 			}
 		}),
@@ -129,6 +131,7 @@ const torrentContentGroupInnerOrderSQL = torrentContentGroupKeySQL +
 func TorrentContentGroupByContentOption() query.Option {
 	return query.Options(
 		query.GroupByDistinctOn(torrentContentGroupKeySQL, torrentContentGroupInnerOrderSQL),
+		query.GroupedCandidatePrefix(),
 		query.Where(query.DBCriteria{
 			SQL: model.TableNameTorrentContent + ".content_id IS NOT NULL",
 		}),

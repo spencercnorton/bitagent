@@ -20,6 +20,10 @@
 - Normalize independent privacy evidence when freezing or applying metadata
   repairs, including protected facts committed after the plan was frozen.
 
+- Select grouped pages from bounded ordered eligible prefixes, retaining the
+  exact highest-seeder representative and falling back to the complete grouped
+  query for short or unsupported shapes. Add an ordered matched paging index.
+
 - Measure matcher HTTP latency through bounded response reading and envelope
   decoding. Count model/stage outcomes and failures consistently for ordinary,
   controlled and embedding attempts, excluding admission, cache and replay.
