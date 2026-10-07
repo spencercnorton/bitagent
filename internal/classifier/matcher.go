@@ -3,6 +3,7 @@ package classifier
 import (
 	"context"
 	"errors"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"regexp"
 	"strconv"
 	"strings"
@@ -124,6 +125,9 @@ func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullC
 		(ct.ContentType != model.ContentTypeMovie && ct.ContentType != model.ContentTypeTvShow) {
 		return MatchDecision{Outcome: OutcomeWrongType}, nil
 	}
+	if err := lm.CheckNameAdmission(ctx, t); err != nil {
+		return MatchDecision{}, err
+	}
 	if !lm.Allow(ctx, t) {
 		return MatchDecision{Outcome: OutcomeGated}, nil
 	}
@@ -145,6 +149,9 @@ func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullC
 
 	// Stage 1 — extract canonical identity.
 	ext, err := lm.Extract(ctx, t)
+	if errors.Is(err, namepolicy.ErrExcluded) {
+		return MatchDecision{}, err
+	}
 	if err != nil && llmwork.ExecutionFrom(ctx) != nil {
 		return MatchDecision{}, err
 	}
@@ -303,6 +310,12 @@ func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullC
 				cands,
 				llmcapture.CandidateSourceLocal,
 			)
+			if errors.Is(rerr, namepolicy.ErrExcluded) {
+				return MatchDecision{}, rerr
+			}
+			if errors.Is(rerr, namepolicy.ErrExcluded) {
+				return MatchDecision{}, rerr
+			}
 			if rerr != nil && llmwork.ExecutionFrom(ctx) != nil {
 				return MatchDecision{}, rerr
 			}

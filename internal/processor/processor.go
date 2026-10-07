@@ -203,6 +203,9 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 			// Per-run sideband for the LLM matcher's English-track read —
 			// survives the find_match result discard on unmatched outcomes.
 			runCtx := llmwork.WithSourceTorrent(llmsignal.WithHolder(ctx), sourceTorrent)
+			if c.namePolicy.Enabled() {
+				runCtx = namepolicy.WithAdmission(runCtx, c.providerNameAdmission)
+			}
 
 			cl, classifyErr := c.runner.Run(runCtx, workflowName, params.ClassifierFlags, torrent)
 

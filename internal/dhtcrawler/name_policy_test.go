@@ -2,6 +2,7 @@ package dhtcrawler
 
 import (
 	"context"
+	mi "github.com/anacrolix/torrent/metainfo"
 	"net/netip"
 	"testing"
 
@@ -56,7 +57,7 @@ func TestOwnerHashDoesNotAcquireNameMetadata(t *testing.T) {
 func TestAllowedNameIgnoresForeignSupportPaths(t *testing.T) {
 	p, err := namepolicy.New(namepolicy.Config{Enabled: true})
 	require.NoError(t, err)
-	r := &policyRequester{info: metainfo.Info{Name: "Allowed.Café.ENG.mkv"}}
+	r := &policyRequester{info: metainfo.Info{Name: "Allowed.Café.ENG.mkv", Files: []mi.FileInfo{{Path: []string{"电影", "Субтитры.srt"}, Length: 10}}}}
 	b := &policyBanning{}
 	c := crawler{namePolicy: p, metainfoRequester: r, banningChecker: b, csamBlocklist: policyCsam{}}
 	_, err = c.doRequestMetaInfo(context.Background(), protocol.ID{1}, []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:1")})

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"net/http"
 	"time"
 
@@ -71,6 +73,11 @@ func (c *Client) callControlledWith(ctx context.Context, hc *http.Client, stage 
 	if err = llmwork.BeforeDispatch(ctx); err != nil {
 		_ = c.dispatch.DeferNoDispatch(ctx, lease, "source_changed", time.Now().UTC())
 		return nil, err
+	}
+	d, admissionErr := c.namePolicy.AdmitContext(ctx, model.Torrent{}.InfoHash, "", "")
+	if admissionErr != nil || !d.Eligible {
+		c.namePolicy.Observe("model_dispatch", d)
+		return nil, namepolicy.ErrExcluded
 	}
 	if err = c.dispatch.BeginDispatch(ctx, lease); err != nil {
 		return nil, err

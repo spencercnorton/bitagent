@@ -47,9 +47,9 @@ func LockedSource(ctx context.Context, tx pgx.Tx, task Task) (model.Torrent, err
 		}
 	}
 	var blocked bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=$1 AND source='qbittorrent' AND lower(category) IN('private','bitgrab'))
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM label_evidence WHERE info_hash=$1 AND `+catalogueguard.QBPrivacySQL("source", "category", "$2")+`)
 OR EXISTS(SELECT 1 FROM torrent_verdict_state WHERE info_hash=$1 AND verdict IN('quarantined','blacklisted','tombstoned'))
-OR EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=$1 AND expired_at IS NULL)`, task.InfoHash).Scan(&blocked)
+OR EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=$1 AND expired_at IS NULL)`, task.InfoHash, catalogueguard.TagWhitespace).Scan(&blocked)
 	if err != nil {
 		return t, err
 	}

@@ -358,9 +358,15 @@ func (c *Client) callEmbeddings(ctx context.Context, t model.Torrent, body []byt
 		if err := llmwork.BeforeDispatch(ctx); err != nil {
 			return nil, err
 		}
+		if !c.nameAllowed(ctx, t) {
+			return nil, namepolicy.ErrExcluded
+		}
 		if err := c.dispatch.BeginDispatch(ctx, lease); err != nil {
 			return nil, fmt.Errorf("%w: embedding dispatch fence: %v", llmcapture.ErrCaptureUnavailable, err)
 		}
+	}
+	if !c.nameAllowed(ctx, t) {
+		return nil, namepolicy.ErrExcluded
 	}
 	c.metrics.calls.WithLabelValues(c.cfg.Embeddings.Model, "embedding").Inc()
 	start := time.Now()

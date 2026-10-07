@@ -249,10 +249,13 @@ func (c *openaiClient) ClassifyWithResult(
 	ctx context.Context,
 	title string,
 ) (LLMVerdict, llmcapture.HTTPResult, error) {
-	d := c.namePolicy.EvaluateContext(ctx, protocol.ID{}, title, "")
-	if !d.Eligible {
+	d, admissionErr := c.namePolicy.AdmitContext(ctx, protocol.ID{}, title, "")
+	if admissionErr != nil || !d.Eligible {
 		c.namePolicy.Observe("model_dispatch", d)
 		return LLMVerdict{}, llmcapture.HTTPResult{ErrorClass: "name_policy"}, namepolicy.ErrExcluded
+	}
+	if _, exists := namepolicy.SourceFrom(ctx); !exists {
+		ctx = namepolicy.WithSource(ctx, protocol.ID{}, title, "")
 	}
 	const openAIDefaultBase = "https://api.openai.com/v1"
 	if c.apiKey == "" && c.baseURL == openAIDefaultBase {
@@ -287,6 +290,11 @@ func (c *openaiClient) doJSON(
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	d, admissionErr := c.namePolicy.AdmitContext(ctx, protocol.ID{}, "", "")
+	if admissionErr != nil || !d.Eligible {
+		c.namePolicy.Observe("model_dispatch", d)
+		return nil, llmcapture.HTTPResult{ErrorClass: "name_policy"}, namepolicy.ErrExcluded
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// Connection refused / DNS / timeout / context deadline —

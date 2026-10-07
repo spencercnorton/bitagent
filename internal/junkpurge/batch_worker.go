@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"net/url"
 	"os"
 	"strconv"
@@ -457,35 +458,30 @@ func (w *purgeWorker) reconcileBatchAttempt(
 			) {
 				return nil
 			}
-			safe, err := w.enforceBatchAttemptPrivacy(
-				ctx, pool, client, attempt,
-			)
+			safe, err := w.enforceBatchAttemptPrivacy(ctx, pool, client, attempt, func() error {
+				if err := w.captureBatchAttempt(ctx, pool, attempt); err != nil {
+
+					return fmt.Errorf("pre-upload evaluation capture: %w", err)
+				}
+				if err := setAttemptUploading(
+					ctx, pool, attempt.ID, w.batchLeaseOwner,
+				); err != nil {
+					return fmt.Errorf("mark uploading: %w", err)
+				}
+				var uploadErr error
+				file, uploadErr = client.UploadInputFile(
+					ctx, attempt.InputFilename, attempt.Payload,
+				)
+				if uploadErr != nil {
+					return fmt.Errorf("upload input file: %w", uploadErr)
+				}
+				return nil
+			})
 			if err != nil {
-				return fmt.Errorf("pre-upload privacy gate: %w", err)
+				return err
 			}
 			if !safe {
 				return nil
-			}
-			if err := w.captureBatchAttempt(ctx, pool, attempt); err != nil {
-				if errors.Is(err, errBatchCapturePrivacyBlocked) {
-					return failClaimedBatchAttempt(
-						ctx, pool, attempt.ID, w.batchLeaseOwner,
-						"evaluation_capture_privacy_blocked",
-						"evaluation capture observed private-tracker material before upload",
-					)
-				}
-				return fmt.Errorf("pre-upload evaluation capture: %w", err)
-			}
-			if err := setAttemptUploading(
-				ctx, pool, attempt.ID, w.batchLeaseOwner,
-			); err != nil {
-				return fmt.Errorf("mark uploading: %w", err)
-			}
-			file, err = client.UploadInputFile(
-				ctx, attempt.InputFilename, attempt.Payload,
-			)
-			if err != nil {
-				return fmt.Errorf("upload input file: %w", err)
 			}
 		}
 		if file.ID == "" {
@@ -560,42 +556,33 @@ func (w *purgeWorker) reconcileBatchAttempt(
 			) {
 				return nil
 			}
-			safe, err := w.enforceBatchAttemptPrivacy(
-				ctx, pool, client, attempt,
-			)
+			safe, err := w.enforceBatchAttemptPrivacy(ctx, pool, client, attempt, func() error {
+				if err := w.captureBatchAttempt(ctx, pool, attempt); err != nil {
+
+					return fmt.Errorf("pre-create evaluation capture: %w", err)
+				}
+				if err := setAttemptSubmitting(
+					ctx, pool, attempt.ID, w.batchLeaseOwner,
+				); err != nil {
+					return fmt.Errorf("mark submitting: %w", err)
+				}
+				var createErr error
+				job, createErr = client.CreateBatch(ctx, batchWorkerCreate{
+					InputFileID:      attempt.InputFileID,
+					Endpoint:         attempt.Endpoint,
+					CompletionWindow: attempt.CompletionWindow,
+					Metadata:         metadata,
+				})
+				if createErr != nil {
+					return fmt.Errorf("create provider batch: %w", createErr)
+				}
+				return nil
+			})
 			if err != nil {
-				return fmt.Errorf("pre-create privacy gate: %w", err)
+				return err
 			}
 			if !safe {
 				return nil
-			}
-			if err := w.captureBatchAttempt(ctx, pool, attempt); err != nil {
-				if errors.Is(err, errBatchCapturePrivacyBlocked) {
-					failErr := failClaimedBatchAttempt(
-						ctx, pool, attempt.ID, w.batchLeaseOwner,
-						"evaluation_capture_privacy_blocked",
-						"evaluation capture observed private-tracker material before Batch creation",
-					)
-					if failErr == nil {
-						w.cleanupBatchFiles(ctx, client, attempt.InputFileID)
-					}
-					return failErr
-				}
-				return fmt.Errorf("pre-create evaluation capture: %w", err)
-			}
-			if err := setAttemptSubmitting(
-				ctx, pool, attempt.ID, w.batchLeaseOwner,
-			); err != nil {
-				return fmt.Errorf("mark submitting: %w", err)
-			}
-			job, err = client.CreateBatch(ctx, batchWorkerCreate{
-				InputFileID:      attempt.InputFileID,
-				Endpoint:         attempt.Endpoint,
-				CompletionWindow: attempt.CompletionWindow,
-				Metadata:         metadata,
-			})
-			if err != nil {
-				return fmt.Errorf("create provider batch: %w", err)
 			}
 		}
 		if job.ID == "" || job.Status == "" {
@@ -674,34 +661,33 @@ func (w *purgeWorker) reconcileBatchAttempt(
 	return nil
 }
 
-// TRIPWIRE — KNOWN RESIDUAL TOCTOU, GATE THE BATCH CANARY ON IT.
-//
-// batchAttemptPrivacySafe commits its transaction before the upload and the
-// Batch-create POST, so a concurrent transaction can still set torrents.private
-// or insert qBittorrent private/bitgrab evidence in the window between the
-// check and provider egress. Re-checking at both provider boundaries narrows
-// that window but does not close it; only a lock/lease protocol honoured by
-// every native-private and qB evidence writer, or holding the relevant locks
-// across the POST under bounded timeouts, actually closes it.
-//
-// This is currently unreachable in production: JUNKPURGE_LLM_BATCH_ENABLED is
-// false and the deployment has never executed a provider Batch run. It must be
-// closed BEFORE the purge-disabled Batch canary enables admission, not before
-// the surrounding change merges. Do not enable Batch admission while this
-// comment is still here.
+// Provider admission keeps source locks across the bounded POST. GET-only
+// reconciliation of already submitted work remains available after a denial.
 func (w *purgeWorker) enforceBatchAttemptPrivacy(
 	ctx context.Context,
 	pool *pgxpool.Pool,
 	client batchWorkerClient,
 	attempt batchAttempt,
+	submit func() error,
 ) (bool, error) {
-	safe, err := batchAttemptPrivacySafe(
+	safe, err := withBatchAttemptAdmission(
 		ctx,
 		pool,
 		attempt.ID,
 		attempt.ItemCount,
-		w.batchLeaseOwner,
+		w.batchLeaseOwner, w.namePolicy, submit,
 	)
+	if errors.Is(err, namepolicy.ErrExcluded) || errors.Is(err, errBatchCapturePrivacyBlocked) {
+		code := "pre_provider_name_policy"
+		if errors.Is(err, errBatchCapturePrivacyBlocked) {
+			code = "evaluation_capture_privacy_blocked"
+		}
+		if e := failClaimedBatchAttempt(ctx, pool, attempt.ID, w.batchLeaseOwner, code, "current source policy blocked provider egress"); e != nil {
+			return false, e
+		}
+		w.deleteBatchInputFileDurably(ctx, pool, client, attempt)
+		return false, nil
+	}
 	if err != nil {
 		// DB uncertainty is a hard egress stop. The attempt remains durable and
 		// will be rechecked on a later reconcile; no provider POST follows.
@@ -916,7 +902,7 @@ func (w *purgeWorker) finalizeBatchRuns(
 			return ctx.Err()
 		}
 		summary, err := finalizeBatchRun(
-			ctx, pool, run, allowPurge,
+			ctx, pool, run, allowPurge, w.namePolicy,
 		)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("run %d: %w", run.ID, err))

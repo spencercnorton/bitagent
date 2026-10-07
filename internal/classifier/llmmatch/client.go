@@ -191,10 +191,16 @@ func (c *Client) nativePrivateBlocked(t model.Torrent) bool {
 // Allow runs the plausibility + privacy gates. Fails closed on privacy error.
 func (c *Client) SetNamePolicy(p *namepolicy.Policy) { c.namePolicy = p }
 
-func (c *Client) nameAllowed(ctx context.Context, t model.Torrent) bool {
-	d := c.namePolicy.EvaluateContext(ctx, t.InfoHash, t.Name, "")
+func (c *Client) CheckNameAdmission(ctx context.Context, t model.Torrent) error {
+	d, err := c.namePolicy.AdmitContext(ctx, t.InfoHash, t.Name, "")
 	c.namePolicy.Observe("model", d)
-	return d.Eligible
+	if err != nil || !d.Eligible {
+		return namepolicy.ErrExcluded
+	}
+	return nil
+}
+func (c *Client) nameAllowed(ctx context.Context, t model.Torrent) bool {
+	return c.CheckNameAdmission(ctx, t) == nil
 }
 
 func (c *Client) Allow(ctx context.Context, t model.Torrent) bool {
@@ -925,8 +931,8 @@ func (c *Client) captureEnvelope(ctx context.Context, req llmcapture.Request) er
 }
 
 func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, user string, maxTokens int) ([]byte, error) {
-	d := c.namePolicy.EvaluateContext(ctx, model.Torrent{}.InfoHash, "", "")
-	if !d.Eligible {
+	d, admissionErr := c.namePolicy.AdmitContext(ctx, model.Torrent{}.InfoHash, "", "")
+	if admissionErr != nil || !d.Eligible {
 		c.namePolicy.Observe("model_dispatch", d)
 		return nil, namepolicy.ErrExcluded
 	}
@@ -991,7 +997,6 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, u
 		c.metrics.budgetSkips.WithLabelValues(reason).Inc()
 		return nil, ErrCallBudget
 	}
-	c.metrics.calls.WithLabelValues(c.cfg.Model, stage).Inc()
 
 	if c.cfg.ChatBackend.Effective() == llmprovider.ChatBackendOllama {
 		// Keep both ordinary and long batch requests on the validated route.
@@ -1000,6 +1005,12 @@ func (c *Client) callWith(ctx context.Context, hc *http.Client, stage, system, u
 		boundedClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		hc = &boundedClient
 	}
+	d, admissionErr = c.namePolicy.AdmitContext(ctx, model.Torrent{}.InfoHash, "", "")
+	if admissionErr != nil || !d.Eligible {
+		c.namePolicy.Observe("model_dispatch", d)
+		return nil, namepolicy.ErrExcluded
+	}
+	c.metrics.calls.WithLabelValues(c.cfg.Model, stage).Inc()
 	start := time.Now()
 	resp, err := hc.Do(httpReq)
 	if err != nil {

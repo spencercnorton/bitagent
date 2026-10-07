@@ -18,6 +18,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/cataloguerecovery"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
+	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	migrationssql "github.com/spencercnorton/bitagent/migrations"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -836,6 +837,7 @@ WHERE run_id=$1 AND info_hash=$2`,
 		state      string
 		inputFile  string
 		addPrivacy func()
+		deniedName string
 	}{
 		{
 			name:  "prepared native-private",
@@ -856,7 +858,7 @@ WHERE run_id=$1 AND info_hash=$2`,
 			addPrivacy: func() {
 				_, insertErr := pool.Exec(ctx, `
 INSERT INTO label_evidence (info_hash,source,category)
-VALUES ($1,'qbittorrent','private')`, bytes20(28))
+VALUES ($1,E' \tQBittorrent\n',U&'\2003PrIvAtE\00A0')`, bytes20(28))
 				require.NoError(t, insertErr)
 			},
 		},
@@ -872,10 +874,15 @@ VALUES ($1,'qbittorrent','bitgrab')`, bytes20(29))
 				require.NoError(t, insertErr)
 			},
 		},
+		{name: "prepared owner Han", hash: bytes20(245), state: "prepared", deniedName: "Synthetic.电影.ENG.mkv"},
+		{name: "uploaded owner adult", hash: bytes20(246), state: "uploaded", inputFile: "legacy-denied-input-file", deniedName: "FetishXXX.mkv"},
 	}
 	for _, testCase := range legacyCases {
 		t.Run("legacy "+testCase.name, func(t *testing.T) {
 			torrentName := "legacy-" + testCase.name + "-secret"
+			if testCase.deniedName != "" {
+				torrentName = testCase.deniedName
+			}
 			insertCandidate(t, pool, testCase.hash, torrentName)
 			workerCfg.BatchSize = 1
 			workerCfg.LLMBatchMaxAttempts = 3
@@ -906,7 +913,9 @@ WHERE id=$1`, legacyAttempt.ID, testCase.inputFile)
 			default:
 				t.Fatalf("unsupported legacy state %q", testCase.state)
 			}
-			testCase.addPrivacy()
+			if testCase.addPrivacy != nil {
+				testCase.addPrivacy()
+			}
 
 			provider := &privacyBoundaryBatchClient{
 				baseURL: legacyAttempt.ProviderBaseURL,
@@ -916,6 +925,9 @@ WHERE id=$1`, legacyAttempt.ID, testCase.inputFile)
 				metrics:         NewMetrics(),
 				logger:          zap.NewNop().Sugar(),
 				batchLeaseOwner: "privacy-boundary-" + testCase.state,
+			}
+			if testCase.deniedName != "" {
+				testWorker.namePolicy, _ = namepolicy.New(namepolicy.Config{Enabled: true})
 			}
 			require.NoError(t, testWorker.reconcileBatchAttempt(
 				ctx, pool, provider, *legacyAttempt, true,
@@ -1648,6 +1660,59 @@ INSERT INTO junkpurge_sync_claims (
 	require.True(t, subLease.After(settledAt.Add(500*time.Millisecond)),
 		"a 900ms cooldown must extend the lease by ~900ms, not floor to 0; lease=%s settled=%s",
 		subLease, settledAt)
+	t.Run("source locks cover POST and retained denied results stay unapplied", func(t *testing.T) {
+		// Finish the earlier fixture's candidates so this new run owns one
+		// precise synthetic source and cannot accidentally sample another row.
+		_, err := pool.Exec(ctx, `UPDATE torrent_contents SET content_id='fixture-finished'`)
+		require.NoError(t, err)
+		hash := bytes20(247)
+		insertCandidate(t, pool, hash, "Allowed.Locked.Release.mkv")
+		workerCfg.BatchSize = 1
+		run, err := createBatchRun(ctx, pool, workerCfg)
+		require.NoError(t, err)
+		require.NotNil(t, run)
+		attempt, err := prepareBatchAttempt(ctx, pool, *run, client.BuildInput)
+		require.NoError(t, err)
+		require.NotNil(t, attempt)
+		claimed, err := claimBatchAttempt(ctx, pool, attempt.ID, "owned-source-lock", time.Minute)
+		require.NoError(t, err)
+		require.True(t, claimed)
+		p, err := namepolicy.New(namepolicy.Config{Enabled: true})
+		require.NoError(t, err)
+		calls := 0
+		safe, err := withBatchAttemptAdmission(ctx, pool, attempt.ID, 1, "owned-source-lock", p, func() error {
+			calls++
+			short, cancel := context.WithTimeout(ctx, 80*time.Millisecond)
+			defer cancel()
+			_, err := pool.Exec(short, `UPDATE torrents SET name='Synthetic.Фильм.ENG.mkv' WHERE info_hash=$1`, hash)
+			require.Error(t, err, "raw rename cannot commit across the provider operation")
+			short, cancel2 := context.WithTimeout(ctx, 80*time.Millisecond)
+			defer cancel2()
+			_, err = pool.Exec(short, `INSERT INTO label_evidence VALUES($1,'qbittorrent','private')`, hash)
+			require.Error(t, err, "late independent privacy fact cannot commit across provider operation")
+			return nil
+		})
+		require.NoError(t, err)
+		require.True(t, safe)
+		require.Equal(t, 1, calls)
+		_, err = pool.Exec(ctx, `UPDATE torrents SET name='Synthetic.Фильм.ENG.mkv' WHERE info_hash=$1`, hash)
+		require.NoError(t, err)
+		safe, err = withBatchAttemptAdmission(ctx, pool, attempt.ID, 1, "owned-source-lock", p, func() error { calls++; return nil })
+		require.ErrorIs(t, err, namepolicy.ErrExcluded)
+		require.False(t, safe)
+		require.Equal(t, 1, calls)
+		_, err = pool.Exec(ctx, `UPDATE junkpurge_batch_runs SET state='finalizing' WHERE id=$1; UPDATE junkpurge_batch_items SET state='succeeded',verdict='real_absent',confidence=0.99 WHERE run_id=$1`, run.ID)
+		require.NoError(t, err)
+		_, err = finalizeBatchRun(ctx, pool, *run, false, p)
+		require.ErrorIs(t, err, namepolicy.ErrExcluded)
+		var state string
+		require.NoError(t, pool.QueryRow(ctx, `SELECT state FROM junkpurge_batch_items WHERE run_id=$1`, run.ID).Scan(&state))
+		require.Equal(t, "succeeded", state)
+		var n int
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM junkpurge_judgments WHERE info_hash=$1`, hash).Scan(&n))
+		require.Zero(t, n)
+	})
+
 }
 
 // rejectingJudge reproduces the production failure: a well-formed reply whose

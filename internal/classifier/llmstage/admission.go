@@ -45,8 +45,8 @@ func (s *Stage) admissionReady() error {
 }
 
 func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (Decision, error) {
-	d := s.namePolicy.EvaluateContext(ctx, t.InfoHash, t.Name, "")
-	if !d.Eligible {
+	d, admissionErr := s.namePolicy.AdmitContext(ctx, t.InfoHash, t.Name, "")
+	if admissionErr != nil || !d.Eligible {
 		s.namePolicy.Observe("model_dispatch", d)
 		return Decision{}, namepolicy.ErrExcluded
 	}
@@ -219,9 +219,19 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 			_ = s.admission.Dispatch.DeferNoDispatch(ctx, dispatchLease, "source_changed", time.Now().UTC())
 			return Decision{}, err
 		}
+		d, admissionErr = s.namePolicy.AdmitContext(ctx, t.InfoHash, t.Name, "")
+		if admissionErr != nil || !d.Eligible {
+			s.namePolicy.Observe("model_dispatch", d)
+			return Decision{}, namepolicy.ErrExcluded
+		}
 		if err := s.admission.Dispatch.BeginDispatch(ctx, dispatchLease); err != nil {
 			return Decision{}, err
 		}
+	}
+	d, admissionErr = s.namePolicy.AdmitContext(ctx, t.InfoHash, t.Name, "")
+	if admissionErr != nil || !d.Eligible {
+		s.namePolicy.Observe("model_dispatch", d)
+		return Decision{}, namepolicy.ErrExcluded
 	}
 	s.metrics.callsTotal.WithLabelValues(s.cfg.Model).Inc()
 	started := time.Now()
