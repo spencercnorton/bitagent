@@ -49,6 +49,10 @@ func workFixture(t *testing.T) (*Store, *pgxpool.Pool) {
 	require.NoError(t, err)
 	cfg := NewDefaultConfig()
 	cfg.Enabled = true
+	// Lifecycle fixtures assert durable states rather than the speed of cold
+	// prepared statements under a shared CI race runner. The real default
+	// admission deadline is independently exercised with a blocking DB lock.
+	cfg.EnqueueTimeout = time.Second
 	cfg.SpreadAdmission = false
 	cfg.MaxPending = 24
 	pg := lazy.New(func() (*pgxpool.Pool, error) { return pool, nil })
@@ -57,6 +61,31 @@ func workFixture(t *testing.T) (*Store, *pgxpool.Pool) {
 	store, err := NewStore(cfg, pg)
 	require.NoError(t, err)
 	return store, pool
+}
+
+func TestPostgresDefaultAdmissionDeadlineStopsBeforeTaskOrEventCommit(t *testing.T) {
+	s, pool := workFixture(t)
+	ctx := context.Background()
+	s.cfg.EnqueueTimeout = NewDefaultConfig().EnqueueTimeout
+	require.Equal(t, 100*time.Millisecond, s.cfg.EnqueueTimeout)
+	d := draftFor(1)
+	putPublic(t, pool, d)
+	blocker, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	defer blocker.Release()
+	_, err = blocker.Exec(ctx, `SELECT pg_advisory_lock(hashtext('llm_work.'||$1))`, string(d.Kind))
+	require.NoError(t, err)
+	defer blocker.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext('llm_work.'||$1))`, string(d.Kind))
+	started := time.Now()
+	outcome, err := s.Enqueue(ctx, d)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, "unavailable", outcome)
+	require.Less(t, time.Since(started), time.Second, "the locked database cannot extend admission indefinitely")
+	for _, table := range []string{"llm_work_tasks", "llm_work_events"} {
+		var n int
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&n))
+		require.Zero(t, n, "deadline refusal commits no task or lifecycle event")
+	}
 }
 
 func putPublic(t *testing.T, pool *pgxpool.Pool, d Draft) {
