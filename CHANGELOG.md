@@ -4,6 +4,10 @@
 
 ## 4.4.0 — 2026-10-06
 
+- Refuse recovery-schema downgrade while any snapshot, audit event or consumed
+  budget remains, including restored and expired snapshots. Empty-only
+  downgrade serializes with recovery writers and remains retryable.
+
 - Add an unwired, disabled recovery foundation that atomically captures complete
   catalogue sources, removal and a bound block receipt, with bounded storage
   guards and qualified operator restoration through the native crawler bloom.

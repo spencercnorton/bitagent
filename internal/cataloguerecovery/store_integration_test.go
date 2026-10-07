@@ -661,3 +661,120 @@ values(decode(repeat('99',32),'hex'),'synthetic-history',$1,$4,'{}','{}','{}','{
 	require.Equal(t, before, raw(t, pool, h), "all non-NULL release claims and all raw source fields must roundtrip exactly")
 	require.Equal(t, retained, histories(), "restore cannot rewrite or refund permanent histories")
 }
+
+func recoveryMigrationProvider(t *testing.T, pool *pgxpool.Pool) *goose.Provider {
+	t.Helper()
+	db := stdlib.OpenDB(*pool.Config().ConnConfig)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrationssql.FS)
+	require.NoError(t, err)
+	return provider
+}
+func recoveryHistory(t *testing.T, pool *pgxpool.Pool) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, table := range []string{"catalogue_recovery_budget", "catalogue_recovery_snapshots", "catalogue_recovery_events", "torrent_verdict_events", "torrent_verdict_state", "goose_db_version"} {
+		var data string
+		require.NoError(t, pool.QueryRow(ctx, `select coalesce(jsonb_agg(to_jsonb(r) order by to_jsonb(r)::text),'[]'::jsonb)::text from `+pgx.Identifier{table}.Sanitize()+` r`).Scan(&data))
+		out[table] = data
+	}
+	return out
+}
+func TestPostgresRecoveryDowngradeRetainsRemovedRestoredExpiredAndBudgets(t *testing.T) {
+	for _, state := range []string{"removed", "restored", "expired", "snapshot_budget_only", "payload_budget_only"} {
+		t.Run(state, func(t *testing.T) {
+			pool := recoveryPool(t)
+			provider := recoveryMigrationProvider(t, pool)
+			h := hash(92)
+			seed(t, pool, h, false)
+			now := time.Now().UTC()
+			if strings.HasSuffix(state, "budget_only") {
+				column := "snapshots"
+				if state == "payload_budget_only" {
+					column = "payload_bytes"
+				}
+				_, err := pool.Exec(ctx, `update catalogue_recovery_budget set `+column+`=1`)
+				require.NoError(t, err)
+			} else {
+				c := cfg()
+				if state == "expired" {
+					c.Retention = time.Millisecond
+				}
+				s, err := cataloguerecovery.NewStore(pool, c)
+				require.NoError(t, err)
+				snap, err := s.Remove(ctx, h, "synthetic downgrade guard", now)
+				require.NoError(t, err)
+				if state == "restored" {
+					ok, e := s.Restore(ctx, snap.ID, now.Add(time.Second))
+					require.NoError(t, e)
+					require.True(t, ok)
+				}
+				if state == "expired" {
+					time.Sleep(2 * time.Millisecond)
+					ok, e := s.Restore(ctx, snap.ID, time.Now())
+					require.ErrorIs(t, e, cataloguerecovery.ErrExpired)
+					require.False(t, ok)
+					var expired bool
+					require.NoError(t, pool.QueryRow(ctx, `select expires_at < clock_timestamp() from catalogue_recovery_snapshots where id=$1`, snap.ID).Scan(&expired))
+					require.True(t, expired)
+				}
+			}
+			before, hist := raw(t, pool, h), recoveryHistory(t, pool)
+			_, err := provider.DownTo(ctx, 58)
+			require.ErrorContains(t, err, "catalogue recovery history and budgets must be retained")
+			require.Equal(t, before, raw(t, pool, h))
+			require.Equal(t, hist, recoveryHistory(t, pool), "rejected downgrade cannot mutate history, budgets, verdicts or migration receipt")
+		})
+	}
+}
+func TestPostgresRecoveryEmptyDowngradeAndRetry(t *testing.T) {
+	pool := recoveryPool(t)
+	provider := recoveryMigrationProvider(t, pool)
+	h := hash(93)
+	seed(t, pool, h, true)
+	before := raw(t, pool, h)
+	down, err := provider.DownTo(ctx, 58)
+	require.NoError(t, err)
+	require.Len(t, down, 1)
+	require.Equal(t, before, raw(t, pool, h))
+	up, err := provider.UpTo(ctx, 59)
+	require.NoError(t, err)
+	require.Len(t, up, 1)
+	require.Equal(t, before, raw(t, pool, h))
+	require.Zero(t, count(t, pool, "catalogue_recovery_snapshots"))
+	require.Zero(t, count(t, pool, "catalogue_recovery_events"))
+	var used, snapshots int64
+	require.NoError(t, pool.QueryRow(ctx, `select payload_bytes,snapshots from catalogue_recovery_budget`).Scan(&used, &snapshots))
+	require.Zero(t, used)
+	require.Zero(t, snapshots)
+}
+
+func TestPostgresRecoveryDowngradeSerializesWithPendingBudgetWriter(t *testing.T) {
+	pool := recoveryPool(t)
+	provider := recoveryMigrationProvider(t, pool)
+	h := hash(94)
+	seed(t, pool, h, true)
+	before := raw(t, pool, h)
+	deadline, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	tx, err := pool.Begin(deadline)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(deadline, `update catalogue_recovery_budget set payload_bytes=1`)
+	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() { _, e := provider.DownTo(deadline, 58); done <- e }()
+	require.Eventually(t, func() bool {
+		var blocked bool
+		e := pool.QueryRow(deadline, `select exists(select 1 from pg_locks where relation='catalogue_recovery_budget'::regclass and mode='AccessExclusiveLock' and not granted)`).Scan(&blocked)
+		return e == nil && blocked
+	}, 5*time.Second, 10*time.Millisecond, "downgrade must wait before reading the empty-only guard")
+	require.NoError(t, tx.Commit(deadline))
+	require.ErrorContains(t, <-done, "catalogue recovery history and budgets must be retained")
+	require.Equal(t, before, raw(t, pool, h))
+	var used int64
+	require.NoError(t, pool.QueryRow(ctx, `select payload_bytes from catalogue_recovery_budget`).Scan(&used))
+	require.EqualValues(t, 1, used)
+	require.Zero(t, count(t, pool, "catalogue_recovery_snapshots"))
+	require.Zero(t, count(t, pool, "catalogue_recovery_events"))
+}

@@ -34,6 +34,18 @@ create table catalogue_recovery_events (
 -- +goose StatementEnd
 -- +goose Down
 -- +goose StatementBegin
+-- Serialize against recovery writers before checking the empty-only downgrade.
+-- Restored and expired snapshots remain retained history and consume budgets.
+lock table catalogue_recovery_budget, catalogue_recovery_snapshots,
+  catalogue_recovery_events in access exclusive mode;
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM catalogue_recovery_snapshots)
+     OR EXISTS (SELECT 1 FROM catalogue_recovery_events)
+     OR EXISTS (SELECT 1 FROM catalogue_recovery_budget
+                WHERE payload_bytes <> 0 OR snapshots <> 0) THEN
+    RAISE EXCEPTION 'catalogue recovery history and budgets must be retained; restore a matching backup before downgrade';
+  END IF;
+END $$;
 drop table catalogue_recovery_events;
 drop table catalogue_recovery_snapshots;
 drop table catalogue_recovery_budget;
