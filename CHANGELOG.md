@@ -4,6 +4,10 @@
 
 ## 4.4.0 — 2026-10-06
 
+- Repair missing codec claims only from the exact parser proposal, retaining
+  existing codecs and catalogue identities with journalled application and
+  nullable search-projection rollback.
+
 - Share qualified manual/reference/private and wanted tag protection across
   maintenance paths while preserving wanted-only matcher eligibility. Freeze
   independent authority before recovery snapshots and keep later private facts

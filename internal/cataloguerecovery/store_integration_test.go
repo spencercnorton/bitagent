@@ -1019,11 +1019,12 @@ func TestPostgresRestoredBloomTagPrivacyPreservesPublicAuthority(t *testing.T) {
 	ok, err := s.Restore(ctx, snap, time.Now())
 	require.NoError(t, err)
 	require.True(t, ok)
+	restart := nativeManager(t, pool, s)
 	check := func(name string, private bool) {
 		_, err := pool.Exec(ctx, `insert into torrent_tags(info_hash,name,created_at,updated_at) values($1,$2,now(),now())`, h, name)
 		require.NoError(t, err)
 		before, hist := raw(t, pool, h), recoveryHistory(t, pool)
-		for _, manager := range []blocking.Manager{m, nativeManager(t, pool, s)} {
+		for _, manager := range []blocking.Manager{m, restart} {
 			kept, e := manager.Filter(ctx, []protocol.ID{id})
 			require.NoError(t, e)
 			if private {
