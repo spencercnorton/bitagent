@@ -28,9 +28,10 @@ func NewStore(pool lazy.Lazy[*pgxpool.Pool], names ...*namepolicy.Policy) *Store
 }
 
 // SelectStale returns up to limit info-hashes that have never been scraped or
-// whose last scrape is older than minAge, least-recently-checked first. The
-// left join + "checked_at asc nulls first" ordering surfaces never-checked
-// hashes ahead of stale ones.
+// whose last scrape is older than minAge. Half of a batch is reserved for the
+// oldest previously checked hashes so a continuous never-checked backlog cannot
+// starve rechecks. The remaining capacity keeps never-checked priority and fills
+// from either class. A one-item batch retains never-checked priority.
 func (s *Store) SelectStale(ctx context.Context, minAge time.Duration, limit int) ([][]byte, error) {
 	pool, err := s.pool.Get()
 	if err != nil {
@@ -38,13 +39,31 @@ func (s *Store) SelectStale(ctx context.Context, minAge time.Duration, limit int
 	}
 	admission, args := s.selectionAdmission()
 	q := `
-select t.info_hash
-from torrents t
-left join torrent_tracker_seeds s on s.info_hash = t.info_hash
-where (s.info_hash is null
-   or s.checked_at < now() - make_interval(secs => $1)) AND ` + admission + `
-order by s.checked_at asc nulls first
-limit $2`
+with rechecks as materialized (
+  select t.info_hash, s.checked_at
+  from torrent_tracker_seeds s
+  join torrents t on t.info_hash = s.info_hash
+  where s.checked_at < now() - make_interval(secs => $1) AND ` + admission + `
+  order by s.checked_at asc, t.info_hash asc
+  limit ($2::bigint / 2)
+)
+select selected.info_hash
+from (
+  select info_hash, checked_at from rechecks
+  union all
+  (
+    select t.info_hash, s.checked_at
+    from torrents t
+    left join torrent_tracker_seeds s on s.info_hash = t.info_hash
+    where (s.info_hash is null
+       or s.checked_at < now() - make_interval(secs => $1)) AND ` + admission + `
+      and not exists(select 1 from rechecks r where r.info_hash = t.info_hash)
+    order by s.checked_at asc nulls first, t.info_hash asc
+    limit greatest(0::bigint, $2::bigint - (select count(*) from rechecks))
+  )
+) selected
+order by selected.checked_at asc nulls first, selected.info_hash asc
+limit $2::bigint`
 	args = append([]any{minAge.Seconds(), limit}, args...)
 	rows, err := pool.Query(ctx, q, args...)
 	if err != nil {

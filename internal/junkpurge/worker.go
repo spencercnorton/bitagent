@@ -39,6 +39,7 @@ const (
 	cycleOutcomeNoJunk             = "no_confident_junk"
 	cycleOutcomeDryRun             = "dry_run"
 	cycleOutcomeQuarantineError    = "quarantine_error"
+	cycleOutcomeQuarantineHeld     = "quarantine_held"
 	cycleOutcomeQuarantined        = "quarantined"
 	cycleOutcomeBatchDryRun        = "batch_dry_run"
 	cycleOutcomeBatchBreaker       = "batch_junk_rate_anomaly"
@@ -864,12 +865,7 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 		}
 	}
 	if err != nil {
-		cycleOutcome = cycleOutcomeQuarantineError
-		w.markSyncJudgmentOutcome(
-			ctx, pool, recordedClaims, cycleOutcomeQuarantineError,
-		)
-		w.metrics.cycleErrorsTotal.WithLabelValues("quarantine").Inc()
-		w.logger.Errorw("junkpurge quarantine", "err", err)
+		cycleOutcome = w.recordQuarantineError(ctx, pool, recordedClaims, err)
 		return
 	}
 	cycleOutcome = cycleOutcomeQuarantined
@@ -877,6 +873,20 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 	w.metrics.quarantinedTotal.Add(float64(len(quarantinedHashes)))
 	w.logger.Infow("junkpurge complete (quarantined for review, not hard-deleted)",
 		"judged", judged, "quarantined", len(quarantinedHashes))
+}
+
+// recordQuarantineError retains paid judgments while separating an intentional
+// recovery hold from a failed quarantine. It never enables the held transition.
+func (w *purgeWorker) recordQuarantineError(ctx context.Context, pool *pgxpool.Pool, recordedClaims [][]byte, err error) string {
+	if errors.Is(err, cataloguerecovery.ErrDisabled) {
+		w.markSyncJudgmentOutcome(ctx, pool, recordedClaims, cycleOutcomeQuarantineHeld)
+		w.logger.Infow("junkpurge quarantine held", "reason", "recovery_disabled")
+		return cycleOutcomeQuarantineHeld
+	}
+	w.markSyncJudgmentOutcome(ctx, pool, recordedClaims, cycleOutcomeQuarantineError)
+	w.metrics.cycleErrorsTotal.WithLabelValues("quarantine").Inc()
+	w.logger.Errorw("junkpurge quarantine", "err", err)
+	return cycleOutcomeQuarantineError
 }
 
 // candidateQuery selects unmatched movie/tv torrents that are old enough, carry
