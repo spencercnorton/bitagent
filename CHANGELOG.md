@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reserve half of each bounded seed batch for stale rechecks so continuous new
+  discovery cannot starve previously checked public torrents. Return unused
+  capacity to either class while retaining admission guards and scrape limits.
+- Report recovery-disabled quarantine as an explicit held cycle instead of an
+  operational error, retaining judgments and the existing removal guard.
+
 ## 4.5.1 — 2026-10-07
 
 - Normalize independent qB source and category privacy facts during legacy
