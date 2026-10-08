@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 4.5.2 — 2026-10-08
+
 - Reserve half of each bounded seed batch for stale rechecks so continuous new
   discovery cannot starve previously checked public torrents. Return unused
   capacity to either class while retaining admission guards and scrape limits.
