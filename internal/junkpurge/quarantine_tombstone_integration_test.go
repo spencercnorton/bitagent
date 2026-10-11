@@ -108,6 +108,8 @@ CREATE TABLE junkpurge_judgments (
   purged boolean NOT NULL DEFAULT false
 );
 -- The table expiry used to write into. It must stay EMPTY.
+CREATE TABLE catalogue_recovery_snapshots (id bigserial primary key, info_hash bytea, state text, created_at timestamptz, expires_at timestamptz);
+
 CREATE TABLE torrent_liveness (
   info_hash bytea PRIMARY KEY,
   status text NOT NULL,

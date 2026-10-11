@@ -121,7 +121,7 @@ func TestQuarantineExpiryAtomicIntegration(t *testing.T) {
 		ctx, pool, vs := expiryIntegrationPool(t)
 		h := expiryHash(1)
 		seedExpirySnapshot(t, ctx, pool, vs, h)
-		require.NoError(t, RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)))
+		require.NoError(t, RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h)))
 		n, err := expireQuarantineChunk(ctx, pool, 30, 1, true)
 		require.NoError(t, err)
 		require.Zero(t, n)
@@ -149,7 +149,7 @@ AND EXISTS(SELECT 1 FROM queue_jobs WHERE queue='process_torrent')`, h).Scan(&re
 		// An uncommitted expiry owns the actual snapshot row. A concurrent
 		// operator cannot remove it and append a restore before that commit.
 		result := make(chan error, 1)
-		go func() { result <- RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
+		go func() { result <- RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
 		var pid int
 		require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
 		require.Eventually(t, func() bool {
@@ -205,7 +205,7 @@ UPDATE junkpurge_judgments SET torrent_name='SyntheticReacquired',purged=false W
 		var pid int
 		require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid() FROM torrents WHERE info_hash=$1 FOR UPDATE`, h).Scan(&pid))
 		result := make(chan error, 1)
-		go func() { result <- RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
+		go func() { result <- RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
 		require.Eventually(t, func() bool {
 			var waiting bool
 			err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting)
@@ -221,7 +221,7 @@ UPDATE junkpurge_judgments SET torrent_name='SyntheticReacquired',purged=false W
 		var name string
 		require.NoError(t, pool.QueryRow(ctx, `SELECT torrent_snapshot->>'name' FROM junkpurge_quarantine WHERE info_hash=$1`, h).Scan(&name))
 		require.Equal(t, "SyntheticReacquired", name)
-		require.NoError(t, RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)))
+		require.NoError(t, RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h)))
 		require.NoError(t, pool.QueryRow(ctx, `SELECT name FROM torrents WHERE info_hash=$1`, h).Scan(&name))
 		require.Equal(t, "SyntheticReacquired", name, "a subsequent explicit restore uses the refreshed snapshot")
 	})
@@ -239,7 +239,7 @@ VALUES ($1,'SyntheticCurrent',8192,false,now(),now(),'single')`, h)
 		var pid int
 		require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid() FROM torrents WHERE info_hash=$1 FOR UPDATE`, h).Scan(&pid))
 		result := make(chan error, 1)
-		go func() { result <- RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
+		go func() { result <- RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
 		require.Eventually(t, func() bool {
 			var waiting bool
 			err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting)
@@ -265,7 +265,7 @@ AND NOT EXISTS(SELECT 1 FROM torrent_verdict_events WHERE info_hash=$1 AND verdi
 			expected := verdicts.VerdictTombstoned
 			switch transition {
 			case "restore":
-				require.NoError(t, RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)))
+				require.NoError(t, RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h)))
 				expected = verdicts.VerdictRestored
 			case "delete":
 				// Construct a historical operator deletion to verify delayed
@@ -392,7 +392,7 @@ CREATE TRIGGER expiry_barrier BEFORE INSERT ON torrent_verdict_events FOR EACH R
 CREATE TRIGGER reject_transition BEFORE INSERT ON torrent_verdict_events FOR EACH ROW EXECUTE FUNCTION synthetic_failure()`)
 			require.NoError(t, err)
 			if operation == "restore" {
-				err = RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h))
+				err = RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h))
 				require.ErrorContains(t, err, "record quarantine restore")
 			} else {
 				err = DeleteQuarantinedNow(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h))

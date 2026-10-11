@@ -37,14 +37,24 @@ type QuarantineItem struct {
 func ListQuarantine(ctx context.Context, pool *pgxpool.Pool, quarantineDays, limit, offset int) ([]QuarantineItem, int, error) {
 	var total int
 	if err := pool.QueryRow(ctx,
-		`SELECT count(*) FROM junkpurge_quarantine WHERE expired_at IS NULL`).Scan(&total); err != nil {
+		`SELECT (SELECT count(*) FROM junkpurge_quarantine WHERE expired_at IS NULL) + (SELECT count(*) FROM catalogue_recovery_snapshots s JOIN junkpurge_judgments j ON s.info_hash = j.info_hash WHERE s.state = 'removed' AND s.expires_at > now())`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := pool.Query(ctx, `
 SELECT encode(info_hash, 'hex'), torrent_name, verdict, confidence, quarantined_at,
        GREATEST(0, $1 - floor(extract(epoch FROM (now() - quarantined_at)) / 86400)::int) AS days_left
-FROM junkpurge_quarantine
-WHERE expired_at IS NULL
+FROM (
+  SELECT q.info_hash, q.torrent_name, q.verdict, q.confidence, q.quarantined_at
+  FROM junkpurge_quarantine q
+  WHERE q.expired_at IS NULL
+
+  UNION ALL
+
+  SELECT s.info_hash, j.torrent_name, j.verdict, j.confidence, s.created_at AS quarantined_at
+  FROM catalogue_recovery_snapshots s
+  JOIN junkpurge_judgments j ON s.info_hash = j.info_hash
+  WHERE s.state = 'removed' AND s.expires_at > now()
+) combined
 ORDER BY quarantined_at DESC
 LIMIT $2 OFFSET $3`, quarantineDays, limit, offset)
 	if err != nil {
@@ -89,12 +99,27 @@ const legacySnapshotMaxRows = 65536
 // retains the snapshot and rolls back the restored rows and queued work.
 // 'extension' is a generated column on both tables, so it is excluded from the
 // explicit column lists.
-func RestoreQuarantined(ctx context.Context, pool *pgxpool.Pool, vstore *verdicts.Store, logger *zap.SugaredLogger, infoHashHex string) error {
+func RestoreQuarantined(ctx context.Context, pool *pgxpool.Pool, vstore *verdicts.Store, recoveryStore *cataloguerecovery.Store, logger *zap.SugaredLogger, infoHashHex string) error {
 	ih, err := protocol.ParseID(infoHashHex)
 	if err != nil {
 		return fmt.Errorf("invalid info_hash %q: %w", infoHashHex, err)
 	}
 	ihBytes := ih[:]
+	if recoveryStore != nil && recoveryStore.Enabled() {
+		var snapID int64
+		err = pool.QueryRow(ctx, `SELECT id FROM catalogue_recovery_snapshots WHERE info_hash=$1 AND state='removed' ORDER BY id DESC LIMIT 1`, ihBytes).Scan(&snapID)
+		if err == nil {
+			restored, err := recoveryStore.Restore(ctx, snapID, time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			if restored {
+				return nil
+			}
+		} else if err.Error() != "no rows in result set" {
+			return err
+		}
+	}
 	job, err := processor.NewQueueJob(processor.MessageParams{
 		InfoHashes:   []protocol.ID{ih},
 		ClassifyMode: processor.ClassifyModeRematch,

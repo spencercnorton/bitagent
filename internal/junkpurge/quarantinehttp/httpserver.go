@@ -16,24 +16,35 @@ import (
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
 	"go.uber.org/zap"
+	"go.uber.org/fx"
 )
 
+type Params struct {
+	fx.In
+	Pool     lazy.Lazy[*pgxpool.Pool]
+	Config   junkpurge.Config
+	Verdicts *verdicts.Store `optional:"true"`
+	Recovery *cataloguerecovery.Store `optional:"true"`
+	Logger   *zap.SugaredLogger
+}
+
 // New builds the Gin option. Provided into the http_server_options group.
-func New(pool lazy.Lazy[*pgxpool.Pool], cfg junkpurge.Config, vstore *verdicts.Store, logger *zap.SugaredLogger) httpserver.Option {
-	return builder{pool: pool, cfg: cfg, verdicts: vstore, logger: logger.Named("quarantinehttp")}
+func New(p Params) httpserver.Option {
+	return builder{pool: p.Pool, cfg: p.Config, verdicts: p.Verdicts, recovery: p.Recovery, logger: p.Logger.Named("quarantinehttp")}
 }
 
 type builder struct {
 	pool     lazy.Lazy[*pgxpool.Pool]
 	cfg      junkpurge.Config
 	verdicts *verdicts.Store
+	recovery *cataloguerecovery.Store
 	logger   *zap.SugaredLogger
 }
 
 func (builder) Key() string { return "junkpurge-quarantine" }
 
 func (b builder) Apply(e *gin.Engine) error {
-	h := &handler{pool: b.pool, cfg: b.cfg, verdicts: b.verdicts, logger: b.logger}
+	h := &handler{pool: b.pool, cfg: b.cfg, verdicts: b.verdicts, recovery: b.recovery, logger: b.logger}
 	g := e.Group("/api/quarantine")
 	g.GET("", h.list)
 	g.POST("/:hash/restore", h.restore)
@@ -45,6 +56,7 @@ type handler struct {
 	pool     lazy.Lazy[*pgxpool.Pool]
 	cfg      junkpurge.Config
 	verdicts *verdicts.Store
+	recovery *cataloguerecovery.Store
 	logger   *zap.SugaredLogger
 }
 
@@ -83,7 +95,7 @@ func (h *handler) restore(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 		return
 	}
-	if err := junkpurge.RestoreQuarantined(c.Request.Context(), pool, h.verdicts, h.logger, c.Param("hash")); err != nil {
+	if err := junkpurge.RestoreQuarantined(c.Request.Context(), pool, h.verdicts, h.recovery, h.logger, c.Param("hash")); err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, cataloguerecovery.ErrProtected) || errors.Is(err, cataloguerecovery.ErrConflict) {
 			status = http.StatusConflict

@@ -29,6 +29,31 @@ func (h *Handler) Apply(e *gin.Engine) error {
 	if h.authenticate == nil {
 		return fmt.Errorf("catalogue recovery: operator authentication required")
 	}
+	e.GET("/catalogue-recovery/classifier-deletes", h.authenticate, func(c *gin.Context) {
+		limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+		if limit <= 0 || limit > 100 {
+			limit = 50
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		deletes, total, err := h.store.ListClassifierDeletes(c.Request.Context(), limit, offset)
+		if err != nil {
+			if errors.Is(err, cataloguerecovery.ErrDisabled) {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "catalogue recovery disabled"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list classifier deletes"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"deletes": deletes,
+			"total":   total,
+			"limit":   limit,
+			"offset":  offset,
+		})
+	})
 	e.POST("/catalogue-recovery/:id/restore", h.authenticate, func(c *gin.Context) {
 		id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 		if err != nil || id <= 0 {

@@ -21,7 +21,7 @@ func TestQuarantineRecoveryHoldIsNotAnOperationalError(t *testing.T) {
 	dualemit.EmitLegacy = false
 	t.Cleanup(func() { dualemit.EmitLegacy = wasLegacy })
 	// Exercise the actual hard guard with a nonempty action and no database.
-	rows, guardErr := quarantineJunk(context.Background(), nil, [][]byte{bytes20(1)}, 0.99, 24*time.Hour, "synthetic-owner")
+	rows, guardErr := quarantineJunk(context.Background(), nil, nil, [][]byte{bytes20(1)}, 0.99, 24*time.Hour, "synthetic-owner")
 	require.ErrorIs(t, guardErr, cataloguerecovery.ErrDisabled)
 	require.Empty(t, rows)
 	for _, tc := range []struct {
@@ -64,7 +64,7 @@ VALUES($1,'Synthetic.Recorded.Release','junk',0.99,$2)`, hash, judgmentReasonSyn
 	require.NoError(t, err)
 	var before, after []byte
 	require.NoError(t, pool.QueryRow(ctx, `SELECT (to_jsonb(j)-'reason')::text FROM junkpurge_judgments j WHERE info_hash=$1`, hash).Scan(&before))
-	rows, guardErr := quarantineJunk(ctx, pool, [][]byte{hash}, 0.99, 24*time.Hour, "synthetic-owner")
+	rows, guardErr := quarantineJunk(ctx, pool, nil, [][]byte{hash}, 0.99, 24*time.Hour, "synthetic-owner")
 	require.ErrorIs(t, guardErr, cataloguerecovery.ErrDisabled)
 	require.Empty(t, rows)
 	metrics := NewMetrics()

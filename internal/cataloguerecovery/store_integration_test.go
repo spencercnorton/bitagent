@@ -49,7 +49,9 @@ func recoveryPool(t *testing.T) *pgxpool.Pool {
 	admin, err := pgx.Connect(ctx, dsn)
 	require.NoError(t, err)
 	schema := fmt.Sprintf("recovery_test_%d", time.Now().UnixNano())
-	_, err = admin.Exec(ctx, `create schema `+pgx.Identifier{schema}.Sanitize())
+		_, err = admin.Exec(ctx, `create schema `+pgx.Identifier{schema}.Sanitize())
+	require.NoError(t, err)
+	_, err = admin.Exec(ctx, `SELECT pg_advisory_lock(830571); CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public; SELECT pg_advisory_unlock(830571)`)
 	require.NoError(t, err)
 	require.NoError(t, admin.Close(ctx))
 	cfg, err := pgxpool.ParseConfig(dsn)
@@ -147,12 +149,12 @@ func TestPostgresFullSourceRoundtripAndIdempotency(t *testing.T) {
 			seed(t, pool, h, single)
 			before := raw(t, pool, h)
 			now := time.Now().UTC()
-			snap, e := s.Remove(ctx, h, "synthetic removal", now)
+			snap, e := s.Remove(ctx, h, "blocking", "synthetic removal", now)
 			require.NoError(t, e)
 			require.Zero(t, count(t, pool, "torrents"))
 			require.Equal(t, 1, count(t, pool, "label_evidence"))
 			require.Equal(t, 1, count(t, pool, "content"))
-			retry, e := s.Remove(ctx, h, "synthetic removal", now)
+			retry, e := s.Remove(ctx, h, "blocking", "synthetic removal", now)
 			require.NoError(t, e)
 			require.Equal(t, snap.ID, retry.ID)
 			require.Equal(t, 1, count(t, pool, "catalogue_recovery_snapshots"))
@@ -181,7 +183,7 @@ func TestPostgresRecoveryTransitionRollback(t *testing.T) {
 			var snap cataloguerecovery.Snapshot
 			var err error
 			if failure == "restored" {
-				snap, err = s.Remove(ctx, h, "synthetic", time.Now())
+				snap, err = s.Remove(ctx, h, "blocking", "synthetic", time.Now())
 				require.NoError(t, err)
 			}
 			_, err = pool.Exec(ctx, `alter table catalogue_recovery_events add constraint synthetic_failure check(transition<>$1)`, failure)
@@ -194,7 +196,7 @@ func TestPostgresRecoveryTransitionRollback(t *testing.T) {
 				assertRetained(t, pool, snap.ID, "removed")
 				require.Equal(t, 1, count(t, pool, "torrent_verdict_events"))
 			} else {
-				_, e := s.Remove(ctx, h, "synthetic", time.Now())
+				_, e := s.Remove(ctx, h, "blocking", "synthetic", time.Now())
 				require.Error(t, e)
 				require.Equal(t, before, raw(t, pool, h))
 				require.Zero(t, count(t, pool, "catalogue_recovery_snapshots"))
@@ -207,7 +209,7 @@ func TestPostgresRecoveryTransitionRollback(t *testing.T) {
 				require.NoError(t, e)
 				require.True(t, ok)
 			} else {
-				_, e := s.Remove(ctx, h, "synthetic", time.Now())
+				_, e := s.Remove(ctx, h, "blocking", "synthetic", time.Now())
 				require.NoError(t, e)
 			}
 		})
@@ -236,13 +238,13 @@ func TestPostgresRecoveryFailClosedBounds(t *testing.T) {
 			s, e := cataloguerecovery.NewStore(pool, c)
 			require.NoError(t, e)
 			if cap == "count" {
-				_, e = s.Remove(ctx, h, "synthetic", time.Now())
+				_, e = s.Remove(ctx, h, "blocking", "synthetic", time.Now())
 				require.NoError(t, e)
 				h = hash(4)
 				seed(t, pool, h, false)
 			}
 			before := raw(t, pool, h)
-			_, e = s.Remove(ctx, h, "synthetic", time.Now())
+			_, e = s.Remove(ctx, h, "blocking", "synthetic", time.Now())
 			require.ErrorIs(t, e, cataloguerecovery.ErrCapacity)
 			require.Equal(t, before, raw(t, pool, h))
 		})
@@ -256,7 +258,7 @@ func TestPostgresRecoveryConflictsAndRetention(t *testing.T) {
 			h := hash(5)
 			seed(t, pool, h, false)
 			now := time.Now()
-			snap, e := s.Remove(ctx, h, "synthetic", now)
+			snap, e := s.Remove(ctx, h, "blocking", "synthetic", now)
 			require.NoError(t, e)
 			var q string
 			switch conflict {
@@ -336,7 +338,7 @@ func TestPostgresRecoveryProtectsCurrentState(t *testing.T) {
 			}
 			require.NoError(t, e)
 			before := raw(t, pool, h)
-			_, e = s.Remove(ctx, h, "synthetic", time.Now())
+			_, e = s.Remove(ctx, h, "blocking", "synthetic", time.Now())
 			require.Error(t, e)
 			require.Equal(t, before, raw(t, pool, h))
 			require.Zero(t, count(t, pool, "catalogue_recovery_snapshots"))
@@ -365,7 +367,7 @@ func TestPostgresConcurrentCapacityAndRestore(t *testing.T) {
 		go func(h []byte) {
 			defer wg.Done()
 			<-start
-			snap, err := s.Remove(ctx, h, "synthetic", time.Now())
+			snap, err := s.Remove(ctx, h, "blocking", "synthetic", time.Now())
 			errs <- err
 			snaps <- snap
 		}(h)
@@ -441,7 +443,7 @@ func TestPostgresHTTPRestoreActuallyReleasesBoundCrawlerBloom(t *testing.T) {
 	seed(t, pool, h, false)
 	before := raw(t, pool, h)
 	m := nativeManager(t, pool, s)
-	require.NoError(t, m.Block(ctx, []protocol.ID{id}, true))
+	require.NoError(t, m.Block(ctx, []protocol.ID{id}, "blocking", "synthetic", true))
 	kept, e := m.Filter(ctx, []protocol.ID{id})
 	require.NoError(t, e)
 	require.Empty(t, kept)
@@ -492,7 +494,7 @@ func TestPostgresHTTPRestoreActuallyReleasesBoundCrawlerBloom(t *testing.T) {
 	r = request(http.MethodGet, "/torznab/api?t=search&q=SyntheticRecovery")
 	require.Equal(t, http.StatusOK, r.Code, r.Body.String())
 	require.Contains(t, r.Body.String(), "SyntheticRecovery.2031.ENG.mkv")
-	require.NoError(t, restart.Block(ctx, []protocol.ID{id}, true))
+	require.NoError(t, restart.Block(ctx, []protocol.ID{id}, "blocking", "synthetic", true))
 	kept, e = m.Filter(ctx, []protocol.ID{id})
 	require.NoError(t, e)
 	require.Empty(t, kept)
@@ -510,7 +512,7 @@ func TestPostgresRestoreBeforePendingBloomFlush(t *testing.T) {
 	require.NoError(t, e)
 	seed(t, pool, h, true)
 	m := nativeManager(t, pool, s)
-	require.NoError(t, m.Block(ctx, []protocol.ID{id}, false))
+	require.NoError(t, m.Block(ctx, []protocol.ID{id}, "blocking", "synthetic", false))
 	var snap int64
 	require.NoError(t, pool.QueryRow(ctx, `select id from catalogue_recovery_snapshots where info_hash=$1`, h).Scan(&snap))
 	ok, e := s.Restore(ctx, snap, time.Now())
@@ -537,7 +539,7 @@ func TestPostgresBackendTerminationRollsBackWholeRemoval(t *testing.T) {
 	require.NoError(t, e)
 	defer barrier.Exec(ctx, `select pg_advisory_unlock(9159,3)`) //nolint:errcheck
 	done := make(chan error, 1)
-	go func() { _, err := s.Remove(ctx, h, "synthetic", time.Now()); done <- err }()
+	go func() { _, err := s.Remove(ctx, h, "blocking", "synthetic", time.Now()); done <- err }()
 	var pid int
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -562,7 +564,7 @@ func TestPostgresBackendTerminationRollsBackWholeRemoval(t *testing.T) {
 	require.Zero(t, count(t, pool, "torrent_verdict_events"))
 	_, e = pool.Exec(ctx, `drop trigger synthetic_crash on catalogue_recovery_events`)
 	require.NoError(t, e)
-	_, e = s.Remove(ctx, h, "synthetic", time.Now())
+	_, e = s.Remove(ctx, h, "blocking", "synthetic", time.Now())
 	require.NoError(t, e)
 }
 
@@ -576,7 +578,7 @@ func TestPostgresConcurrentDuplicateRemovalAndAtomicBatch(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
-		go func() { defer wg.Done(); <-start; _, e := s.Remove(ctx, h, "synthetic", time.Now()); errs <- e }()
+		go func() { defer wg.Done(); <-start; _, e := s.Remove(ctx, h, "blocking", "synthetic", time.Now()); errs <- e }()
 	}
 	close(start)
 	wg.Wait()
@@ -598,14 +600,14 @@ func TestPostgresConcurrentDuplicateRemovalAndAtomicBatch(t *testing.T) {
 	seed(t, pool, h3, false)
 	_, e := pool.Exec(ctx, `insert into torrent_tags(info_hash,name,created_at,updated_at) values($1,'wanted',now(),now())`, h3)
 	require.NoError(t, e)
-	_, e = s.RemoveBatch(ctx, [][]byte{h2, h3}, "synthetic", time.Now())
+	_, e = s.RemoveBatch(ctx, [][]byte{h2, h3}, "blocking", "synthetic", time.Now())
 	require.ErrorIs(t, e, cataloguerecovery.ErrProtected)
 	require.Equal(t, 2, count(t, pool, "torrents"))
 	require.Equal(t, 1, count(t, pool, "catalogue_recovery_snapshots"))
 	require.Equal(t, 1, count(t, pool, "torrent_verdict_events"))
-	_, e = s.RemoveBatch(ctx, [][]byte{h2, h2}, "synthetic", time.Now())
+	_, e = s.RemoveBatch(ctx, [][]byte{h2, h2}, "blocking", "synthetic", time.Now())
 	require.Error(t, e)
-	_, e = s.Remove(ctx, hash(99), "synthetic", time.Now())
+	_, e = s.Remove(ctx, hash(99), "blocking", "synthetic", time.Now())
 	require.ErrorIs(t, e, cataloguerecovery.ErrConflict, "an unsnapshotted historical loss cannot be recovered")
 }
 
@@ -651,7 +653,7 @@ values(decode(repeat('99',32),'hex'),'synthetic-history',$1,$4,'{}','{}','{}','{
 	}
 	before, retained := raw(t, pool, h), histories()
 	now := time.Now().UTC()
-	snap, err := s.Remove(ctx, h, "synthetic compatibility removal", now)
+	snap, err := s.Remove(ctx, h, "blocking", "synthetic compatibility removal", now)
 	require.NoError(t, err)
 	require.Zero(t, count(t, pool, "torrent_contents"))
 	require.Equal(t, retained, histories(), "independent task/dispatch/application/repair history must survive raw cascade")
@@ -714,7 +716,7 @@ func TestPostgresRecoveryDowngradeRetainsRemovedRestoredExpiredAndBudgets(t *tes
 				}
 				s, err := cataloguerecovery.NewStore(pool, c)
 				require.NoError(t, err)
-				snap, err := s.Remove(ctx, h, "synthetic downgrade guard", now)
+				snap, err := s.Remove(ctx, h, "blocking", "synthetic downgrade guard", now)
 				require.NoError(t, err)
 				if state == "restored" {
 					ok, e := s.Restore(ctx, snap.ID, now.Add(time.Second))
@@ -802,7 +804,7 @@ func TestPostgresRecoveryQualifiedProtectedTagsKeepRawAndLedgers(t *testing.T) {
 		_, err := pool.Exec(ctx, `insert into torrent_tags(info_hash,name,created_at,updated_at) values($1,$2,now(),now())`, h, name)
 		require.NoError(t, err)
 		before, hist := raw(t, pool, h), recoveryHistory(t, pool)
-		_, err = s.Remove(ctx, h, "synthetic native-prefix protection", time.Now())
+		_, err = s.Remove(ctx, h, "blocking", "synthetic native-prefix protection", time.Now())
 		require.ErrorIs(t, err, cataloguerecovery.ErrProtected)
 		require.Equal(t, before, raw(t, pool, h))
 		require.Equal(t, hist, recoveryHistory(t, pool))
@@ -820,7 +822,7 @@ func TestPostgresRecoveryQualifiedProtectedTagsKeepRawAndLedgers(t *testing.T) {
 				_, err := pool.Exec(ctx, `insert into torrent_tags(info_hash,name,created_at,updated_at) values($1,$2,now(),now())`, h, name)
 				require.NoError(t, err)
 				before, hist := raw(t, pool, h), recoveryHistory(t, pool)
-				_, err = s.Remove(ctx, h, "synthetic prefixed protection", time.Now())
+				_, err = s.Remove(ctx, h, "blocking", "synthetic prefixed protection", time.Now())
 				require.ErrorIs(t, err, cataloguerecovery.ErrProtected)
 				require.Equal(t, before, raw(t, pool, h))
 				require.Equal(t, hist, recoveryHistory(t, pool), "protected removal cannot capture/delete/block/refund")
@@ -858,7 +860,7 @@ func TestPostgresRecoverySeesAuthorityCommittedBeforeFirstSnapshot(t *testing.T)
 				var snap cataloguerecovery.Snapshot
 				var err error
 				if restore {
-					snap, err = s.Remove(ctx, h, "synthetic pre-snapshot authority", time.Now())
+					snap, err = s.Remove(ctx, h, "blocking", "synthetic pre-snapshot authority", time.Now())
 					require.NoError(t, err)
 				}
 				before := raw(t, pool, h)
@@ -872,7 +874,7 @@ func TestPostgresRecoverySeesAuthorityCommittedBeforeFirstSnapshot(t *testing.T)
 						_, e := s.Restore(ctx, snap.ID, time.Now())
 						done <- e
 					} else {
-						_, e := s.Remove(ctx, h, "synthetic guarded removal", time.Now())
+						_, e := s.Remove(ctx, h, "blocking", "synthetic guarded removal", time.Now())
 						done <- e
 					}
 				}()
@@ -923,7 +925,7 @@ func TestPostgresRecoverySerializesCanonicalWriterAtRawTransition(t *testing.T) 
 			var snap cataloguerecovery.Snapshot
 			var err error
 			if restore {
-				snap, err = s.Remove(ctx, h, "synthetic serialization", time.Now())
+				snap, err = s.Remove(ctx, h, "blocking", "synthetic serialization", time.Now())
 				require.NoError(t, err)
 			}
 			action, returned := "delete", "old"
@@ -944,7 +946,7 @@ func TestPostgresRecoverySerializesCanonicalWriterAtRawTransition(t *testing.T) 
 					_, e := s.Restore(ctx, snap.ID, time.Now())
 					done <- e
 				} else {
-					_, e := s.Remove(ctx, h, "synthetic serialization", time.Now())
+					_, e := s.Remove(ctx, h, "blocking", "synthetic serialization", time.Now())
 					done <- e
 				}
 			}()
@@ -992,7 +994,7 @@ func TestPostgresRestoredBloomExceptionCannotMaskLaterPrivateFact(t *testing.T) 
 			id, err := protocol.NewIDFromByteSlice(h)
 			require.NoError(t, err)
 			m := nativeManager(t, pool, s)
-			require.NoError(t, m.Block(ctx, []protocol.ID{id}, true))
+			require.NoError(t, m.Block(ctx, []protocol.ID{id}, "blocking", "synthetic", true))
 			var snap int64
 			require.NoError(t, pool.QueryRow(ctx, `select id from catalogue_recovery_snapshots where info_hash=$1`, h).Scan(&snap))
 			ok, err := s.Restore(ctx, snap, time.Now())
@@ -1025,7 +1027,7 @@ func TestPostgresRestoredBloomTagPrivacyPreservesPublicAuthority(t *testing.T) {
 	id, err := protocol.NewIDFromByteSlice(h)
 	require.NoError(t, err)
 	m := nativeManager(t, pool, s)
-	require.NoError(t, m.Block(ctx, []protocol.ID{id}, true))
+	require.NoError(t, m.Block(ctx, []protocol.ID{id}, "blocking", "synthetic", true))
 	var snap int64
 	require.NoError(t, pool.QueryRow(ctx, `select id from catalogue_recovery_snapshots where info_hash=$1`, h).Scan(&snap))
 	ok, err := s.Restore(ctx, snap, time.Now())

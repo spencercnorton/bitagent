@@ -51,7 +51,7 @@ func TestPostgresLegacyRestoreNormalizesQBPrivacyAuthority(t *testing.T) {
 VALUES($2,'synthetic-privacy','fixture',encode($1::bytea,'hex'),$1,$3,now(),10)`, h, form.source, form.left+category+form.right)
 				require.NoError(t, err)
 				before := restorePrivacyState(t, ctx, pool)
-				require.ErrorIs(t, RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)), cataloguerecovery.ErrProtected)
+				require.ErrorIs(t, RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h)), cataloguerecovery.ErrProtected)
 				require.Equal(t, before, restorePrivacyState(t, ctx, pool))
 			})
 		}
@@ -79,7 +79,7 @@ func TestPostgresLegacyRestoreQBPrivacyRemainsSourceAndHashBound(t *testing.T) {
 VALUES($2,'synthetic-privacy','fixture',encode($1::bytea,'hex'),$1,$3,now(),10)`, evidenceHash, source, category)
 				require.NoError(t, err)
 			}
-			require.NoError(t, RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)))
+			require.NoError(t, RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h)))
 			state, events := expiryLedger(t, ctx, pool, h)
 			require.Equal(t, verdicts.VerdictRestored, state)
 			require.Equal(t, []string{verdicts.VerdictQuarantined, verdicts.VerdictRestored}, events)
@@ -105,7 +105,7 @@ func TestPostgresLegacyRestoreWaitsForNormalizedQBPrivacyCommit(t *testing.T) {
 	_, err = actor.Exec(ctx, `LOCK TABLE label_evidence IN ROW EXCLUSIVE MODE`)
 	require.NoError(t, err)
 	done := make(chan error, 1)
-	go func() { done <- RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
+	go func() { done <- RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
 	require.Eventually(t, func() bool {
 		var waiting bool
 		err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock'

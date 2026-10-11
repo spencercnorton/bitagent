@@ -200,7 +200,7 @@ func (c *crawler) doRequestMetaInfo(
 			return metainforequester.Response{}, namepolicy.ErrExcluded
 		}
 		if banErr := c.banningChecker.Check(res.Info); banErr != nil {
-			_ = c.blockingManager.Block(ctx, []protocol.ID{hash}, false)
+			_ = c.blockingManager.Block(ctx, []protocol.ID{hash}, "csam", "csam_crawler", false)
 			// Phase-C: dual-write a blocking verdict for the ban-driven
 			// block. Recording-only, after the block (never rolls it back).
 			c.recordBlockingVerdict(ctx, hash)

@@ -56,7 +56,7 @@ FROM jsonb_populate_record(null::torrents,(SELECT torrent_snapshot FROM junkpurg
 			ledgerState, ledgerEvents := expiryLedger(t, ctx, pool, h)
 			var rawBefore, rawAfter string
 			require.NoError(t, pool.QueryRow(ctx, `SELECT coalesce(jsonb_agg(to_jsonb(t)),'[]'::jsonb)::text FROM torrents t`).Scan(&rawBefore))
-			err := RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h))
+			err := RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h))
 			require.ErrorIs(t, err, want)
 			require.Equal(t, before, expirySnapshot(t, ctx, pool, h))
 			state, events := expiryLedger(t, ctx, pool, h)
@@ -82,7 +82,7 @@ func TestPostgresLegacyRestoreSeesPrivateAuthorityBeforeFirstSnapshot(t *testing
 	require.NoError(t, err)
 	done := make(chan error, 1)
 	go func() {
-		done <- RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h))
+		done <- RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h))
 	}()
 	require.Eventually(t, func() bool {
 		var waiting bool
@@ -118,7 +118,7 @@ func TestPostgresLegacyRestoreDoesNotProjectOversizedSnapshot(t *testing.T) {
 			require.Nil(t, torrent)
 			require.Nil(t, files)
 			require.Nil(t, sources)
-			err = RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h))
+			err = RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h))
 			require.ErrorIs(t, err, cataloguerecovery.ErrCapacity)
 			var modified bool
 			require.NoError(t, pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM torrents) OR EXISTS(SELECT 1 FROM queue_jobs) OR NOT EXISTS(SELECT 1 FROM junkpurge_quarantine WHERE info_hash=$1)`, h).Scan(&modified))
@@ -140,7 +140,7 @@ CREATE TRIGGER restore_capacity_barrier BEFORE INSERT ON torrents FOR EACH ROW E
 	_, err = actor.Exec(ctx, `SELECT pg_advisory_xact_lock(9459,1)`)
 	require.NoError(t, err)
 	done := make(chan error, 1)
-	go func() { done <- RestoreQuarantined(ctx, pool, vs, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
+	go func() { done <- RestoreQuarantined(ctx, pool, vs, nil, zap.NewNop().Sugar(), hex.EncodeToString(h)) }()
 	require.Eventually(t, func() bool {
 		var waiting bool
 		err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%INSERT INTO torrents (info_hash, name, size, private%')`).Scan(&waiting)

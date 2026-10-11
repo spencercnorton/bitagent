@@ -8,10 +8,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sort"
+
 	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"github.com/spencercnorton/bitagent/internal/llmwork"
-	"sort"
+	"github.com/spencercnorton/bitagent/internal/verdicts"
 
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/model"
@@ -24,6 +26,7 @@ type persistPayload struct {
 	torrentContents  []model.TorrentContent
 	deleteIDs        []string
 	deleteInfoHashes []protocol.ID
+	deleteReasons    []string
 	addTags          map[protocol.ID]map[string]struct{}
 }
 
@@ -191,7 +194,16 @@ func (c processor) persist(ctx context.Context, payload persistPayload) error {
 		}
 	}
 	if len(payload.deleteInfoHashes) > 0 {
-		return c.blockingManager.Block(ctx, payload.deleteInfoHashes, false)
+		grouped := make(map[string][]protocol.ID)
+		for i, h := range payload.deleteInfoHashes {
+			grouped[payload.deleteReasons[i]] = append(grouped[payload.deleteReasons[i]], h)
+		}
+		for reason, hashes := range grouped {
+			if err := c.blockingManager.Block(ctx, hashes, verdicts.MechanismClassifierDelete, reason, false); err != nil {
+				return err
+			}
+		}
+		return c.blockingManager.Flush(ctx)
 	}
 	return nil
 }

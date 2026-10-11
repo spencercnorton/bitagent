@@ -60,8 +60,8 @@ func (r processRunnerStub) Run(
 	return r.run(torrent)
 }
 
+var _ blocking.Manager = (*recordingBlockingManager)(nil)
 type recordingBlockingManager struct {
-	blocking.Manager
 	mu      sync.Mutex
 	blocked []protocol.ID
 	err     error
@@ -70,6 +70,8 @@ type recordingBlockingManager struct {
 func (m *recordingBlockingManager) Block(
 	_ context.Context,
 	hashes []protocol.ID,
+	_ string,
+	_ string,
 	_ bool,
 ) error {
 	m.mu.Lock()
@@ -80,6 +82,8 @@ func (m *recordingBlockingManager) Block(
 	m.blocked = append(m.blocked, hashes...)
 	return nil
 }
+
+func (m *recordingBlockingManager) Flush(context.Context) error { return nil }
 
 func (m *recordingBlockingManager) blockedHashes() []protocol.ID {
 	m.mu.Lock()
@@ -424,3 +428,5 @@ func expectReleaseAttributeReads(mock sqlmock.Sqlmock, hash protocol.ID, name st
 	mock.ExpectQuery(`SELECT .* FROM "torrents".*FOR UPDATE`).WithArgs(hash.Bytes(), 1).WillReturnRows(sqlmock.NewRows([]string{"info_hash", "name"}).AddRow(hash.Bytes(), name))
 	mock.ExpectQuery(`SELECT .* FROM "torrent_contents".*FOR UPDATE`).WithArgs(hash.Bytes()).WillReturnRows(sqlmock.NewRows([]string{"info_hash", "release_attributes"}))
 }
+
+func (m *recordingBlockingManager) Filter(ctx context.Context, hashes []protocol.ID) ([]protocol.ID, error) { return hashes, nil }

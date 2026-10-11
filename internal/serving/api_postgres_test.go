@@ -277,7 +277,7 @@ FROM torrents t WHERE info_hash=decode($1,'hex')`, hashes[4])
 		require.NoError(t, gqlhttp.New(gqlhttp.Params{Schema: lazy.New(func() (graphql.ExecutableSchema, error) { return es, nil })}).Option.Apply(engine))
 		client := adapter.NewWithFilters(consumer, nil, false, nil, adapter.FreshnessConfig{})
 		require.NoError(t, torznabhttp.New(lazy.New(func() (torznab.Client, error) { return client, nil }), torznab.NewDefaultConfig(), nil).Apply(engine))
-		require.NoError(t, quarantinehttp.New(lazyPool, junkpurge.Config{}, nil, zap.NewNop().Sugar()).Apply(engine))
+		require.NoError(t, quarantinehttp.New(quarantinehttp.Params{Pool: lazyPool, Config: junkpurge.Config{}, Logger: zap.NewNop().Sugar()}).Apply(engine))
 		return engine
 	}
 	graphqlRequest := func(engine *gin.Engine, query string) map[string]any {
