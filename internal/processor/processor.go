@@ -155,6 +155,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		infoHashesToDelete []protocol.ID
 		deferredHashes     []protocol.ID
 		deleteObservations []deleteObservation
+		deleteReasons      []string
 	)
 
 	tcs := make([]model.TorrentContent, 0, len(searchResult.Torrents))
@@ -218,7 +219,18 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 				}
 				if errors.Is(classifyErr, classification.ErrDeleteTorrent) {
 					infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
+						deleteReasons = append(deleteReasons, "content_filter")
 					deleteObservations = append(deleteObservations, deleteObservation{cl.ContentType, classifyErr})
+						filePathsForEvidence := make([]string, 0, len(torrent.Files))
+						for _, f := range torrent.Files {
+							filePathsForEvidence = append(filePathsForEvidence, f.Path)
+						}
+						evidenceBytes := classifierDeleteEvidence(workflowName, classifyErr, torrent, filePathsForEvidence, c.deleteAuditBudget)
+						reason := string(evidenceBytes)
+						if reason == "" {
+							reason = "classifier_delete"
+						}
+						deleteReasons = append(deleteReasons, reason)
 					// The independent CSAM observation exporter verifies the
 					// name and paths even when destructive admission is held.
 					filePaths := make([]string, 0, len(torrent.Files))
@@ -299,6 +311,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 					}
 					if !d.Allow {
 						infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
+						deleteReasons = append(deleteReasons, "content_filter")
 						return
 					}
 					if d.Review && d.WouldReview && !d.WouldDrop && d.Reason == contentfilter.ReasonLLMNonEnglish {
@@ -339,6 +352,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		applications:     preserved,
 		deleteIDs:        idsToDelete,
 		deleteInfoHashes: infoHashesToDelete,
+			deleteReasons:    deleteReasons,
 		addTags:          tagsToAdd,
 	}
 

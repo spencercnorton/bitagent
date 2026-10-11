@@ -1430,7 +1430,7 @@ INSERT INTO junkpurge_sync_claims (
 		Judgment{Verdict: verdictJunk, Confidence: 0.99}, "sync junk",
 	))
 	quarantinedHashes, err := quarantineJunk(
-		ctx, pool, [][]byte{hashE}, 0.8, 7*24*time.Hour, "sync-a",
+		ctx, pool, nil, [][]byte{hashE}, 0.8, 7*24*time.Hour, "sync-a",
 	)
 	require.ErrorIs(t, err, cataloguerecovery.ErrDisabled)
 	require.Empty(t, quarantinedHashes)
@@ -1457,7 +1457,7 @@ INSERT INTO junkpurge_sync_claims (
 	)
 	require.NoError(t, err)
 	quarantinedHashes, err = quarantineJunk(
-		ctx, pool, [][]byte{hashF}, 0.8, 7*24*time.Hour, "sync-a",
+		ctx, pool, nil, [][]byte{hashF}, 0.8, 7*24*time.Hour, "sync-a",
 	)
 	require.ErrorIs(t, err, cataloguerecovery.ErrDisabled)
 	require.Empty(t, quarantinedHashes)

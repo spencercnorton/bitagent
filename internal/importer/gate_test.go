@@ -46,7 +46,7 @@ func (f fakeBlocking) Filter(_ context.Context, hs []protocol.ID) ([]protocol.ID
 	}
 	return out, nil
 }
-func (fakeBlocking) Block(context.Context, []protocol.ID, bool) error { return nil }
+func (fakeBlocking) Block(context.Context, []protocol.ID, string, string, bool) error { return nil }
 func (fakeBlocking) Flush(context.Context) error                      { return nil }
 
 func mkItems(firstBytes ...byte) []Item {

@@ -286,7 +286,7 @@ func (p Params) purge(ctx *cli.Context, d *dao.Query, typeNames []string, totalT
 		// The writer must capture and remove the complete source atomically.
 		// Never delete first: recovery-off, protection and capacity failures
 		// retain the raw rows and cannot leave a false crawler block.
-		if blockErr := bm.Block(ctx.Context, hashes, true); blockErr != nil {
+		if blockErr := bm.Block(ctx.Context, hashes, "blocking", "purge_cmd", true); blockErr != nil {
 			return blockErr
 		}
 		deleted += int64(len(hashes))

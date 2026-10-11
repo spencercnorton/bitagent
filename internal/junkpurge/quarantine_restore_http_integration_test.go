@@ -98,7 +98,7 @@ func TestQuarantineHTTPRestorePreservesSourcesAndServing(t *testing.T) {
 	require.NoError(t, err)
 	client := adapter.NewWithFilters(s, nil, false, nil, adapter.FreshnessConfigFromTorznab(torznab.NewDefaultConfig())).WithVerdicts(vs, true, nil)
 	e := gin.New()
-	require.NoError(t, quarantinehttp.New(lazyPool, junkpurge.Config{}, vs, zap.NewNop().Sugar()).Apply(e))
+	require.NoError(t, quarantinehttp.New(quarantinehttp.Params{Pool: lazyPool, Config: junkpurge.Config{}, Verdicts: vs, Logger: zap.NewNop().Sugar()}).Apply(e))
 	require.NoError(t, torznabhttp.New(lazy.New(func() (torznab.Client, error) { return client, nil }), torznab.NewDefaultConfig(), nil).Apply(e))
 	request := func(method, path string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()

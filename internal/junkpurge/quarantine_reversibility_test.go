@@ -12,10 +12,10 @@ import (
 )
 
 func TestRuntimeQuarantineRequiresCompleteRecoveryBeforeAnyMutation(t *testing.T) {
-	hashes, err := quarantineJunk(context.Background(), nil, [][]byte{bytes20(1)}, 0.99, 24*time.Hour, "synthetic-owner")
+	hashes, err := quarantineJunk(context.Background(), nil, nil, [][]byte{bytes20(1)}, 0.99, 24*time.Hour, "synthetic-owner")
 	require.ErrorIs(t, err, cataloguerecovery.ErrDisabled)
 	require.Empty(t, hashes)
-	hashes, err = quarantineJunk(context.Background(), nil, nil, 0.99, 24*time.Hour, "synthetic-owner")
+	hashes, err = quarantineJunk(context.Background(), nil, nil, nil, 0.99, 24*time.Hour, "synthetic-owner")
 	require.NoError(t, err)
 	require.Empty(t, hashes)
 }

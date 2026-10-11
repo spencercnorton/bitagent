@@ -135,7 +135,7 @@ func (s *Store) storageCheck(ctx context.Context, tx pgx.Tx) error {
 // blocking verdict and audit events commit together, or all roll back. It never
 // truncates a snapshot or refunds a retained budget. A missing unsnapshotted raw
 // row is an error; historical losses cannot be fabricated into recovery receipts.
-func (s *Store) RemoveBatch(ctx context.Context, hashes [][]byte, reason string, now time.Time) ([]Snapshot, error) {
+func (s *Store) RemoveBatch(ctx context.Context, hashes [][]byte, mechanism, reason string, now time.Time) ([]Snapshot, error) {
 	if !s.cfg.Enabled {
 		return nil, ErrDisabled
 	}
@@ -184,7 +184,7 @@ func (s *Store) RemoveBatch(ctx context.Context, hashes [][]byte, reason string,
 		if err = lockHash(ctx, tx, hash); err != nil {
 			return nil, err
 		}
-		snap, e := s.removeTx(ctx, tx, hash, reason, now, &used, &count)
+		snap, e := s.removeTx(ctx, tx, hash, mechanism, reason, now, &used, &count)
 		if e != nil {
 			return nil, e
 		}
@@ -198,14 +198,14 @@ func (s *Store) RemoveBatch(ctx context.Context, hashes [][]byte, reason string,
 	}
 	return out, nil
 }
-func (s *Store) Remove(ctx context.Context, hash []byte, reason string, now time.Time) (Snapshot, error) {
-	r, e := s.RemoveBatch(ctx, [][]byte{hash}, reason, now)
+func (s *Store) Remove(ctx context.Context, hash []byte, mechanism, reason string, now time.Time) (Snapshot, error) {
+	r, e := s.RemoveBatch(ctx, [][]byte{hash}, mechanism, reason, now)
 	if e != nil {
 		return Snapshot{}, e
 	}
 	return r[0], nil
 }
-func (s *Store) removeTx(ctx context.Context, tx pgx.Tx, hash []byte, reason string, now time.Time, used, count *int64) (Snapshot, error) {
+func (s *Store) removeTx(ctx context.Context, tx pgx.Tx, hash []byte, mechanism, reason string, now time.Time, used, count *int64) (Snapshot, error) {
 	var out Snapshot
 	var locked []byte
 	err := tx.QueryRow(ctx, `select info_hash from torrents where info_hash=$1 for update`, hash).Scan(&locked)
@@ -301,7 +301,7 @@ func (s *Store) removeTx(ctx context.Context, tx pgx.Tx, hash []byte, reason str
 	if _, err = tx.Exec(ctx, `delete from torrents where info_hash=$1`, hash); err != nil {
 		return out, err
 	}
-	evID, err := recordVerdict(ctx, tx, out.ID, hash, "removed", reason)
+	evID, err := recordVerdict(ctx, tx, out.ID, hash, "removed", mechanism, reason)
 	if err != nil {
 		return out, err
 	}
@@ -384,9 +384,10 @@ func (s *Store) protected(ctx context.Context, tx pgx.Tx, hash []byte, removing 
 	}
 	return nil
 }
-func recordVerdict(ctx context.Context, tx pgx.Tx, id int64, hash []byte, state, reason string) (int64, error) {
-	verdict, mechanism := verdicts.VerdictTombstoned, verdicts.MechanismBlocking
+func recordVerdict(ctx context.Context, tx pgx.Tx, id int64, hash []byte, state, mechanism, reason string) (int64, error) {
+	verdict := verdicts.VerdictTombstoned
 	if state == "restored" {
+		verdict, mechanism = verdicts.VerdictRestored, verdicts.MechanismOperator
 		verdict, mechanism = verdicts.VerdictRestored, verdicts.MechanismOperator
 	}
 	evidence, _ := json.Marshal(map[string]any{"catalogue_recovery_snapshot": id, "contract": ContractVersion, "transition": state})
@@ -509,7 +510,7 @@ func (s *Store) Restore(ctx context.Context, id int64, now time.Time) (bool, err
 			return false, fmt.Errorf("catalogue recovery: restore %s: %w", table, err)
 		}
 	}
-	evID, err := recordVerdict(ctx, tx, id, hash, "restored", reason)
+	evID, err := recordVerdict(ctx, tx, id, hash, "restored", verdicts.MechanismOperator, reason)
 	if err != nil {
 		return false, err
 	}
