@@ -1,6 +1,6 @@
 module github.com/spencercnorton/bitagent
 
-go 1.26.8
+go 1.26.9
 
 require (
 	github.com/99designs/gqlgen v0.17.64
