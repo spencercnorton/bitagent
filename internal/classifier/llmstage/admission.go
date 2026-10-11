@@ -89,19 +89,6 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 	if (llmwork.ExecutionFrom(ctx) != nil || llmwork.ReplayOnly(ctx)) && !controlled {
 		return Decision{}, llmwork.ErrHeld
 	}
-	ok := true
-	if !controlled {
-		ok, err = s.admission.Budget.Reserve(ctx, s.cfg.DailyCallLimit, s.cfg.MonthlyCallLimit)
-	}
-	if !controlled && (err != nil || !ok) {
-		reason := "budget_exhausted"
-		if err != nil {
-			reason = "budget_unavailable"
-		}
-		s.metrics.gateRejectsTotal.WithLabelValues(reason).Inc()
-		s.retryAfter.Store(time.Now().Add(time.Minute).UnixNano())
-		return Decision{}, fmt.Errorf("type admission denied: %s", reason)
-	}
 	taskInputObject := map[string]any{
 		"min_confidence": s.cfg.MinConfidence, "live": s.cfg.EnableLive,
 	}
@@ -139,6 +126,21 @@ func (s *Stage) callOpenAI(ctx context.Context, t model.Torrent, body []byte) (D
 		s.metrics.gateRejectsTotal.WithLabelValues("already_captured").Inc()
 		return Decision{}, llmcapture.ErrCaptureUnavailable
 	}
+	ok := true
+	var budgetErr error
+	if !controlled {
+		ok, budgetErr = s.admission.Budget.Reserve(ctx, s.cfg.DailyCallLimit, s.cfg.MonthlyCallLimit)
+	}
+	if !controlled && (budgetErr != nil || !ok) {
+		reason := "budget_exhausted"
+		if budgetErr != nil {
+			reason = "budget_unavailable"
+		}
+		s.metrics.gateRejectsTotal.WithLabelValues(reason).Inc()
+		s.retryAfter.Store(time.Now().Add(time.Minute).UnixNano())
+		return Decision{}, fmt.Errorf("type admission denied: %s", reason)
+	}
+
 	key, err := llmcapture.KeyForRequest(capture)
 	if err != nil {
 		return Decision{}, err
