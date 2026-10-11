@@ -124,14 +124,14 @@ func TestOllamaTypeKeepsAdmissionGuards(t *testing.T) {
 			} else {
 				require.Zero(t, calls.Load())
 			}
-			if tc != "capture_error" && tc != "live_low_confidence" && tc != "zero_budget" && tc != "duplicate_capture" {
-			if tc == "zero_budget" || tc == "duplicate_capture" {
-				require.Len(t, audit.requests, 1)
-				require.Zero(t, s.admission.Budget.(*testBudget).used.Load())
-			}
-
-				require.Empty(t, audit.requests)
-				require.Zero(t, s.admission.Budget.(*testBudget).used.Load())
+			if tc != "capture_error" && tc != "live_low_confidence" {
+				if tc == "zero_budget" || tc == "duplicate_capture" {
+					require.Len(t, audit.requests, 1)
+					require.Zero(t, s.admission.Budget.(*testBudget).used.Load())
+				} else {
+					require.Empty(t, audit.requests)
+					require.Zero(t, s.admission.Budget.(*testBudget).used.Load())
+				}
 			}
 		})
 	}
