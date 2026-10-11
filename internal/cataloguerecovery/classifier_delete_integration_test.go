@@ -47,3 +47,22 @@ func TestPostgresClassifierDeleteListAndRestore(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, count, "torrent should be restored")
 }
+
+func TestPostgresRecoveryRejectsForgedMechanism(t *testing.T) {
+	pool := recoveryPool(t)
+	s := store(t, pool)
+	ctx := context.Background()
+
+	h1 := hash(100)
+	seed(t, pool, h1, true)
+
+	// Remove it using a fake mechanism
+	snaps, err := s.RemoveBatch(ctx, [][]byte{h1}, "content_filter", `{"workflow":"test"}`, time.Now())
+	require.NoError(t, err)
+	require.Len(t, snaps, 1)
+
+	// Attempt to restore it - should fail because 'fake_mechanism' is not allowed for recovery
+	restored, err := s.Restore(ctx, snaps[0].ID, time.Now())
+	require.Error(t, err, "restoring a snapshot with a fake mechanism should fail")
+	require.False(t, restored)
+}
