@@ -13,14 +13,9 @@ func TestPostgresClassifierDeleteListAndRestore(t *testing.T) {
 	s := store(t, pool)
 	ctx := context.Background()
 
-	// 1. Insert a torrent
+	// 1. Insert a torrent using the helper
 	h1 := hash(99)
-	tx, err := pool.Begin(ctx)
-	require.NoError(t, err)
-	_, err = tx.Exec(ctx, `insert into torrents(info_hash, name, size, files_status, discovered_at) values ($1, 'test_classifier_delete', 100, 'single', now())`, h1)
-	require.NoError(t, err)
-	err = tx.Commit(ctx)
-	require.NoError(t, err)
+	seed(t, pool, h1, true)
 
 	// 2. Remove it using RemoveBatch with 'classifier_delete'
 	snaps, err := s.RemoveBatch(ctx, [][]byte{h1}, "classifier_delete", `{"workflow":"test"}`, time.Now())
