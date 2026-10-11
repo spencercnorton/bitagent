@@ -64,6 +64,7 @@ type Params struct {
 	Capture llmcapture.Capturer `optional:"true"`
 	// Verdicts is the T3 phase-A ledger (nil-safe optional).
 	Verdicts *verdicts.Store `optional:"true"`
+	Recovery *cataloguerecovery.Store `optional:"true"`
 }
 
 type Result struct {
@@ -85,6 +86,7 @@ func New(p Params) Result {
 		logger:          p.Logger.Named("junkpurge"),
 		capture:         p.Capture,
 		verdicts:        p.Verdicts,
+		recovery:        p.Recovery,
 		batchLeaseOwner: newBatchLeaseOwner(),
 	}
 	return Result{Worker: worker.NewWorker(workerKey, fx.Hook{
@@ -107,6 +109,7 @@ type purgeWorker struct {
 	// ledger alongside the existing bookkeeping. Best-effort — a ledger
 	// error is logged and never breaks the purge path.
 	verdicts *verdicts.Store
+	recovery *cataloguerecovery.Store
 
 	// batchLeaseOwner makes provider POST boundaries single-owner across
 	// multiple BitAgent replicas while allowing recovery after lease expiry.
@@ -849,7 +852,7 @@ func (w *purgeWorker) runCycle(ctx context.Context) {
 	}
 
 	quarantinedHashes, err := quarantineJunk(
-		ctx, pool, junk, w.cfg.MinConfidence, w.cfg.MinAge,
+		ctx, pool, w.recovery, junk, w.cfg.MinConfidence, w.cfg.MinAge,
 		w.batchLeaseOwner,
 	)
 	if err == nil && w.verdicts != nil {
@@ -1189,6 +1192,7 @@ WHERE info_hash=ANY($1)
 func quarantineJunk(
 	ctx context.Context,
 	pool *pgxpool.Pool,
+	recoveryStore *cataloguerecovery.Store,
 	infoHashes [][]byte,
 	minConfidence float64,
 	minAge time.Duration,
@@ -1197,10 +1201,24 @@ func quarantineJunk(
 	if len(infoHashes) == 0 {
 		return nil, nil
 	}
-	// The legacy snapshot captures only raw/files/sources, losing classified
-	// claims, pieces and histories on cascade. Until this caller has qualified
-	// the complete bounded recovery contract, retain the judgment and source.
-	return nil, cataloguerecovery.ErrDisabled
+	if recoveryStore == nil || !recoveryStore.Enabled() {
+		return nil, cataloguerecovery.ErrDisabled
+	}
+	var quarantined [][]byte
+	for i := 0; i < len(infoHashes); i += cataloguerecovery.MaxBatch {
+		endIdx := i + cataloguerecovery.MaxBatch
+		if endIdx > len(infoHashes) {
+			endIdx = len(infoHashes)
+		}
+		snaps, err := recoveryStore.RemoveBatch(ctx, infoHashes[i:endIdx], "LLM junk verdict past minimum age", time.Now().UTC())
+		if err != nil {
+			return quarantined, err
+		}
+		for _, snap := range snaps {
+			quarantined = append(quarantined, snap.InfoHash)
+		}
+	}
+	return quarantined, nil
 }
 
 // The quarantine expiry SQL lives in constants so TestQuarantineExpiryIsNotDestructive
