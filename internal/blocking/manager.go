@@ -112,7 +112,7 @@ func (m *manager) Block(ctx context.Context, hashes []protocol.ID, mechanism, re
 		for i, h := range hashes {
 			raw[i] = h.Bytes()
 		}
-		if _, err := m.recovery.RemoveBatch(ctx, raw, "blocking", "configured_block", time.Now().UTC()); err != nil {
+		if _, err := m.recovery.RemoveBatch(ctx, raw, mechanism, reason, time.Now().UTC()); err != nil {
 			return err
 		}
 	}
