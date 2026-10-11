@@ -82,7 +82,7 @@ func TestOllamaTypeNativeRequestCaptureShadowAndCache(t *testing.T) {
 }
 
 func TestOllamaTypeKeepsAdmissionGuards(t *testing.T) {
-	for _, tc := range []string{"unknown_backend", "paid_host", "provider_pin", "data_sharing", "missing_key", "native_private", "evidence_private", "evidence_error", "zero_budget", "capture_error", "live_low_confidence"} {
+	for _, tc := range []string{"unknown_backend", "paid_host", "provider_pin", "data_sharing", "missing_key", "native_private", "evidence_private", "evidence_error", "zero_budget", "capture_error", "duplicate_capture", "live_low_confidence"} {
 		t.Run(tc, func(t *testing.T) {
 			var calls atomic.Int32
 			s := newOllamaStage(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1); respondWith(w, "movie", .1) })
@@ -107,6 +107,9 @@ func TestOllamaTypeKeepsAdmissionGuards(t *testing.T) {
 				s.privacy = fakePrivacy{err: errFake}
 			case "zero_budget":
 				s.cfg.DailyCallLimit = 0
+			case "duplicate_capture":
+				audit.duplicate = true
+
 			case "capture_error":
 				audit.captureErr = errFake
 			case "live_low_confidence":
@@ -122,8 +125,13 @@ func TestOllamaTypeKeepsAdmissionGuards(t *testing.T) {
 				require.Zero(t, calls.Load())
 			}
 			if tc != "capture_error" && tc != "live_low_confidence" {
-				require.Empty(t, audit.requests)
-				require.Zero(t, s.admission.Budget.(*testBudget).used.Load())
+				if tc == "zero_budget" || tc == "duplicate_capture" {
+					require.Len(t, audit.requests, 1)
+					require.Zero(t, s.admission.Budget.(*testBudget).used.Load())
+				} else {
+					require.Empty(t, audit.requests)
+					require.Zero(t, s.admission.Budget.(*testBudget).used.Load())
+				}
 			}
 		})
 	}

@@ -927,6 +927,9 @@ func (c *Client) captureEnvelope(ctx context.Context, req llmcapture.Request) er
 		pending.outcome = outcome
 		pending.infoHash = append([]byte(nil), req.InfoHash...)
 	}
+	if (c.dispatch == nil || !c.dispatch.Enabled()) && outcome == llmcapture.OutcomeDuplicate {
+		return fmt.Errorf("%w: matcher request is already captured", llmcapture.ErrCaptureUnavailable)
+	}
 	return nil
 }
 

@@ -17,6 +17,8 @@ import (
 type captureProbe struct {
 	err      error
 	requests []llmcapture.Request
+	duplicate bool
+
 }
 
 func (*captureProbe) Enabled() bool { return true }
@@ -35,6 +37,10 @@ func (p *captureProbe) Capture(
 	req llmcapture.Request,
 ) (llmcapture.Outcome, error) {
 	p.requests = append(p.requests, req)
+	if p.duplicate {
+		return llmcapture.OutcomeDuplicate, p.err
+	}
+
 	return llmcapture.OutcomeRecorded, p.err
 }
 
@@ -330,4 +336,15 @@ func TestRerankCaptureSeparatesActualLocalAndAPICalls(t *testing.T) {
 		probe.requests[1].CandidateSource,
 	)
 	assert.Equal(t, int32(2), atomic.LoadInt32(calls))
+}
+
+func TestExtractDuplicateCaptureStopsHTTP(t *testing.T) {
+	srv, calls := chatServer(t, `{"title":"The Raid","year":2011,"type":"movie"}`)
+	defer srv.Close()
+	probe := &captureProbe{duplicate: true}
+	c := matcherClientWithCapture(srv.URL, probe)
+
+	_, err := c.Extract(context.Background(), mediaTorrent("the-raid-2011.mkv"))
+	require.ErrorIs(t, err, llmcapture.ErrCaptureUnavailable)
+	require.Equal(t, int32(0), atomic.LoadInt32(calls), "HTTP must not be called on duplicate capture")
 }
