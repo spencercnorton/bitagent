@@ -1210,7 +1210,7 @@ func quarantineJunk(
 		if endIdx > len(infoHashes) {
 			endIdx = len(infoHashes)
 		}
-		snaps, err := recoveryStore.RemoveBatch(ctx, infoHashes[i:endIdx], "LLM junk verdict past minimum age", time.Now().UTC())
+		snaps, err := recoveryStore.RemoveBatch(ctx, infoHashes[i:endIdx], "junkpurge", "LLM junk verdict past minimum age", time.Now().UTC())
 		if err != nil {
 			return quarantined, err
 		}

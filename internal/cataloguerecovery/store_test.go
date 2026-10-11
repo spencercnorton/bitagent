@@ -10,7 +10,7 @@ import (
 func TestDisabledAndExplicitBudgets(t *testing.T) {
 	s, err := NewStore(nil, Config{})
 	require.NoError(t, err)
-	_, err = s.Remove(context.Background(), nil, "", time.Time{})
+	_, err = s.Remove(context.Background(), nil, "blocking", "", time.Time{})
 	require.ErrorIs(t, err, ErrDisabled)
 	_, err = s.Restore(context.Background(), 1, time.Now())
 	require.ErrorIs(t, err, ErrDisabled)

@@ -19,7 +19,7 @@ import (
 
 type Manager interface {
 	Filter(ctx context.Context, hashes []protocol.ID) ([]protocol.ID, error)
-	Block(ctx context.Context, hashes []protocol.ID, flush bool) error
+	Block(ctx context.Context, hashes []protocol.ID, mechanism, reason string, flush bool) error
 	Flush(ctx context.Context) error
 }
 
@@ -98,7 +98,7 @@ func (m *manager) Filter(ctx context.Context, hashes []protocol.ID) ([]protocol.
 	return filtered, nil
 }
 
-func (m *manager) Block(ctx context.Context, hashes []protocol.ID, flush bool) error {
+func (m *manager) Block(ctx context.Context, hashes []protocol.ID, mechanism, reason string, flush bool) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -112,7 +112,7 @@ func (m *manager) Block(ctx context.Context, hashes []protocol.ID, flush bool) e
 		for i, h := range hashes {
 			raw[i] = h.Bytes()
 		}
-		if _, err := m.recovery.RemoveBatch(ctx, raw, "configured_block", time.Now().UTC()); err != nil {
+		if _, err := m.recovery.RemoveBatch(ctx, raw, "blocking", "configured_block", time.Now().UTC()); err != nil {
 			return err
 		}
 	}
