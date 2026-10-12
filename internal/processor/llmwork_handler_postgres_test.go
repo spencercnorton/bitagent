@@ -67,6 +67,12 @@ func deferredTypeHarnessPolicy(t *testing.T, beforeResponse func(*pgxpool.Pool, 
 	dispatch := llmcapture.NewPostgresDispatchController(captureStore, true)
 	workCfg := llmwork.NewDefaultConfig()
 	workCfg.Enabled = true
+	// Lifecycle fixtures assert durable states rather than the speed of cold
+	// prepared statements under a shared CI race runner. The real default
+	// admission deadline is independently exercised by
+	// TestPostgresDefaultAdmissionDeadlineStopsBeforeTaskOrEventCommit in internal/llmwork
+	// and TestPostgresDeferredEnqueueDefaultTimeoutEnforced in internal/processor.
+	workCfg.EnqueueTimeout = time.Second
 	workCfg.SpreadAdmission = false
 	workCfg.TimeBuckets = 1
 	work, err := llmwork.NewStore(workCfg, pg)
@@ -392,4 +398,64 @@ func TestPostgresDirectAdmissionAndApplicationUseCurrentStoredName(t *testing.T)
 		return classification.Result{}, nil
 	}}
 	require.NoError(t, c.Process(ctx, MessageParams{InfoHashes: []protocol.ID{hash}, SkipContentFilter: true}))
+}
+
+func TestPostgresDeferredEnqueueDefaultTimeoutEnforced(t *testing.T) {
+	// Verifies that when EnqueueTimeout is at the default (100ms),
+	// an advisory lock blocking admission causes work.Enqueue to return
+	// context.DeadlineExceeded within a bounded window (< 1s), proving the
+	// admission deadline is actively enforced in the deferred work pipeline.
+	pool, backend := deferredApplyFixture(t)
+	ctx := context.Background()
+	var hash protocol.ID
+	hash[0] = 77
+	sourceName := "Deadline.Test.2026.mkv"
+	for _, q := range []string{
+		`INSERT INTO torrents(info_hash,name,size,private,files_status,files_count,created_at,updated_at)VALUES($1,$2,734003200,false,'multi',1,now(),now())`,
+		`INSERT INTO torrent_files(info_hash,"index",path,size,created_at,updated_at) VALUES($1,0,'Deadline.Test.2026.mkv',734003200,now(),now())`,
+		`INSERT INTO torrent_contents(info_hash,size,is_anime,created_at,updated_at)VALUES($1,734003200,false,now(),now())`,
+	} {
+		args := []any{hash.Bytes()}
+		if strings.Contains(q, "$2") {
+			args = append(args, sourceName)
+		}
+		_, err := pool.Exec(ctx, q, args...)
+		require.NoError(t, err)
+	}
+	source := deferredTaskSource(t, backend, hash)
+	pg := lazy.New(func() (*pgxpool.Pool, error) { return pool, nil })
+	_, err := pg.Get()
+	require.NoError(t, err)
+	workCfg := llmwork.NewDefaultConfig()
+	workCfg.Enabled = true
+	require.Equal(t, 100*time.Millisecond, workCfg.EnqueueTimeout)
+	work, err := llmwork.NewStore(workCfg, pg)
+	require.NoError(t, err)
+
+	blocker, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	defer blocker.Release()
+	_, err = blocker.Exec(ctx, `SELECT pg_advisory_lock(hashtext('llm_work.'||$1))`, string(llmwork.Type))
+	require.NoError(t, err)
+	defer blocker.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtext('llm_work.'||$1))`, string(llmwork.Type))
+
+	started := time.Now()
+	_, err = work.Enqueue(ctx, llmwork.Draft{
+		Kind:         llmwork.Type,
+		InfoHash:     hash.Bytes(),
+		SourceDigest: llmwork.SourceDigest(source),
+		PolicyDigest: llmwork.Digest("policy"),
+		InputDigest:  llmwork.Digest("input"),
+		FamilyDigest: llmwork.Digest("family"),
+		Payload:      []byte(`{}`),
+		DailyLimit:   20,
+		MonthlyLimit: 20,
+	})
+	elapsed := time.Since(started)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Less(t, elapsed, time.Second, "admission deadline must fail fast before 1s")
+
+	var taskCount int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM llm_work_tasks WHERE info_hash=$1`, hash.Bytes()).Scan(&taskCount))
+	require.Zero(t, taskCount, "timed-out enqueue must not commit task")
 }

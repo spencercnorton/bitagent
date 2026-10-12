@@ -219,7 +219,6 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 				}
 				if errors.Is(classifyErr, classification.ErrDeleteTorrent) {
 					infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
-						deleteReasons = append(deleteReasons, "content_filter")
 					deleteObservations = append(deleteObservations, deleteObservation{cl.ContentType, classifyErr})
 						filePathsForEvidence := make([]string, 0, len(torrent.Files))
 						for _, f := range torrent.Files {

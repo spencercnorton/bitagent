@@ -2,6 +2,7 @@ package processor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/verdicts"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -60,19 +62,27 @@ func (r processRunnerStub) Run(
 	return r.run(torrent)
 }
 
+type blockRecord struct {
+	hashes    []protocol.ID
+	mechanism string
+	reason    string
+	permanent bool
+}
+
 var _ blocking.Manager = (*recordingBlockingManager)(nil)
 type recordingBlockingManager struct {
 	mu      sync.Mutex
 	blocked []protocol.ID
+	records []blockRecord
 	err     error
 }
 
 func (m *recordingBlockingManager) Block(
 	_ context.Context,
 	hashes []protocol.ID,
-	_ string,
-	_ string,
-	_ bool,
+	mechanism string,
+	reason string,
+	permanent bool,
 ) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -80,6 +90,12 @@ func (m *recordingBlockingManager) Block(
 		return m.err
 	}
 	m.blocked = append(m.blocked, hashes...)
+	m.records = append(m.records, blockRecord{
+		hashes:    append([]protocol.ID(nil), hashes...),
+		mechanism: mechanism,
+		reason:    reason,
+		permanent: permanent,
+	})
 	return nil
 }
 
@@ -89,6 +105,12 @@ func (m *recordingBlockingManager) blockedHashes() []protocol.ID {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]protocol.ID(nil), m.blocked...)
+}
+
+func (m *recordingBlockingManager) blockRecords() []blockRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]blockRecord(nil), m.records...)
 }
 
 type processExporterStub struct {
@@ -233,6 +255,74 @@ func TestProcessContentFilterOnlyDeletePersistsWithoutInsert(t *testing.T) {
 	}
 	if got := blocker.blockedHashes(); len(got) != 1 || got[0] != hash {
 		t.Fatalf("blocked hashes = %v, want [%s]", got, hash)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestProcessClassifierDeletePreservesEvidenceReasonNotContentFilter(t *testing.T) {
+	hash1 := processTestHash(1)
+	hash2 := processTestHash(2)
+	p, mock, blocker := newProcessTestProcessor(t,
+		[]model.Torrent{
+			processTestTorrent(hash1, "classifier delete title", "mkv"),
+			processTestTorrent(hash2, "content filter delete title", "iso"),
+		},
+		processRunnerStub{run: func(torrent model.Torrent) (classification.Result, error) {
+			if torrent.InfoHash == hash1 {
+				return classification.Result{}, classification.RuntimeError{
+					Path:  []string{"rules", "drop_title"},
+					Cause: classification.ErrDeleteTorrent,
+				}
+			}
+			return classification.Result{}, nil
+		}},
+	)
+	cfg := contentfilter.NewDefaultConfig()
+	cfg.Enabled = true
+	cfg.Enforce = true
+	cfg.BlockedExtensions = []string{"iso"}
+	p.contentFilter = contentfilter.New(cfg)
+
+	if err := p.Process(context.Background(), MessageParams{InfoHashes: []protocol.ID{hash1, hash2}}); err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	records := blocker.blockRecords()
+	if len(records) != 2 {
+		t.Fatalf("expected 2 block records, got %d: %+v", len(records), records)
+	}
+
+	var foundClassifier, foundContentFilter bool
+	for _, rec := range records {
+		if rec.reason == "content_filter" {
+			foundContentFilter = true
+			if len(rec.hashes) != 1 || rec.hashes[0] != hash2 {
+				t.Errorf("content_filter reason assigned to %v, want [%s]", rec.hashes, hash2)
+			}
+			if rec.mechanism != verdicts.MechanismClassifierDelete {
+				t.Errorf("content_filter mechanism = %q, want %q", rec.mechanism, verdicts.MechanismClassifierDelete)
+			}
+		} else {
+			foundClassifier = true
+			if len(rec.hashes) != 1 || rec.hashes[0] != hash1 {
+				t.Errorf("classifier evidence reason assigned to %v, want [%s]", rec.hashes, hash1)
+			}
+			if rec.mechanism != verdicts.MechanismClassifierDelete {
+				t.Errorf("classifier mechanism = %q, want %q", rec.mechanism, verdicts.MechanismClassifierDelete)
+			}
+			var ev map[string]any
+			if err := json.Unmarshal([]byte(rec.reason), &ev); err != nil {
+				t.Errorf("classifier reason %q is not valid json: %v", rec.reason, err)
+			}
+		}
+	}
+	if !foundClassifier {
+		t.Errorf("did not find block record with classifier delete evidence reason")
+	}
+	if !foundContentFilter {
+		t.Errorf("did not find block record with content_filter reason")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations: %v", err)
