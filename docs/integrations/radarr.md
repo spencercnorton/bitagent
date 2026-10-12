@@ -13,7 +13,7 @@ BitAgent's Torznab endpoint speaks Radarr's wire format natively. Add it as a Cu
    | Enable | ✓ |
    | URL | `http://bitagent:3333/torznab` (compose) or `https://bitagent.example.com/torznab` (public) |
    | API Key | your `TORZNAB_API_KEY` |
-   | Categories | `2000` (Movies), `2030` (Movies/SD), `2040` (Movies/HD), `2050` (Movies/UHD) |
+   | Categories | `2000` (Movies), `2030` (Movies/SD), `2040` (Movies/HD), `2045` (Movies/UHD) |
    | Multi Languages | leave blank unless you index regional releases |
    | Priority | `25–50` per your stack |
 

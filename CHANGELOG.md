@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clarify backend setup, test instructions and classification documentation; correct the Radarr UHD category to 2045.
+
 ## 4.5.2 — 2026-10-08
 
 - Reserve half of each bounded seed batch for stale rechecks so continuous new

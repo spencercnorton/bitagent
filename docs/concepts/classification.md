@@ -23,7 +23,8 @@ flowchart LR
 Each stage solves a different problem.
 
 - **Canonical preempt** is *free*. If we already know what this infohash is — because Sonarr or Radarr just grabbed it as a specific episode — there's nothing to compute.
-- **CEL rules** are *cheap and deterministic*. They handle the long tail of common cases (a release name with `S01E14` is a TV episode; a 50 MB `.mp3` is music) at <1 ms per torrent.
+- **CEL rules** are *cheap and deterministic*. They handle common cases (a release name with `S01E14` is a TV episode; a 50 MB
+`.mp3` is music) at <1 ms per torrent.
 - **LLM rerank** is *expensive but specialised*. It handles ambiguous edge cases — a release name that doesn't fit any pattern, a torrent with mixed file types — at ~1 s per inference. Aggressively gated and aggressively cached, so most lookups are free.
 
 In production, the typical mix is roughly: 20–30% canonical preempt, 65–75% CEL, 0–5% LLM (when the stage is enabled at all). The LLM stage is opt-in and disabled by default.
@@ -71,7 +72,7 @@ You can inspect the live rules:
 bitagent classifier show --format yaml
 ```
 
-Rules are bundled in the binary; they are *not* user-editable at runtime. Rule changes ship as merge requests against the bitagent repo. After a rule change deploys, run `bitagent reprocess` to apply the new logic to already-indexed torrents.
+Rules are bundled in the binary; they are *not* user-editable at runtime. Submit rule changes as pull requests in this repository. After a rule change deploys, run `bitagent reprocess` to apply the new logic to already-indexed torrents.
 
 Metrics:
 

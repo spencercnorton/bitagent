@@ -17,7 +17,7 @@ openssl rand -hex 32   # POSTGRES_PASSWORD
 openssl rand -hex 32   # TORZNAB_API_KEY
 ```
 
-Store the generated values in the ignored environment file, then run:
+Save the generated values in `examples/.env.public`, then run:
 
 ```sh
 docker compose -f examples/docker-compose.public.yml --env-file examples/.env.public config --quiet

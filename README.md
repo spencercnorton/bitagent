@@ -28,7 +28,7 @@ docker compose -f examples/docker-compose.public.yml --env-file examples/.env.pu
 curl -s localhost:3333/metrics | grep dht_crawler_persisted   # climbing within a minute
 ```
 
-Then add `http://<host>:3333/torznab/` as a Torznab indexer in Prowlarr (or in each \*arr directly — [per-app guides](docs/integrations/sonarr.md)), and point the \*arr's webhook at `/evidence/arr/<instance>` so the evidence loop closes ([`docs/evidence.md`](docs/evidence.md)). GraphQL accepts JSON `POST` requests at `/graphql`, and Prometheus metrics are available at `/metrics`. Set a Torznab key and protect the remaining APIs before exposing them beyond a trusted network. [`examples/README.md`](examples/README.md) covers the stack in detail.
+Then add `http://<host>:3333/torznab/` as a Torznab indexer in Prowlarr (or in each \*arr directly — [per-app guides](docs/integrations/sonarr.md)), and set the \*arr webhook URL to `http://<host>:3333/evidence/arr/<instance>` so the evidence loop closes ([`docs/evidence.md`](docs/evidence.md)). GraphQL accepts JSON `POST` requests at `/graphql`, and Prometheus metrics are available at `/metrics`. Set a Torznab key and protect the remaining APIs before exposing them beyond a trusted network. [`examples/README.md`](examples/README.md) covers the stack in detail.
 
 ## What BitAgent adds
 

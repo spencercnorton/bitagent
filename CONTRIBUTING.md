@@ -47,8 +47,8 @@ python3 scripts/check_headless_boundary.py
 CI also runs PostgreSQL regressions for purge, matching, LLM-stage and capture
 packages against a disposable database, scans called Go dependencies, and
 builds the supported `linux/amd64` image. Do not attach production state to CI.
-Run the affected package while iterating, then the required checks before
-submitting.
+Run tests for the affected package while iterating, then run the required checks
+before submitting.
 
 ## Pull requests
 
