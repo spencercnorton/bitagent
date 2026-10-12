@@ -2,8 +2,12 @@
 
 ## Unreleased
 
-- Clarify backend setup, test instructions and classification documentation; correct the Radarr UHD category to 2045.
+## 4.6.0 — 2026-10-12
 
+- Clarify backend setup, test instructions and classification documentation; correct the Radarr UHD category to 2045.
+- Integrate catalogue recovery snapshot and deletion foundation (`internal/cataloguerecovery`).
+- Align container builder image with Go 1.26.9 on Alpine 3.23 (`golang:1.26.9-alpine3.23@sha256:6750308561953d451210ed1a8086d36c8c8bdcbf672d38d9d0d424b8a7a0216c`).
+- Enforce immutable snapshot capture and verification during catalogue recovery.
 ## 4.5.2 — 2026-10-08
 
 - Reserve half of each bounded seed batch for stale rechecks so continuous new
