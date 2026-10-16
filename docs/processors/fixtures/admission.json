@@ -1,0 +1,8 @@
+{
+  "contract": "bitagent.processors.admission.v1",
+  "generation": 2,
+  "algorithm": "sha256-seed-infohash-v1",
+  "seed": "4242424242424242424242424242424242424242424242424242424242424242",
+  "basis_points": 100,
+  "policy_version": "synthetic-canary-v1"
+}

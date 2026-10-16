@@ -34,6 +34,11 @@ func TestPublishedFixtures(t *testing.T) {
 	var page JobPage
 	read("operator-jobs.json", &page)
 	require.NotEmpty(t, page.Items)
+	var admission AdmissionPolicy
+	read("admission.json", &admission)
+	require.Equal(t, AdmissionContract, admission.Contract)
+	require.Equal(t, AdmissionAlgorithm, admission.Algorithm)
+	require.Equal(t, 100, admission.BasisPoints)
 	for _, outcome := range []Outcome{Abstained, Deferred, Failed} {
 		copy := r
 		copy.Outcome = outcome

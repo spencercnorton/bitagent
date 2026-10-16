@@ -33,6 +33,14 @@ Model credentials never enter this API or the core configuration.
   available_at, lease_until, outcome and reason. Null timestamps are unknown.
 - `POST /jobs/:job_id/cancel` is idempotent; returns `{job_id, state:"canceled"}`
   for active jobs. Completed jobs return their actual terminal state.
+- `GET /capabilities` returns `bitagent.processors.operations.v1` and a feature
+  map. Negotiate extensions using their exact advertised contract. A 404 from
+  an older core means unsupported; never emulate an unavailable control by
+  editing registry configuration or sampling a jobs page.
+- `GET /admission` and `PUT /admission` expose the versioned whole-pipeline
+  cohort policy. `GET /admission/history?before=N&limit=50` returns its append-only
+  audit, newest first, at most 100 entries. `next_before=0` ends pagination.
+  See [operational controls](operations.md) for the write and sampling contract.
 
 Registry operations are synchronous and bounded, so there is no asynchronous
 operation queue to poll. 400 denotes invalid input, 401 unauthorized, 404 absent,
@@ -65,8 +73,13 @@ terminal attempts for the current **execution generation**, ordered by
 denominator from the jobs page or mix replacement processor versions:
 
 - `attempts` is 500 only when a complete retained population is proved.
-- `failures` counts technical `failed` outcomes. Semantic abstention, deferral,
-  policy exclusion and completed unsuccessful matches remain distinct.
+- `failures` counts technical `failed` outcomes only when the entire population
+  can be classified. Semantic abstention, policy exclusion and completed
+  unsuccessful matches remain distinct.
+- `deferred` counts work deferred by the service. Its free-form reason cannot
+  prove whether it represents scheduling or a technical dependency failure.
+  When nonzero, `failures` is null with `deferred_attempts_unclassified`.
+  The stored deferred outcome is never rewritten as success or failure.
 - `unknown` counts interrupted attempts with no settled result. When nonzero,
   `failures` is null with `unresolved_attempt_outcomes`, never a success estimate.
 - `progress` counts retained terminal attempts after the completeness floor,

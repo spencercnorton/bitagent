@@ -49,7 +49,7 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 		return 0, e
 	}
 	s.active.Store(len(plan.Steps) > 0)
-	if len(plan.Steps) == 0 || draining {
+	if len(plan.Steps) == 0 || draining || plan.Admission.BasisPoints == 0 {
 		return 0, nil
 	}
 	e = pruneJobs(ctx, tx, s.cfg.Retention)
@@ -85,6 +85,9 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 	admitted := 0
 	for _, h := range hashes {
 		after = h
+		if !admittedByPolicy(h, plan.Admission) {
+			continue
+		}
 		src, raw, err := readSource(ctx, tx, h, false)
 		if err != nil {
 			return 0, err

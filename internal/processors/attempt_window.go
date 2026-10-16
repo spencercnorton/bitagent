@@ -15,7 +15,7 @@ const technicalFailureWindowSize = 500
 // a jobs-page sample, mix execution generations, or infer success for an
 // interrupted request. The retention floor and sample share one SQL snapshot.
 func attemptWindow(ctx context.Context, tx pgx.Tx, entry Entry, now string) (map[string]v1.Measurement, error) {
-	var count, failures, unknown, progress, unfinished int64
+	var count, failures, unknown, deferred, progress, unfinished int64
 	var first, last *time.Time
 	var floor time.Time
 	err := tx.QueryRow(ctx, `WITH recent AS (
@@ -25,11 +25,12 @@ func attemptWindow(ctx context.Context, tx pgx.Tx, entry Entry, now string) (map
 ), floor AS (SELECT attempt_history_floor AS value FROM processor_control WHERE singleton)
 SELECT count(*),count(*) FILTER(WHERE outcome='failed'),
  count(*) FILTER(WHERE outcome NOT IN('completed','abstained','deferred','failed','excluded','unmatched')),
+ count(*) FILTER(WHERE outcome='deferred'),
  count(*) FILTER(WHERE finished_at>(SELECT value FROM floor)),min(finished_at),max(finished_at),
  (SELECT value FROM floor),
  (SELECT count(*) FROM processor_attempts WHERE processor_id=$1 AND generation=$2 AND finished_at IS NULL)
 FROM recent`, entry.ID, entry.ExecutionGeneration, technicalFailureWindowSize).
-		Scan(&count, &failures, &unknown, &progress, &first, &last, &floor, &unfinished)
+		Scan(&count, &failures, &unknown, &deferred, &progress, &first, &last, &floor, &unfinished)
 	if err != nil {
 		return nil, err
 	}
@@ -53,11 +54,17 @@ FROM recent`, entry.ID, entry.ExecutionGeneration, technicalFailureWindowSize).
 		put("attempts", nil, reason)
 		put("failures", nil, reason)
 		put("unknown", nil, reason)
+		put("deferred", nil, reason)
 	} else {
 		put("attempts", number(float64(count)), "")
 		put("unknown", number(float64(unknown)), "")
+		put("deferred", number(float64(deferred)), "")
 		if unknown != 0 {
 			put("failures", nil, "unresolved_attempt_outcomes")
+		} else if deferred != 0 {
+			// A free-form service reason cannot prove whether deferral was a
+			// scheduling choice or a technical dependency failure.
+			put("failures", nil, "deferred_attempts_unclassified")
 		} else {
 			put("failures", number(float64(failures)), "")
 		}

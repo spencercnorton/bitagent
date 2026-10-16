@@ -266,6 +266,17 @@
           "population": "unfinished retained attempts for the processor execution generation; not counted as successes",
           "source": "core_postgres",
           "unavailable_reason": ""
+        },
+        "technical_failure_window_deferred": {
+          "value": null,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.702743Z"
+          },
+          "population": "latest 500 terminal attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": "insufficient_attempt_history"
         }
       },
       "evaluation": null

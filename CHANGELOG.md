@@ -5,6 +5,8 @@
 - Measure a complete latest-500 terminal attempt window for each processor
   execution generation. Retention gaps and interrupted work remain explicitly
   unavailable; expired dispatched leases are recorded as technical failures.
+- Add negotiated, audited whole-pipeline percentage admission with reproducible
+  hash cohorts, atomic generation checks and stale-result rejection on changes.
 
 ## 5.0.0 — 2026-10-16
 

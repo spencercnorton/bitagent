@@ -32,7 +32,7 @@ func TestPostgresExactTechnicalFailureWindow(t *testing.T) {
 	_, err = pool.Exec(testContext, `INSERT INTO processor_attempts
  (job_id,lease_generation,processor_id,generation,stage,queue_wait_ms,finished_at,outcome)
  SELECT $1,i,$2,$3,'classify',0,clock_timestamp()+i*interval '1 microsecond',
- CASE WHEN i<=7 THEN 'failed' WHEN i%3=0 THEN 'abstained' WHEN i%3=1 THEN 'unmatched' ELSE 'deferred' END
+ CASE WHEN i<=7 THEN 'failed' WHEN i%2=0 THEN 'abstained' ELSE 'unmatched' END
  FROM generate_series(1,501) i`, id, entry.ID, entry.ExecutionGeneration)
 	require.NoError(t, err)
 	// Newer rows from another execution must not alter this sample.
@@ -79,6 +79,17 @@ func TestPostgresExactTechnicalFailureWindow(t *testing.T) {
 	require.Equal(t, "unresolved_attempt_outcomes", m["technical_failure_window_failures"].UnavailableReason)
 	require.Equal(t, 1.0, *m["technical_failure_window_unknown"].Value)
 	require.Equal(t, 1.0, *m["technical_failure_window_unfinished"].Value)
+
+	// A deferred dependency failure is not an inferred technical success.
+	_, err = pool.Exec(testContext, `UPDATE processor_attempts SET outcome='deferred',reason='normal_processing_or_matching_incomplete' WHERE job_id=$1 AND lease_generation=501`, id2)
+	require.NoError(t, err)
+	status, err = s.Status(testContext)
+	require.NoError(t, err)
+	m = status.Processors[0].Metrics
+	require.Zero(t, *m["technical_failure_window_unknown"].Value)
+	require.Equal(t, 1.0, *m["technical_failure_window_deferred"].Value)
+	require.Nil(t, m["technical_failure_window_failures"].Value)
+	require.Equal(t, "deferred_attempts_unclassified", m["technical_failure_window_failures"].UnavailableReason)
 }
 
 func TestPostgresRetentionAdvancesAttemptCompletenessFloor(t *testing.T) {

@@ -42,6 +42,45 @@ func (s *Store) Apply(e *gin.Engine) error {
 		}
 		c.JSON(200, status)
 	})
+	g.GET("/capabilities", func(c *gin.Context) {
+		c.JSON(200, v1.OperationsCapabilities{Contract: v1.OperationsContract, Features: map[string]string{
+			"terminal_attempt_window": "latest-500-v1", "admission": v1.AdmissionContract,
+		}})
+	})
+	g.GET("/admission", func(c *gin.Context) {
+		p, err := s.Admission(c.Request.Context())
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, p)
+	})
+	g.PUT("/admission", func(c *gin.Context) {
+		var w v1.AdmissionWrite
+		if !body(c, &w) {
+			return
+		}
+		p, err := s.SetAdmission(c.Request.Context(), w)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, p)
+	})
+	g.GET("/admission/history", func(c *gin.Context) {
+		before, err := strconv.ParseInt(c.DefaultQuery("before", "0"), 10, 64)
+		limit, limitErr := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		if err != nil || limitErr != nil {
+			apiError(c, ErrControl)
+			return
+		}
+		history, err := s.AdmissionHistory(c.Request.Context(), before, limit)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, history)
+	})
 	g.GET("/registry", func(c *gin.Context) {
 		status, err := s.Status(c.Request.Context())
 		if err != nil {

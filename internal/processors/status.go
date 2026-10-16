@@ -79,6 +79,7 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 	}
 	for _, entry := range es {
 		p := v1.ProcessorStatus{Configuration: entry.Configuration, AuthEnv: entry.AuthEnv, ID: entry.ID, Generation: entry.Generation, ExecutionGeneration: entry.ExecutionGeneration, Installed: true, Configured: true, Enabled: entry.State == "active", State: entry.State, Mode: entry.Mode, OperatingMode: "unavailable", Endpoint: entry.Endpoint, Priority: entry.Priority, Contract: entry.Manifest.Contract, Processor: entry.Manifest.Processor, Capabilities: entry.Manifest.Capabilities, Compatibility: "unknown", Health: "unknown", Readiness: "unknown", Qualification: entry.Manifest.Qualification, Metrics: map[string]v1.Measurement{}}
+		p.Enabled = p.Enabled && plan.Admission.BasisPoints > 0
 		var raw []byte
 		var observedAt *time.Time
 		if e = tx.QueryRow(ctx, `SELECT observed,observed_at,last_error FROM processor_registry WHERE id=$1`, entry.ID).Scan(&raw, &observedAt, &p.LastError); e != nil {
