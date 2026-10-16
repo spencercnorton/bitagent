@@ -277,6 +277,61 @@
           "population": "latest 500 terminal attempts for processor execution generation 1",
           "source": "core_postgres",
           "unavailable_reason": "insufficient_attempt_history"
+        },
+        "technical_failure_prefix_attempts": {
+          "value": 1,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.68627Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "complete startup prefix (0-499 terminal attempts) for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "technical_failure_prefix_failures": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.68627Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "complete startup prefix (0-499 terminal attempts) for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "technical_failure_prefix_unknown": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.68627Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "complete startup prefix (0-499 terminal attempts) for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "technical_failure_prefix_deferred": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.68627Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "complete startup prefix (0-499 terminal attempts) for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "technical_failure_prefix_unfinished": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.68627Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "complete startup prefix (0-499 terminal attempts) for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
         }
       },
       "evaluation": null

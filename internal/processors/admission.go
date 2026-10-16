@@ -126,7 +126,7 @@ func (s *Store) SetAdmission(ctx context.Context, w v1.AdmissionWrite) (v1.Admis
 	// Rollout populations must not mix across admission policies. Also advance
 	// the administrative CAS so a client cannot unknowingly control an old view.
 	_, err = tx.Exec(ctx, `WITH generations AS (SELECT id,nextval('processor_registry_generation') AS generation FROM processor_registry)
- UPDATE processor_registry r SET generation=g.generation,execution_generation=g.generation,updated_at=clock_timestamp()
+ UPDATE processor_registry r SET generation=g.generation,execution_generation=g.generation,execution_started_at=clock_timestamp(),updated_at=clock_timestamp()
  FROM generations g WHERE g.id=r.id`)
 	if err != nil {
 		return p, err

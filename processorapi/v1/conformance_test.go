@@ -43,6 +43,17 @@ func TestPublishedFixtures(t *testing.T) {
 	read("job-export.json", &export)
 	require.Equal(t, JobExportContract, export.Contract)
 	require.Equal(t, "not_received_by_core", export.Coverage["raw_provider_payloads"])
+	var capabilities OperationsCapabilities
+	read("operations-capabilities.json", &capabilities)
+	require.Equal(t, OperationsContract, capabilities.Contract)
+	require.Equal(t, ReprocessingContract, capabilities.Features["reprocessing"])
+	var reprocessing ReprocessStatus
+	read("reprocessing.json", &reprocessing)
+	require.Equal(t, ReprocessingContract, reprocessing.Contract)
+	require.Nil(t, reprocessing.ResultJobID)
+	var request ReprocessWrite
+	read("reprocessing-write.json", &request)
+	require.Equal(t, request.RequestID, reprocessing.RequestID)
 	for _, outcome := range []Outcome{Abstained, Deferred, Failed} {
 		copy := r
 		copy.Outcome = outcome

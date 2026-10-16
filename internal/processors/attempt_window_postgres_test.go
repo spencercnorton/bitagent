@@ -150,3 +150,55 @@ func TestPostgresInterruptedAttemptsAreNotSuccessful(t *testing.T) {
 	require.Equal(t, 0.0, *status.Processors[0].Metrics["technical_failure_window_unfinished"].Value)
 	require.Equal(t, 2.0, *status.Processors[0].Metrics["technical_failure_window_progress"].Value)
 }
+
+func TestPostgresStartupPrefixRequiresProvenUnprunedExecution(t *testing.T) {
+	s, p, _ := fixture(t)
+	service := newService(t, "startup", []v1.Stage{v1.Classify}, func(j v1.Job) v1.Result { return result(j, "movie") })
+	entry := register(t, s, service)
+	status, err := s.Status(testContext)
+	require.NoError(t, err)
+	for _, key := range []string{"attempts", "failures", "unknown", "deferred", "unfinished"} {
+		metric := status.Processors[0].Metrics["technical_failure_prefix_"+key]
+		require.NotNil(t, metric.Value)
+		require.Zero(t, *metric.Value)
+		require.Empty(t, metric.UnavailableReason)
+	}
+	require.Nil(t, status.Processors[0].Metrics["technical_failure_window_failures"].Value)
+	id := windowJob(t, p, "d")
+	_, err = p.Exec(testContext, `INSERT INTO processor_attempts(job_id,lease_generation,processor_id,generation,stage,queue_wait_ms,finished_at,outcome)
+ SELECT $1,i,$2,$3,'classify',0,CASE WHEN i=5 THEN NULL ELSE clock_timestamp() END,
+ CASE WHEN i=1 THEN 'failed' WHEN i=2 THEN 'abstained' WHEN i=3 THEN 'unmatched' WHEN i=4 THEN 'completed' ELSE '' END FROM generate_series(1,5) i`, id, entry.ID, entry.ExecutionGeneration)
+	require.NoError(t, err)
+	status, err = s.Status(testContext)
+	require.NoError(t, err)
+	metrics := status.Processors[0].Metrics
+	require.Equal(t, 4.0, *metrics["technical_failure_prefix_attempts"].Value)
+	require.Equal(t, 1.0, *metrics["technical_failure_prefix_failures"].Value)
+	require.Equal(t, 1.0, *metrics["technical_failure_prefix_unfinished"].Value)
+	require.Nil(t, metrics["technical_failure_window_attempts"].Value)
+	_, err = p.Exec(testContext, `UPDATE processor_attempts SET finished_at=clock_timestamp(),outcome='deferred' WHERE job_id=$1 AND lease_generation=5`, id)
+	require.NoError(t, err)
+	status, err = s.Status(testContext)
+	require.NoError(t, err)
+	metrics = status.Processors[0].Metrics
+	require.Equal(t, 1.0, *metrics["technical_failure_prefix_deferred"].Value)
+	require.Nil(t, metrics["technical_failure_prefix_failures"].Value)
+	_, err = p.Exec(testContext, `UPDATE processor_control SET attempt_history_floor=clock_timestamp()`)
+	require.NoError(t, err)
+	status, err = s.Status(testContext)
+	require.NoError(t, err)
+	require.Equal(t, "retention_history_incomplete", status.Processors[0].Metrics["technical_failure_prefix_attempts"].UnavailableReason)
+	_, err = p.Exec(testContext, `UPDATE processor_registry SET execution_started_at=NULL`)
+	require.NoError(t, err)
+	status, err = s.Status(testContext)
+	require.NoError(t, err)
+	require.Equal(t, "execution_start_unknown", status.Processors[0].Metrics["technical_failure_prefix_attempts"].UnavailableReason)
+	w := service.write()
+	w.ExpectedGeneration = entry.Generation
+	_, err = s.Register(testContext, entry.ID, w)
+	require.NoError(t, err)
+	status, err = s.Status(testContext)
+	require.NoError(t, err)
+	require.Zero(t, *status.Processors[0].Metrics["technical_failure_prefix_attempts"].Value)
+	require.Zero(t, *status.Processors[0].Metrics["technical_failure_prefix_failures"].Value)
+}

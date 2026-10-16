@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 5.1.0 — 2026-10-16
+
 - Measure a complete latest-500 terminal attempt window for each processor
   execution generation. Retention gaps and interrupted work remain explicitly
   unavailable; expired dispatched leases are recorded as technical failures.
@@ -9,6 +11,10 @@
   hash cohorts, atomic generation checks and stale-result rejection on changes.
 - Export bounded retained job evidence with versioned input/result lineage,
   attempt histories and explicit raw-payload and reference coverage gaps.
+- Reprocess retained decisions through the ordinary PostgreSQL processing
+  queue with correlated receipts, current authority checks, idempotent requests,
+  cancellation and preserved before-images. Requests cannot delete torrents,
+  clear policy restrictions or silently rematch established identities.
 
 ## 5.0.0 — 2026-10-16
 

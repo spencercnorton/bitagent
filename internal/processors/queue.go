@@ -49,8 +49,11 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 		return 0, e
 	}
 	s.active.Store(len(plan.Steps) > 0)
+	if e = s.settleReprocessing(ctx, tx, plan, draining); e != nil {
+		return 0, e
+	}
 	if len(plan.Steps) == 0 || draining || plan.Admission.BasisPoints == 0 {
-		return 0, nil
+		return 0, tx.Commit(ctx)
 	}
 	e = pruneJobs(ctx, tx, s.cfg.Retention)
 	if e != nil {
@@ -65,11 +68,14 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 		s.metrics.admission.WithLabelValues("full").Inc()
 		return 0, tx.Commit(ctx)
 	}
-	rows, e := tx.Query(ctx, `SELECT t.info_hash FROM torrents t WHERE t.info_hash>$1 AND EXISTS(SELECT 1 FROM torrent_contents c WHERE c.info_hash=t.info_hash) ORDER BY t.info_hash LIMIT $2`, after, s.cfg.ScanBatch)
+	// Explicit requests that completed ordinary processing get bounded priority
+	// without moving the catalogue catch-up cursor past unrelated torrents.
+	priority := map[string]bool{}
+	var hashes [][]byte
+	rows, e := tx.Query(ctx, `SELECT info_hash FROM processor_reprocess_requests WHERE state='ready' ORDER BY created_at LIMIT $1`, min(16, capacity))
 	if e != nil {
 		return 0, e
 	}
-	var hashes [][]byte
 	for rows.Next() {
 		var h []byte
 		if e = rows.Scan(&h); e != nil {
@@ -77,6 +83,29 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 			return 0, e
 		}
 		hashes = append(hashes, h)
+		priority[string(h)] = true
+	}
+	rows.Close()
+	if e = rows.Err(); e != nil {
+		return 0, e
+	}
+	rows, e = tx.Query(ctx, `SELECT t.info_hash FROM torrents t WHERE t.info_hash>$1 AND EXISTS(SELECT 1 FROM torrent_contents c WHERE c.info_hash=t.info_hash)
+ AND NOT EXISTS(SELECT 1 FROM processor_reprocess_requests r WHERE r.info_hash=t.info_hash AND r.state='waiting_core')
+ ORDER BY t.info_hash LIMIT $2`, after, s.cfg.ScanBatch-len(hashes))
+	if e != nil {
+		return 0, e
+	}
+	normalCount := 0
+	for rows.Next() {
+		var h []byte
+		if e = rows.Scan(&h); e != nil {
+			rows.Close()
+			return 0, e
+		}
+		normalCount++
+		if !priority[string(h)] {
+			hashes = append(hashes, h)
+		}
 	}
 	rows.Close()
 	if e = rows.Err(); e != nil {
@@ -84,7 +113,9 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 	}
 	admitted := 0
 	for _, h := range hashes {
-		after = h
+		if !priority[string(h)] {
+			after = h
+		}
 		if !admittedByPolicy(h, plan.Admission) {
 			continue
 		}
@@ -93,9 +124,19 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 			return 0, err
 		}
 		if !src.admitted() {
+			if priority[string(h)] {
+				if _, err = tx.Exec(ctx, `UPDATE processor_reprocess_requests SET state='held',state_reason='current_authority_denied',updated_at=clock_timestamp() WHERE info_hash=$1 AND state='ready'`, h); err != nil {
+					return 0, err
+				}
+			}
 			continue
 		}
 		if s.names != nil && !s.names.Evaluate(src.torrent(hex.EncodeToString(h)).InfoHash, src.Name).Eligible {
+			if priority[string(h)] {
+				if _, err = tx.Exec(ctx, `UPDATE processor_reprocess_requests SET state='held',state_reason='current_authority_denied',updated_at=clock_timestamp() WHERE info_hash=$1 AND state='ready'`, h); err != nil {
+					return 0, err
+				}
+			}
 			continue
 		}
 		revision, pipeline := digest(raw), digest(plan)
@@ -120,11 +161,18 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 			return 0, err
 		}
 		admitted += int(tag.RowsAffected())
+		if tag.RowsAffected() == 1 {
+			_, err = tx.Exec(ctx, `UPDATE processor_reprocess_requests SET state='queued',result_job_id=$2,updated_at=clock_timestamp()
+ WHERE info_hash=$1 AND state='ready'`, h, id)
+			if err != nil {
+				return 0, err
+			}
+		}
 		if admitted >= capacity {
 			break
 		}
 	}
-	if len(hashes) == 0 {
+	if normalCount == 0 && len(priority) == 0 {
 		after = []byte{}
 	}
 	_, e = tx.Exec(ctx, `UPDATE processor_control SET scan_after=$1 WHERE singleton`, after)
@@ -373,6 +421,13 @@ func (s *Store) Finish(ctx context.Context, l Lease, j v1.Job, r v1.Result, disp
 	_, e = tx.Exec(ctx, `UPDATE processor_jobs SET results=$3,prepared_job=NULL,step=step+1,step_attempts=0,state=$4,reason=$5,outcome=CASE WHEN $4='queued' THEN '' ELSE $6 END,lease_until=NULL,available_at=clock_timestamp(),finished_at=CASE WHEN $4 IN('completed','stale') THEN clock_timestamp() END WHERE job_id=$1 AND lease_generation=$2`, l.ID, l.Generation, string(raw), state, reason, string(r.Outcome))
 	if e != nil {
 		return e
+	}
+	if state == "completed" || state == "stale" {
+		_, e = tx.Exec(ctx, `UPDATE processor_reprocess_requests SET state='settled',state_reason=$2,updated_at=clock_timestamp()
+ WHERE result_job_id=$1 AND state='queued'`, l.ID, state+":"+string(r.Outcome))
+		if e != nil {
+			return e
+		}
 	}
 	return tx.Commit(ctx)
 }

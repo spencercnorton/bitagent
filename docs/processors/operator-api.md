@@ -41,6 +41,11 @@ Model credentials never enter this API or the core configuration.
   cohort policy. `GET /admission/history?before=N&limit=50` returns its append-only
   audit, newest first, at most 100 entries. `next_before=0` ends pagination.
   See [operational controls](operations.md) for the write and sampling contract.
+- `GET /jobs/:job_id/export` captures retained core evidence with explicit
+  coverage gaps. `POST /jobs/:job_id/reprocess` enqueues an audited ordinary core
+  pass before optional work. Read, export and cancel these requests through
+  `/reprocessing/:request_id`, `/export` and `/cancel`; the
+  [operational controls contract](operations.md) defines their bounds/states.
 
 Registry operations are synchronous and bounded, so there is no asynchronous
 operation queue to poll. 400 denotes invalid input, 401 unauthorized, 404 absent,
@@ -99,6 +104,22 @@ input settle as unknown interruption. A request that was never dispatched does
 not acquire an attempt. These are operational observations, not accuracy scores
 or automatic promotion decisions; consumers must also assess unfinished work,
 queue age, independent adverse events and their own approved rollout criteria.
+
+When negotiated as `terminal_attempt_prefix: complete-startup-prefix-v1`, the
+separate `technical_failure_prefix_attempts`, `failures`, `unknown`, `deferred`
+and `unfinished` keys describe a **complete 0–499 terminal-attempt startup
+population**. They require a recorded execution-generation start strictly newer
+than the retention floor, and no retained terminal attempt before that start.
+Unknown creation time yields null/`execution_start_unknown`; any possible
+retention gap yields null/`retention_history_incomplete`. At 500 terminal attempts
+these prefix fields become null/`fixed_window_population_reached`; use the full
+window instead. Deferred/unknown outcomes also make the prefix failure count
+unavailable exactly as above. An explicit fresh prefix can be 0/0/0, with
+unfinished work counted separately; this is not a 500-attempt rate or pass.
+Operators may use it only under an explicit bounded initial-collection policy,
+while respecting all independent adverse-event and scientific gates. The core
+never supplies that authorization. Migration leaves old execution start times
+unknown; only a new execution generation establishes a provable boundary.
 
 Global queue keys are queued, leased, deferred, failed, canceled, stale,
 completed, oldest_wait_seconds and capacity_remaining. Completed job state means

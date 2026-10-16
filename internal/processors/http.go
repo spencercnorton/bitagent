@@ -45,7 +45,9 @@ func (s *Store) Apply(e *gin.Engine) error {
 	g.GET("/capabilities", func(c *gin.Context) {
 		c.JSON(200, v1.OperationsCapabilities{Contract: v1.OperationsContract, Features: map[string]string{
 			"terminal_attempt_window": "latest-500-v1", "admission": v1.AdmissionContract,
-			"job_export": v1.JobExportContract,
+			"terminal_attempt_prefix": "complete-startup-prefix-v1",
+			"job_export":              v1.JobExportContract,
+			"reprocessing":            v1.ReprocessingContract,
 		}})
 	})
 	g.GET("/admission", func(c *gin.Context) {
@@ -163,6 +165,43 @@ func (s *Store) Apply(e *gin.Engine) error {
 		}
 		c.Header("Cache-Control", "no-store")
 		c.JSON(200, export)
+	})
+	g.POST("/jobs/:job_id/reprocess", func(c *gin.Context) {
+		var w v1.ReprocessWrite
+		if !body(c, &w) {
+			return
+		}
+		status, err := s.Reprocess(c.Request.Context(), c.Param("job_id"), w)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, status)
+	})
+	g.GET("/reprocessing/:request_id", func(c *gin.Context) {
+		status, err := s.Reprocessing(c.Request.Context(), c.Param("request_id"))
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, status)
+	})
+	g.GET("/reprocessing/:request_id/export", func(c *gin.Context) {
+		audit, err := s.ExportReprocessing(c.Request.Context(), c.Param("request_id"))
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		c.JSON(200, audit)
+	})
+	g.POST("/reprocessing/:request_id/cancel", func(c *gin.Context) {
+		status, err := s.CancelReprocessing(c.Request.Context(), c.Param("request_id"))
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, status)
 	})
 	return nil
 }

@@ -63,6 +63,8 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 	defer c()
 	now := stamp(time.Now())
 	out := v1.Status{Contract: v1.StatusContract, ObservedAt: now, CoreReadiness: "ready", Processors: []v1.ProcessorStatus{}, Queue: map[string]v1.Measurement{}, Limits: map[string]int{"concurrency": s.cfg.Concurrency, "queue_capacity": s.cfg.QueueCapacity, "retained_jobs": s.cfg.RetainedJobs, "max_attempts": s.cfg.MaxAttempts, "request_timeout_ms": int(s.cfg.RequestTimeout.Milliseconds())}}
+	out.Limits["reprocessing_pending"] = min(s.cfg.QueueCapacity, 64)
+	out.Limits["reprocessing_retained"] = min(s.cfg.RetainedJobs, 1000)
 	tx, e := s.begin(ctx)
 	if e != nil {
 		return out, e

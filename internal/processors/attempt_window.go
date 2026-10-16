@@ -17,6 +17,7 @@ const technicalFailureWindowSize = 500
 func attemptWindow(ctx context.Context, tx pgx.Tx, entry Entry, now string) (map[string]v1.Measurement, error) {
 	var count, failures, unknown, deferred, progress, unfinished int64
 	var first, last *time.Time
+	var executionStart *time.Time
 	var floor time.Time
 	err := tx.QueryRow(ctx, `WITH recent AS (
  SELECT finished_at,outcome FROM processor_attempts
@@ -27,10 +28,10 @@ SELECT count(*),count(*) FILTER(WHERE outcome='failed'),
  count(*) FILTER(WHERE outcome NOT IN('completed','abstained','deferred','failed','excluded','unmatched')),
  count(*) FILTER(WHERE outcome='deferred'),
  count(*) FILTER(WHERE finished_at>(SELECT value FROM floor)),min(finished_at),max(finished_at),
- (SELECT value FROM floor),
+ (SELECT value FROM floor),(SELECT execution_started_at FROM processor_registry WHERE id=$1 AND execution_generation=$2),
  (SELECT count(*) FROM processor_attempts WHERE processor_id=$1 AND generation=$2 AND finished_at IS NULL)
 FROM recent`, entry.ID, entry.ExecutionGeneration, technicalFailureWindowSize).
-		Scan(&count, &failures, &unknown, &deferred, &progress, &first, &last, &floor, &unfinished)
+		Scan(&count, &failures, &unknown, &deferred, &progress, &first, &last, &floor, &executionStart, &unfinished)
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +74,39 @@ FROM recent`, entry.ID, entry.ExecutionGeneration, technicalFailureWindowSize).
 		"retained terminal attempts after the completeness floor, capped at 500", "core_postgres")
 	result["technical_failure_window_unfinished"] = measurement(number(float64(unfinished)), "count", now, now,
 		"unfinished retained attempts for the processor execution generation; not counted as successes", "core_postgres")
+	// Startup collection is a separately named population, never a fabricated
+	// 500-attempt denominator. Both its known execution boundary and retention
+	// floor must prove that no earlier current-generation attempts are missing.
+	prefixReason := ""
+	prefixStart := now
+	switch {
+	case count >= technicalFailureWindowSize:
+		prefixReason = "fixed_window_population_reached"
+	case executionStart == nil:
+		prefixReason = "execution_start_unknown"
+	case !executionStart.After(floor) || first != nil && first.Before(*executionStart):
+		prefixReason = "retention_history_incomplete"
+	}
+	if executionStart != nil {
+		prefixStart = stamp(*executionStart)
+	}
+	for key, n := range map[string]int64{"attempts": count, "failures": failures, "unknown": unknown, "deferred": deferred, "unfinished": unfinished} {
+		reason := prefixReason
+		if reason == "" && key == "failures" {
+			if unknown != 0 {
+				reason = "unresolved_attempt_outcomes"
+			} else if deferred != 0 {
+				reason = "deferred_attempts_unclassified"
+			}
+		}
+		var value *float64
+		if reason == "" {
+			value = number(float64(n))
+		}
+		m := measurement(value, "count", prefixStart, now, "complete startup prefix (0-499 terminal attempts) for processor execution generation "+strconv.FormatInt(entry.ExecutionGeneration, 10), "core_postgres")
+		m.UnavailableReason = reason
+		result["technical_failure_prefix_"+key] = m
+	}
 	return result, nil
 }
 

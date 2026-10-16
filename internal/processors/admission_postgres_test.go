@@ -81,7 +81,7 @@ func TestPostgresAdmissionCASAndRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, older.Items, 2)
 	require.Equal(t, "stop", older.Items[0].Reason)
-	_, err = migrations.Down(testContext)
+	_, err = migrations.DownTo(testContext, 62)
 	require.ErrorContains(t, err, "admission audit evidence prevents destructive downgrade")
 }
 

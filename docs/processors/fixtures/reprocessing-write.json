@@ -1,0 +1,6 @@
+{
+  "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "expected_input_revision": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "expected_pipeline_revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "reason": "synthetic_review"
+}

@@ -26,6 +26,7 @@ const sourceSQL = `SELECT jsonb_build_object(
   (SELECT jsonb_build_object('path',path,'size',size,'index',"index",'extension',extension) x
    FROM torrent_files WHERE info_hash=t.info_hash ORDER BY "index",path LIMIT 257) f),'[]'),
  'receipt',(SELECT to_jsonb(r)-'recorded_at' FROM processor_core_receipts r WHERE r.info_hash=t.info_hash),
+ 'reprocess',(SELECT request_id FROM processor_reprocess_requests r WHERE r.info_hash=t.info_hash AND r.state IN('ready','queued','settled','core_only') ORDER BY created_at DESC,request_id DESC LIMIT 1),
  'hint',(SELECT to_jsonb(h)-'created_at'-'updated_at' FROM torrent_hints h WHERE h.info_hash=t.info_hash),
  'contents',COALESCE((SELECT jsonb_agg(x ORDER BY x->>'id') FROM
   (SELECT to_jsonb(c)-'created_at'-'updated_at'-'seeders'-'leechers'-'published_at'-'tsv' x
