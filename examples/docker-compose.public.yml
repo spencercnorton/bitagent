@@ -61,8 +61,8 @@ services:
       CSAM_BLOCKLIST_EXPORT_UPSTREAM_URL: "${CSAM_BLOCKLIST_EXPORT_UPSTREAM_URL:-}"
 
       # --- Content filter (English-only / NSFW / format curation) ---
-      # OFF by default. Observe deterministic and model decisions separately
-      # and independently qualify model accuracy before enforcement.
+      # OFF by default. Observe deterministic policy decisions before
+      # enabling enforcement. Optional processors have separate controls.
       CONTENT_FILTER_ENABLED: "${CONTENT_FILTER_ENABLED:-false}"
       CONTENT_FILTER_ENFORCE: "${CONTENT_FILTER_ENFORCE:-false}"
 

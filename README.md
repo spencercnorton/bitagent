@@ -8,11 +8,22 @@
   <a href="https://buy.stripe.com/8x26oH2U44f65TRe574wM04"><img alt="Donate" src="https://img.shields.io/badge/donate-Stripe-635bff.svg?logo=stripe&logoColor=white"></a>
 </p>
 
-**BitAgent is a self-hosted BitTorrent DHT crawler and indexer built for the \*arr stack.** It crawls the DHT into a Postgres corpus, classifies every torrent it finds, and serves the result to Sonarr, Radarr, Lidarr, Readarr and Prowlarr over Torznab. What makes it different is the loop: it watches what your \*arrs actually grab and import, and feeds that ground truth back into classification, ranking and retention. The public distribution is a standalone Go backend: crawling, scrubbing, matching, cleanup and machine APIs. Optional LLM stages remain off until explicitly configured.
+**BitAgent is a self-hosted BitTorrent DHT crawler and indexer built for the \*arr stack.** It crawls the DHT into a Postgres corpus, classifies every torrent it finds, and serves the result to Sonarr, Radarr, Lidarr, Readarr and Prowlarr over Torznab. What makes it different is the loop: it watches what your \*arrs actually grab and import, and feeds that ground truth back into classification, ranking and retention. The public distribution is a standalone Go backend: crawling, scrubbing, matching, cleanup and machine APIs. Optional processors run in separate services; the core needs no plugin or model runtime.
 
-<p align="center">
-  <img src="docs/assets/diagrams/pipeline.svg" alt="How BitAgent works: the DHT is crawled into a Postgres corpus, each torrent goes down a classification ladder (your own evidence, CEL rules, an optional LLM stage) and is served over Torznab, GraphQL and Prometheus; downloads that worked flow back in as evidence." width="100%">
-</p>
+```mermaid
+flowchart LR
+    DHT[DHT discovery] --> Metadata[Metadata and durable core queue]
+    Metadata --> Core[Deterministic processing and matching]
+    Core --> Catalogue[Catalogue and recovery]
+    Catalogue --> APIs[Search, GraphQL and Torznab]
+    Core --> Jobs[Optional PostgreSQL jobs]
+    Jobs --> Services[Processor services]
+    Services --> Validation[Core validation and application]
+    Validation --> Catalogue
+    APIs --> Evidence[Client evidence]
+    Evidence --> Core
+```
+
 
 BitAgent started in April 2026 as a fork of [`bitmagnet-io/bitmagnet`](https://github.com/bitmagnet-io/bitmagnet), whose `main` had then gone more than nine months without a commit. The DHT crawler, metainfo fetcher, CEL classifier and the Postgres/GraphQL foundation are upstream's work and are credited [below](#lineage--licence). Almost everything else on this page is new — roughly 100K lines of non-test Go, 33 schema migrations and 16 new packages against the baseline. [Compare the baseline with `main`](https://github.com/spencercnorton/bitagent/compare/2b9e8eadd34c037830d1fa7470b5ef2746cd6388...main).
 
@@ -40,7 +51,7 @@ Then add `http://<host>:3333/torznab/` as a Torznab indexer in Prowlarr (or in e
 
 **Accurate swarm numbers.** A BEP-15 UDP scrape worker refreshes seeders and leechers from public trackers at about seventy infohashes per datagram, replacing the crawler's one-node, never-refreshed estimate. Per-peer BEP-9 history stops the fetcher re-hammering peers that never answer (the audit that motivated it found 8.68M errors against 207K successes). BEP-42 external-IP resolution, BEP-43 read-only handling and BEP-51 peer intervals are implemented on both paths.
 
-**Observability that answers questions.** `bitagent_*` metric families cover every subsystem — DHT server, client and responder, routing table, crawler, classifier, evidence, content filter, liveness, priors, retention, junk purge, seeds, wantbridge and each LLM stage ([`docs/reference/metrics.md`](docs/reference/metrics.md)). `pgstats` reports table and index bloat, autovacuum lag, dead tuples and pool saturation on every scrape. Grafana dashboards and Prometheus / Loki / Pyroscope configs ship in [`observability/`](observability/), and a `bitmagnet_*` dual-emit shim keeps dashboards built against upstream alive.
+**Observability that answers questions.** `bitagent_*` metric families cover every subsystem — DHT server, client and responder, routing table, crawler, classifier, evidence, content filter, liveness, priors, retention, quarantine, seeds, wantbridge and optional processors ([`docs/reference/metrics.md`](docs/reference/metrics.md)). `pgstats` reports table and index bloat, autovacuum lag, dead tuples and pool saturation on every scrape. Grafana dashboards and Prometheus / Loki / Pyroscope configs ship in [`observability/`](observability/), and a `bitmagnet_*` dual-emit shim keeps dashboards built against upstream alive.
 
 **Operations.** Every credential accepts a `_FILE` variant, and a missing or empty file is a startup error rather than a silently disabled feature. Every destructive or costly feature has a two-flag opt-in (`Enabled`, then `Enforce` / `EnableLive` / `EnablePurge`) and counterfactual `would_*` metrics, so you read the numbers before you flip the switch. `eval-freeze`, `eval-replay` and `matcher-eval` snapshot corpora and replay them through the real workflow as byte-stable JSONL; every backfill is bounded, resumable and dry-run capable.
 

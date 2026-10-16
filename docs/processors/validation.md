@@ -101,6 +101,12 @@ Go toolchain or site runtime is shipped. `_legacy` is excluded from the Docker
 build context. The main executable's dependency graph contains no embedded
 inference, capture runtime or legacy model-work dispatcher.
 
+The exact `7d144c9` candidate was also built locally as `linux/amd64` v5.0.0
+and passed offline/read-only image qualification. It then ran with a read-only
+root filesystem, two CPUs, 512 MiB RAM and 128 PIDs against a disposable database:
+zero-plugin readiness, Torznab XML and the Linux process-start metric passed.
+This is a local candidate image, not a published production deployment.
+
 ## Limits and release gates
 
 These measurements are local synthetic qualification. They do not establish
