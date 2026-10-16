@@ -351,6 +351,54 @@ select exists (
 	return isPrivate, nil
 }
 
+// MissingPieces returns the hashes among infoHashes that an *arr grabbed or
+// imported, that the catalogue holds as public torrents, and whose piece
+// hashes are not stored yet. Only these torrents keep pieces; the crawl
+// itself stores none unless dht_crawler.save_pieces is set.
+func (s *Store) MissingPieces(ctx context.Context, infoHashes [][]byte) ([][]byte, error) {
+	if len(infoHashes) == 0 {
+		return nil, nil
+	}
+	pool, err := s.pool.Get()
+	if err != nil {
+		return nil, fmt.Errorf("evidence: acquire pool: %w", err)
+	}
+	q := `
+select t.info_hash from torrents t
+where t.info_hash = any($1::bytea[])
+  and not exists (select 1 from torrent_pieces p where p.info_hash = t.info_hash)
+  and exists (select 1 from label_evidence a where a.info_hash = t.info_hash and a.source_kind = any($3::text[]))
+  and ` + catalogueguard.PublicSQL("t", "$2")
+	kinds := []string{string(KindWebhookGrab), string(KindWebhookImport), string(KindPollHistory)}
+	rows, err := pool.Query(ctx, q, infoHashes, catalogueguard.TagWhitespace, kinds)
+	if err != nil {
+		return nil, fmt.Errorf("evidence: missing pieces: %w", err)
+	}
+	hashes, err := pgx.CollectRows(rows, pgx.RowTo[[]byte])
+	if err != nil {
+		return nil, fmt.Errorf("evidence: missing pieces scan: %w", err)
+	}
+	return hashes, nil
+}
+
+// SavePieces stores a catalogue torrent's piece length and concatenated
+// SHA-1 piece hashes. Callers verify them against the info hash first. An
+// existing row is kept, and a torrent no longer in the catalogue is skipped.
+func (s *Store) SavePieces(ctx context.Context, infoHash []byte, pieceLength int64, pieces []byte) error {
+	pool, err := s.pool.Get()
+	if err != nil {
+		return fmt.Errorf("evidence: acquire pool: %w", err)
+	}
+	const q = `
+insert into torrent_pieces (info_hash, piece_length, pieces, created_at)
+select info_hash, $2, $3, now() from torrents where info_hash = $1
+on conflict (info_hash) do nothing`
+	if _, err := pool.Exec(ctx, q, infoHash, pieceLength, pieces); err != nil {
+		return fmt.Errorf("evidence: save pieces: %w", err)
+	}
+	return nil
+}
+
 // isLabelBearing reports whether the evidence Kind contributes to
 // the canonical-label projection. The set is an explicit allowlist
 // rather than a denylist so adding a new non-label kind in the

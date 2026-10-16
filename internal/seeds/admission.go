@@ -12,17 +12,10 @@ import (
 	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
-// privacySQL is independent of the optional release-name policy. Public UDP
-// trackers never receive known private hashes, including qualified bitgrab tags.
-func privacySQL(root, whitespace string) string {
-	return root + `.private=FALSE
- AND NOT EXISTS(SELECT 1 FROM label_evidence e WHERE e.info_hash=` + root + `.info_hash AND ` + catalogueguard.QBPrivacySQL("e.source", "e.category", whitespace) + `)
- AND NOT EXISTS(SELECT 1 FROM torrent_tags g WHERE g.info_hash=` + root + `.info_hash AND ` + catalogueguard.PrivacyTagSQL("g.name", whitespace) + `)
- AND NOT EXISTS(SELECT 1 FROM torrent_canonical_labels c WHERE c.info_hash=` + root + `.info_hash AND lower(btrim(c.category,` + whitespace + `)) IN('private','bitgrab'))`
-}
-
+// Public UDP trackers never receive known private hashes, including qualified
+// bitgrab tags (catalogueguard.PublicSQL).
 func (s *Store) selectionAdmission() (string, []any) {
-	sql := privacySQL("t", "$3")
+	sql := catalogueguard.PublicSQL("t", "$3")
 	args := []any{catalogueguard.TagWhitespace}
 	if s.names.Enabled() {
 		allowed, nameArgs := s.names.AllowsSQL("t.name", "t.info_hash")
@@ -122,7 +115,7 @@ func (s *Store) withAdmission(ctx context.Context, hashes [][]byte, write bool, 
 	if err != nil {
 		return err
 	}
-	rows, err := tx.Query(ctx, `SELECT t.info_hash,t.name,`+privacySQL("t", "$2")+`,
+	rows, err := tx.Query(ctx, `SELECT t.info_hash,t.name,`+catalogueguard.PublicSQL("t", "$2")+`,
  EXISTS(SELECT 1 FROM torrent_contents c WHERE c.info_hash=t.info_hash AND c.content_type='xxx')
  FROM torrents t WHERE t.info_hash=ANY($1::bytea[]) ORDER BY t.info_hash FOR SHARE OF t`, hashes, catalogueguard.TagWhitespace)
 	if err != nil {

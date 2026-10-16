@@ -40,14 +40,14 @@ DHT crawl → classifier → Torznab → *arr grabs → download client → *arr
 |---|---|---|---|
 | Sonarr / Radarr / Readarr / Lidarr **webhook** | `Grab`, `Download`, `DownloadFolderImported` — the standard *Connect → Webhook* notification payload | `POST /evidence/arr/<instance>` with the shared secret in `X-Evidence-Token` | `EVIDENCE_WEBHOOK_SECRET` |
 | \*arr **history poller** | The same grab/import events read back from `/api/v3/history`, as a backstop for lost deliveries | Outbound, on `EVIDENCE_ARR_POLL_INTERVAL` | `EVIDENCE_{SONARR,RADARR,READARR,LIDARR}_BASE_URL` / `_API_KEY` |
-| **qBittorrent poller** | Category and tag per torrent (`private`, `public`, …) and torrent state (stalled, metaDL, seeding, …) | Outbound, on `EVIDENCE_QB_POLL_INTERVAL` | `EVIDENCE_QB_ALPHA_BASE_URL` / `_USERNAME` / `_PASSWORD` (and `QB_BETA`) |
+| **qBittorrent poller** | Category and tag per torrent (`private`, `public`, …), torrent state (stalled, metaDL, seeding, …), and the `.torrent` of held torrents an \*arr grabbed (see [piece hashes](#5-piece-hashes)) | Outbound, on `EVIDENCE_QB_POLL_INTERVAL` | `EVIDENCE_QB_ALPHA_BASE_URL` / `_USERNAME` / `_PASSWORD` (and `QB_BETA`) |
 
 The webhook is the primary, low-latency path and needs only that the \*arr can
 reach BitAgent's HTTP port — the same reachability Torznab already requires. The
 two pollers are optional: they need BitAgent to reach the \*arr and qBittorrent,
 which a crawler behind a VPN may deliberately not have. Without them you lose the
-lost-delivery backstop, the private-tracker category signal and the client-state
-half of liveness; the grab → import loop still closes.
+lost-delivery backstop, the private-tracker category signal, the client-state
+half of liveness and piece-hash retention; the grab → import loop still closes.
 
 Every event, from every source, lands as one row in `label_evidence`. The table
 is append-only and deduplicated on the source's own event id, so a webhook and
@@ -154,6 +154,20 @@ revalidated through DHT `get_peers` on a schedule. See
 [`concepts/swarm-health.md`](concepts/swarm-health.md) for how tracker scrapes
 feed this.
 
+### 5. Piece hashes
+
+The crawl does not store piece hashes: `dht_crawler.save_pieces` defaults to
+off, because 20 bytes per piece (about 8 KB per GiB of content) adds up across
+millions of torrents. For held torrents an \*arr grabbed or imported, each
+qBittorrent poll exports the `.torrent` once (`/api/v2/torrents/export`),
+requires the SHA-1 of its info dictionary to equal the info hash, and stores
+the piece length and piece hashes in `torrent_pieces`. A release then stays
+verifiable against its downloaded file after the client and the swarm drop it:
+hash a few whole pieces of the file and compare. Only public catalogue torrents
+qualify; torrents with any private authority (native flag, private qB category,
+`bitgrab` tag) are skipped. A torrent still fetching its metadata is retried on
+the next poll.
+
 ## Reading it
 
 - **Evidence records** in PostgreSQL: recent events per source, the canonical
@@ -173,8 +187,9 @@ rate of what your \*arrs grabbed from BitAgent.
 
 ## Privacy
 
-Every evidence row stays in your Postgres. Nothing is sent anywhere. Torrents
-labelled as coming from a private tracker are additionally kept out of every
-LLM stage and excluded from priors, so private-tracker activity never leaves
-the host or biases public ranking. To reset, truncate `label_evidence`,
-`torrent_canonical_labels`, `torrent_grab_attempts` and `grab_outcome_priors`.
+Every evidence row and retained piece hash stays in your Postgres. Nothing is
+sent anywhere. Torrents labelled as coming from a private tracker are
+additionally kept out of every LLM stage and excluded from priors, so
+private-tracker activity never leaves the host or biases public ranking. To
+reset, truncate `label_evidence`, `torrent_canonical_labels`,
+`torrent_grab_attempts` and `grab_outcome_priors`.

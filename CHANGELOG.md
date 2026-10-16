@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Retain piece hashes for torrents an \*arr grabbed or imported. The
+  qBittorrent poller exports each held public catalogue torrent once, verifies
+  SHA-1(info) against the info hash and stores its piece length and hashes in
+  `torrent_pieces`, so releases stay verifiable against their files after the
+  client drops them. The crawl itself still stores no pieces by default.
+
 ## 5.3.0 — 2026-10-17
 
 - Enrich processor jobs with optional public-safe swarm hints (`input.sources`

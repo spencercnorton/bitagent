@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/anacrolix/torrent/bencode"
+	"github.com/spencercnorton/bitagent/internal/protocol"
 )
 
 type TorrentFile struct {
@@ -24,4 +25,18 @@ func ReadTorrentFileBytes(bytes []byte) (TorrentFile, error) {
 	}
 
 	return torrentFile, nil
+}
+
+// ParseTorrentFileInfo returns the info dictionary of a .torrent file after
+// the same checks as BEP-9 metadata, including SHA-1(info) == infoHash, so the
+// result is bound to that info hash.
+func ParseTorrentFileInfo(infoHash protocol.ID, torrentFile []byte) (Info, error) {
+	var raw struct {
+		Info bencode.Bytes `bencode:"info"`
+	}
+	if unmarshalErr := bencode.Unmarshal(torrentFile, &raw); unmarshalErr != nil {
+		return Info{}, fmt.Errorf("error unmarshaling torrent file: %w", unmarshalErr)
+	}
+
+	return ParseMetaInfoBytes(infoHash, raw.Info)
 }

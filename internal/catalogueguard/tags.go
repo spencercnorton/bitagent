@@ -52,3 +52,14 @@ func PrivacyTagSQL(column, whitespace string) string {
 func QBPrivacySQL(source, category, whitespace string) string {
 	return fmt.Sprintf("(lower(btrim(%s,%s))='qbittorrent' AND lower(btrim(%s,%s)) IN('private','bitgrab'))", source, whitespace, category, whitespace)
 }
+
+// PublicSQL holds for a torrents row (alias root) with no known private
+// authority: the native flag, qB privacy evidence, a qualified bitgrab tag or a
+// private canonical label. It is independent of the optional release-name policy.
+// root and whitespace are trusted alias/placeholder expressions, never input.
+func PublicSQL(root, whitespace string) string {
+	return root + `.private=FALSE
+ AND NOT EXISTS(SELECT 1 FROM label_evidence e WHERE e.info_hash=` + root + `.info_hash AND ` + QBPrivacySQL("e.source", "e.category", whitespace) + `)
+ AND NOT EXISTS(SELECT 1 FROM torrent_tags g WHERE g.info_hash=` + root + `.info_hash AND ` + PrivacyTagSQL("g.name", whitespace) + `)
+ AND NOT EXISTS(SELECT 1 FROM torrent_canonical_labels c WHERE c.info_hash=` + root + `.info_hash AND lower(btrim(c.category,` + whitespace + `)) IN('private','bitgrab'))`
+}
