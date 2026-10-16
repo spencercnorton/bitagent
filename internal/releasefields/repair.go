@@ -16,11 +16,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	llmcapture "github.com/spencercnorton/bitagent/internal/buildidentity"
 	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"github.com/spencercnorton/bitagent/internal/classifier/parsers"
-	"github.com/spencercnorton/bitagent/internal/llmcapture"
-	"github.com/spencercnorton/bitagent/internal/llmwork"
+	llmwork "github.com/spencercnorton/bitagent/internal/legacyresults"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/protocol"

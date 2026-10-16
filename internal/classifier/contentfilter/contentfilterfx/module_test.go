@@ -1,8 +1,6 @@
 package contentfilterfx
 
 import (
-	"math"
-	"strings"
 	"testing"
 
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
@@ -69,86 +67,3 @@ func TestApplyDropLossyAudioOnlyBackCompat(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
-
-func TestValidateProductionLLMConfigRequiresBoundedPinnedOpenRouter(t *testing.T) {
-	valid := contentfilter.NewDefaultConfig()
-	valid.LLMOpenaiApiKey = "test"
-	valid.LLMBaseURL = "https://openrouter.ai/api/v1"
-	valid.LLMApiStyle = "chat"
-	valid.LLMOpenrouterProvider = "azure/us"
-	if err := validateProductionLLMConfig(valid); err != nil {
-		t.Fatalf("valid config: %v", err)
-	}
-	for name, mutate := range map[string]func(*contentfilter.Config){
-		"missing provider":     func(c *contentfilter.Config) { c.LLMOpenrouterProvider = "" },
-		"fallback route":       func(c *contentfilter.Config) { c.LLMBaseURL = "https://example.invalid/v1" },
-		"empty route":          func(c *contentfilter.Config) { c.LLMBaseURL = "" },
-		"trailing slash route": func(c *contentfilter.Config) { c.LLMBaseURL += "/" },
-		"wrong style":          func(c *contentfilter.Config) { c.LLMApiStyle = "responses" },
-		"missing key":          func(c *contentfilter.Config) { c.LLMOpenaiApiKey = "" },
-		"missing key and route": func(c *contentfilter.Config) {
-			c.LLMOpenaiApiKey, c.LLMBaseURL = "", ""
-		},
-		"zero daily":           func(c *contentfilter.Config) { c.LLMDailyBudget = 0 },
-		"monthly below daily":  func(c *contentfilter.Config) { c.LLMMonthlyBudget = c.LLMDailyBudget - 1 },
-		"zero concurrency":     func(c *contentfilter.Config) { c.LLMMaxConcurrentCalls = 0 },
-		"zero request bound":   func(c *contentfilter.Config) { c.LLMMaxRequestBytes = 0 },
-		"zero output bound":    func(c *contentfilter.Config) { c.LLMMaxOutputTokens = 0 },
-		"zero confidence":      func(c *contentfilter.Config) { c.LLMMinConfidenceForDrop = 0 },
-		"confidence above one": func(c *contentfilter.Config) { c.LLMMinConfidenceForDrop = 1.01 },
-		"NaN confidence":       func(c *contentfilter.Config) { c.LLMMinConfidenceForDrop = math.NaN() },
-	} {
-		t.Run(name, func(t *testing.T) {
-			cfg := valid
-			mutate(&cfg)
-			if err := validateProductionLLMConfig(cfg); err == nil || strings.TrimSpace(err.Error()) == "" {
-				t.Fatal("invalid production config was accepted")
-			}
-		})
-	}
-}
-
-func TestValidateProductionLLMConfigAcceptsOnlyExactOpenAIDataSharingRoute(t *testing.T) {
-	valid := contentfilter.NewDefaultConfig()
-	valid.LLMOpenaiApiKey = "test"
-	valid.LLMBaseURL = "https://api.openai.com/v1"
-	valid.LLMApiStyle = "chat"
-	valid.LLMModel = "gpt-5.6-sol"
-	valid.LLMOpenaiDataSharing = true
-	if err := validateProductionLLMConfig(valid); err != nil {
-		t.Fatalf("valid data-sharing config: %v", err)
-	}
-	for name, mutate := range map[string]func(*contentfilter.Config){
-		"wrong model":    func(c *contentfilter.Config) { c.LLMModel = "gpt-6-astra" },
-		"wrong endpoint": func(c *contentfilter.Config) { c.LLMBaseURL += "/" },
-		"wrong style":    func(c *contentfilter.Config) { c.LLMApiStyle = "responses" },
-		"missing key":    func(c *contentfilter.Config) { c.LLMOpenaiApiKey = "" },
-		"router pin":     func(c *contentfilter.Config) { c.LLMOpenrouterProvider = "azure/us" },
-	} {
-		t.Run(name, func(t *testing.T) {
-			cfg := valid
-			mutate(&cfg)
-			if err := validateProductionLLMConfig(cfg); err == nil {
-				t.Fatal("invalid data-sharing route was accepted")
-			}
-		})
-	}
-}
-
-func TestProvideFilterRejectsInvalidEnforcementModeEvenWithoutProvider(t *testing.T) {
-	cfg := contentfilter.NewDefaultConfig()
-	cfg.LLMEnforce = "yes"
-	_, err := provideFilter(filterParams{Config: cfg, Logger: zap.NewNop().Sugar()})
-	if err == nil || !strings.Contains(err.Error(), "llm_enforce") {
-		t.Fatalf("invalid enforcement mode must fail startup, got %v", err)
-	}
-}
-
-func TestProvideFilterRejectsInvalidDispositionEvenWithoutProvider(t *testing.T) {
-	cfg := contentfilter.NewDefaultConfig()
-	cfg.LLMAction = "tag_and_delete"
-	_, err := provideFilter(filterParams{Config: cfg, Logger: zap.NewNop().Sugar()})
-	if err == nil || !strings.Contains(err.Error(), "llm_action") {
-		t.Fatalf("invalid disposition must fail startup, got %v", err)
-	}
-}

@@ -37,7 +37,7 @@ func TestNewTorrentContent_SetsIsAnime(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		got := newTorrentContent(model.Torrent{Name: tc.name}, classification.Result{}, model.NullEnglishAudio{})
+		got := newTorrentContent(model.Torrent{Name: tc.name}, classification.Result{})
 		assert.Equalf(t, tc.want, got.IsAnime, "%s (%s)", tc.name, tc.notes)
 	}
 }

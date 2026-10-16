@@ -263,9 +263,7 @@ func (p Params) dryRunPage(
 
 func localOnlyFlags() classifier.Flags {
 	return classifier.Flags{
-		"apis_enabled":      false,
-		"llm_match_enabled": false,
-		"llm_stage_enabled": false,
+		"apis_enabled": false,
 	}
 }
 

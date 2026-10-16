@@ -39,10 +39,6 @@ func (r *fakeRunner) Run(_ context.Context, _ string, _ Flags, torrent model.Tor
 	return r.result, r.err
 }
 
-func (r *fakeRunner) EvalMatch(_ context.Context, _ model.Torrent, _ model.NullContentType) (MatchDecision, error) {
-	return MatchDecision{}, nil
-}
-
 // torrentWithHash is a convenience for tests — returns a minimal model
 // torrent whose info_hash is a well-known byte pattern so assertions
 // on the store's seen value are readable.

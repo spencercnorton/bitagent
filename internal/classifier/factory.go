@@ -5,7 +5,6 @@ import (
 	"github.com/spencercnorton/bitagent/internal/namepolicy"
 
 	"github.com/spencercnorton/bitagent/internal/animedb"
-	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
 	"github.com/spencercnorton/bitagent/internal/database/search"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/tmdb"
@@ -19,12 +18,6 @@ type Params struct {
 	TmdbConfig tmdb.Config
 	Search     lazy.Lazy[search.Search]
 	TmdbClient lazy.Lazy[tmdb.Client]
-	// LlmMatch is optional — provided by llmmatchfx. `optional:"true"` so
-	// the classifier still builds if the module is absent (e.g. tests).
-	LlmMatch *llmmatch.Client `optional:"true"`
-	// MatchDecisionObserver is optional. The capture-backed implementation is
-	// wired by the application when decision-ledger persistence is enabled.
-	MatchDecisionObserver MatchDecisionObserver `optional:"true"`
 	// AnimeResolver is optional — provided by animedbfx. When absent (e.g.
 	// tests without the module) the factory substitutes a seed-only resolver so
 	// the curated anime aliases still resolve.
@@ -66,8 +59,6 @@ func New(params Params) Result {
 				namePolicy:            params.NamePolicy,
 				search:                NewLocalSearch(s, params.Config),
 				tmdbClient:            tmdbClient,
-				llmMatch:              params.LlmMatch,
-				matchDecisionObserver: params.MatchDecisionObserver,
 				animeResolver:         animeResolver,
 				fuzzyMatchEnabled:     params.Config.FuzzyMatchEnabled,
 				altTitleMatch:         params.Config.AltTitleMatch,

@@ -1,7 +1,9 @@
 package classifier
 
 import (
+	"errors"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
+	"github.com/spencercnorton/bitagent/internal/processingstate"
 )
 
 const attachLocalContentBySearchName = "attach_local_content_by_search"
@@ -34,6 +36,7 @@ func (attachLocalContentBySearchAction) compileAction(ctx compilerContext) (acti
 				cl.BaseTitle.String,
 				cl.Date.Year,
 			)
+			processingstate.Search(ctx.Context, err != nil && !errors.Is(err, classification.ErrUnmatched))
 			if err != nil {
 				return cl, err
 			}

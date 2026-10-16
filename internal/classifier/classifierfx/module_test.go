@@ -11,7 +11,6 @@ import (
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/fx"
 )
 
 // fakeStore satisfies classifier.CanonicalStore. Returns the configured
@@ -33,27 +32,9 @@ func (s *fakeStore) CanonicalForInfoHash(_ context.Context, _ []byte) (*evidence
 // non-video type-only evidence can still short-circuit.
 type recordedRunner struct{ called int }
 
-func TestMatchDecisionObserverOptionWiresWithoutOptionalCaptureModules(t *testing.T) {
-	var observer classifier.MatchDecisionObserver
-	app := fx.New(
-		matchDecisionObserverOption(),
-		fx.Populate(&observer),
-		fx.NopLogger,
-	)
-	require.NoError(t, app.Err())
-	require.NotNil(t, observer)
-	require.NoError(t, observer.ObserveLLMMatchDecision(
-		context.Background(), classifier.MatchDecisionObservation{},
-	))
-}
-
 func (r *recordedRunner) Run(_ context.Context, _ string, _ classifier.Flags, _ model.Torrent) (classification.Result, error) {
 	r.called++
 	return classification.Result{}, nil
-}
-
-func (r *recordedRunner) EvalMatch(_ context.Context, _ model.Torrent, _ model.NullContentType) (classifier.MatchDecision, error) {
-	return classifier.MatchDecision{}, nil
 }
 
 // TestWrapRunnerWithCanonical_ConstrainsMovieHit guards the regression that

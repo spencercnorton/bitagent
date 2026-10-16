@@ -10,12 +10,14 @@ import (
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/processingstate"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
 
 type Params struct {
+	CoreRecorder processingstate.Recorder `optional:"true"`
 	fx.In
 	ClassifierConfig classifier.Config
 	NamePolicy       *namepolicy.Policy `optional:"true"`
@@ -71,6 +73,7 @@ func New(p Params) Result {
 			}
 
 			return processor{
+				coreRecorder:    p.CoreRecorder,
 				dao:             d,
 				namePolicy:      p.NamePolicy,
 				search:          s,

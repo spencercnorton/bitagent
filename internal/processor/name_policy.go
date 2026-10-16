@@ -5,7 +5,7 @@ import (
 	"database/sql/driver"
 	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/database/dao"
-	"github.com/spencercnorton/bitagent/internal/llmwork"
+	llmwork "github.com/spencercnorton/bitagent/internal/legacyresults"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/namepolicy"
 	"github.com/spencercnorton/bitagent/internal/protocol"

@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/cel-go/common/types"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
-	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
 	"github.com/spencercnorton/bitagent/internal/classifier/parsers"
 	"github.com/spencercnorton/bitagent/internal/model"
 )
@@ -127,13 +126,7 @@ func uniqueTypeLocalContent(cl classification.Result, candidates []model.Content
 		if content.Type != cl.ContentType.ContentType || content.Source == "" || content.ID == "" {
 			continue
 		}
-		candidate := llmmatch.Candidate{Title: content.Title}
-		if altTitles {
-			candidate.AltTitles = altTitlesOf(content)
-		} else if content.OriginalTitle.Valid {
-			candidate.AltTitles = []string{content.OriginalTitle.String}
-		}
-		if !llmMatchTitleCompatible(llmmatch.Extraction{Title: cl.BaseTitle.String}, candidate) {
+		if !exactContentTitle(cl.BaseTitle.String, content, altTitles) {
 			continue
 		}
 		if content.Type == model.ContentTypeMovie &&
