@@ -5,7 +5,8 @@ the `bitagent.processor.v1` service protocol or allow a service to administer
 itself. Check `GET /api/processors/v1/capabilities` before using them. Its
 `bitagent.processors.operations.v1` feature map currently advertises
 `terminal_attempt_window: latest-500-v1` and
-`admission: bitagent.processors.admission.v1`. Unknown features may be ignored;
+`admission: bitagent.processors.admission.v1` and
+`job_export: bitagent.processors.job-export.v1`. Unknown features may be ignored;
 unknown required versions must fail closed. Existing core status/registry wire
 types remain valid. Absence is not a measured zero or permission to activate.
 
@@ -75,3 +76,33 @@ counts. A complete window does not prove absence of adverse scientific or
 privacy events. Consumers must also evaluate unfinished work and queue health.
 Core exposes evidence and controls; it does not choose a model promotion policy
 or fabricate an approval when evidence is missing.
+
+## Retained job evidence export
+
+`GET /jobs/:job_id/export` captures a read-only, repeatable database snapshot in
+`bitagent.processors.job-export.v1`. It includes the job summary, frozen input,
+source snapshot, ordered plan, retained prepared step (nullable), accepted
+terminal step receipts, attempt timing/outcome history, and current latest
+application/restriction records for the torrent. Those latest records may name
+a different job; they are not rewritten as historical facts. Removed plugins
+remain identified by the immutable versions in their job. Export never executes
+a service, retries a job or changes catalogue state.
+
+The response is bounded to 4 MiB and 1000 attempts. An exceeded bound returns
+413, not a silently truncated archive. A pruned/missing job returns 404; this is
+not a statement that it never ran. Archive the full response bytes and their
+digest before retention expires. Go clients can use `v1.DecodeExport`, which
+retains strict duplicate/unknown-field checks at this larger operator limit;
+service messages retain their 256 KiB limit. These exports contain torrent
+metadata and require the administration credential. They are not public status
+responses or an alternate channel for giving plugins database access.
+
+`coverage` explicitly separates retained core evidence from unavailable payloads.
+The core does **not** retain exact HTTP request/response bytes for every attempt,
+does not receive a plugin's provider/model payloads or independent references,
+and may hold only a bounded file inventory. Retry attempt history contains
+outcomes/reasons, not every response body. A prepared step has its frozen
+semantic input but is not proof of the deadline bytes used in every dispatch.
+Full raw service/provider/reference archives must be captured and validated at
+their owning boundary. An export or hash alone cannot fill these gaps or prove
+research provenance, model accuracy or production promotion readiness.

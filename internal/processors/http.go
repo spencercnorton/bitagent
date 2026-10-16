@@ -45,6 +45,7 @@ func (s *Store) Apply(e *gin.Engine) error {
 	g.GET("/capabilities", func(c *gin.Context) {
 		c.JSON(200, v1.OperationsCapabilities{Contract: v1.OperationsContract, Features: map[string]string{
 			"terminal_attempt_window": "latest-500-v1", "admission": v1.AdmissionContract,
+			"job_export": v1.JobExportContract,
 		}})
 	})
 	g.GET("/admission", func(c *gin.Context) {
@@ -154,6 +155,15 @@ func (s *Store) Apply(e *gin.Engine) error {
 		}
 		c.JSON(200, gin.H{"job_id": c.Param("job_id"), "state": state})
 	})
+	g.GET("/jobs/:job_id/export", func(c *gin.Context) {
+		export, err := s.ExportJob(c.Request.Context(), c.Param("job_id"))
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		c.JSON(200, export)
+	})
 	return nil
 }
 func body(c *gin.Context, v any) bool {
@@ -180,6 +190,9 @@ func apiError(c *gin.Context, e error) {
 	}
 	if errors.Is(e, errCursor) {
 		code, reason = 400, "invalid_cursor"
+	}
+	if errors.Is(e, errExportLimit) {
+		code, reason = 413, "export_limit"
 	}
 	c.JSON(code, gin.H{"error": reason})
 }

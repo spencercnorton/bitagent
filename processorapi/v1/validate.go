@@ -22,7 +22,10 @@ var infohash = regexp.MustCompile(`^[a-f0-9]{40}$`)
 // Decode rejects duplicate keys as well as unknown fields. Keeping both checks
 // prevents different parsers from disagreeing about a binding or proposal.
 func Decode(raw []byte, into any) error {
-	if len(raw) > MaxBody {
+	return decodeBounded(raw, into, MaxBody)
+}
+func decodeBounded(raw []byte, into any, limit int) error {
+	if len(raw) > limit {
 		return errors.New("body_too_large")
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))

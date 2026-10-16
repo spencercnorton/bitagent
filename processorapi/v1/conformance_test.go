@@ -39,6 +39,10 @@ func TestPublishedFixtures(t *testing.T) {
 	require.Equal(t, AdmissionContract, admission.Contract)
 	require.Equal(t, AdmissionAlgorithm, admission.Algorithm)
 	require.Equal(t, 100, admission.BasisPoints)
+	var export JobExport
+	read("job-export.json", &export)
+	require.Equal(t, JobExportContract, export.Contract)
+	require.Equal(t, "not_received_by_core", export.Coverage["raw_provider_payloads"])
 	for _, outcome := range []Outcome{Abstained, Deferred, Failed} {
 		copy := r
 		copy.Outcome = outcome

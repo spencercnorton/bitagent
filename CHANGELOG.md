@@ -7,6 +7,8 @@
   unavailable; expired dispatched leases are recorded as technical failures.
 - Add negotiated, audited whole-pipeline percentage admission with reproducible
   hash cohorts, atomic generation checks and stale-result rejection on changes.
+- Export bounded retained job evidence with versioned input/result lineage,
+  attempt histories and explicit raw-payload and reference coverage gaps.
 
 ## 5.0.0 — 2026-10-16
 
