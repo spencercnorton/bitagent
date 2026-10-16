@@ -1,0 +1,109 @@
+{
+  "schema": "bitagent.processor.validation.v1",
+  "date": "2026-10-16",
+  "baseline_revision": "36de3b92d1169207b043f12244c16502b2de0a27",
+  "runtime_checkpoint": "d77f19a98290222e99264eeafa16075bd39f1f68",
+  "environment": {
+    "go": "1.26.9",
+    "platform": "darwin/arm64",
+    "cpu": "Apple M4 Pro",
+    "database": "PostgreSQL 16, local disposable Docker container"
+  },
+  "deterministic_pipeline": {
+    "baseline": {
+      "samples": [
+        {
+          "ns_per_op": 899211,
+          "bytes_per_op": 1328509,
+          "allocations_per_op": 3281
+        },
+        {
+          "ns_per_op": 1027479,
+          "bytes_per_op": 1332244,
+          "allocations_per_op": 3284
+        },
+        {
+          "ns_per_op": 924192,
+          "bytes_per_op": 1335570,
+          "allocations_per_op": 3285
+        },
+        {
+          "ns_per_op": 912991,
+          "bytes_per_op": 1333010,
+          "allocations_per_op": 3283
+        },
+        {
+          "ns_per_op": 909235,
+          "bytes_per_op": 1334269,
+          "allocations_per_op": 3284
+        }
+      ],
+      "median_ns_per_op": 912991
+    },
+    "current": {
+      "samples": [
+        {
+          "ns_per_op": 885069,
+          "bytes_per_op": 1326056,
+          "allocations_per_op": 3230
+        },
+        {
+          "ns_per_op": 904874,
+          "bytes_per_op": 1328066,
+          "allocations_per_op": 3231
+        },
+        {
+          "ns_per_op": 887907,
+          "bytes_per_op": 1330864,
+          "allocations_per_op": 3232
+        },
+        {
+          "ns_per_op": 874760,
+          "bytes_per_op": 1330649,
+          "allocations_per_op": 3232
+        },
+        {
+          "ns_per_op": 882381,
+          "bytes_per_op": 1333475,
+          "allocations_per_op": 3235
+        }
+      ],
+      "median_ns_per_op": 885069
+    }
+  },
+  "crawler_persistence": {
+    "method": "ABBA ordering; GOMAXPROCS=2; 5000 synthetic torrents per sample; five samples per run; ten samples per version; no parallel database tests",
+    "samples": {
+      "baseline": [
+        9545.8,
+        9407.0,
+        9347.6,
+        8137.8,
+        8909.7,
+        9422.4,
+        9899.8,
+        9191.7,
+        9800.8,
+        10301.5
+      ],
+      "current": [
+        8764.4,
+        9539.5,
+        9396.4,
+        9406.5,
+        8982.0,
+        9619.6,
+        10226.9,
+        10761.1,
+        11291.4,
+        10091.9
+      ]
+    },
+    "medians": {
+      "baseline": 9414.7,
+      "current": 9579.55
+    },
+    "change_percent": 1.7509851615027383
+  },
+  "scope": "Synthetic core/protocol integration and comparative local measurements. No live DHT yield, production scale, model accuracy, or production deployment claim."
+}

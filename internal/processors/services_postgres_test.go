@@ -116,6 +116,31 @@ func TestPostgresIndependentProcessesAndOperatorAPI(t *testing.T) {
 	require.NotContains(t, response.Body.String(), string(s.cfg.AdminToken))
 	require.NotContains(t, response.Body.String(), "Synthetic.Amber")
 	t.Log("independent Go and Python processes: classify + policy, PostgreSQL application, authenticated status, counters and filtered cursor pagination passed")
+
+	// Kill an actual independent process after registration. A successful type
+	// proposal in the same pipeline must not authorize new enrichment when its
+	// policy participant crashes; already eligible facts remain available.
+	require.NoError(t, independent.Process.Kill())
+	_ = independent.Wait()
+	crashed := seedTorrent(t, p, 72, nil)
+	_, e = s.Scan(testContext)
+	require.NoError(t, e)
+	run(t, s) // reference classification
+	run(t, s) // first failed policy attempt
+	_, e = p.Exec(testContext, `UPDATE processor_jobs SET available_at=now() WHERE state='deferred'`)
+	require.NoError(t, e)
+	run(t, s) // bounded final failure
+	var newType *string
+	require.NoError(t, p.QueryRow(testContext, `SELECT content_type FROM torrent_contents WHERE info_hash=$1`, crashed).Scan(&newType))
+	require.Nil(t, newType)
+	require.NoError(t, p.QueryRow(testContext, `SELECT content_type FROM torrent_contents WHERE info_hash=$1`, h).Scan(&kind))
+	require.Equal(t, "movie", kind)
+	require.NoError(t, p.QueryRow(testContext, `SELECT count(*) FROM processor_attempts WHERE processor_id='independent' AND outcome='failed'`).Scan(&n))
+	require.Equal(t, 2, n)
+	status, e = s.Status(testContext)
+	require.NoError(t, e)
+	require.Equal(t, "ready", status.CoreReadiness)
+	t.Log("SIGKILL: two bounded technical failures, no new publication authority, existing movie retained, core ready")
 }
 func TestTransportRejectsHostileResponsesAndContract(t *testing.T) {
 	j := v1.Job{Binding: v1.Binding{Contract: v1.Contract, JobID: strings.Repeat("1", 64), InputRevision: strings.Repeat("2", 64), PipelineRevision: strings.Repeat("3", 64), ConfigurationDigest: strings.Repeat("4", 64), Processor: v1.Identity{ID: "test", Version: "1", ModelVersion: "none", PolicyVersion: "1", ArtifactDigest: "none"}, Stage: v1.Classify}, Configuration: json.RawMessage(`{}`), Input: v1.Input{InfoHash: strings.Repeat("1", 40), Name: "synthetic", Deterministic: v1.Deterministic{MatchingOutcome: "not_attempted", ProcessingOutcome: "completed"}}, Deadline: time.Now().Add(time.Second).UTC().Format(time.RFC3339Nano)}

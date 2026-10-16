@@ -49,7 +49,7 @@ func recoveryPool(t *testing.T) *pgxpool.Pool {
 	admin, err := pgx.Connect(ctx, dsn)
 	require.NoError(t, err)
 	schema := fmt.Sprintf("recovery_test_%d", time.Now().UnixNano())
-		_, err = admin.Exec(ctx, `create schema `+pgx.Identifier{schema}.Sanitize())
+	_, err = admin.Exec(ctx, `create schema `+pgx.Identifier{schema}.Sanitize())
 	require.NoError(t, err)
 	_, err = admin.Exec(ctx, `SELECT pg_advisory_lock(830571); CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public; CREATE EXTENSION IF NOT EXISTS btree_gin WITH SCHEMA public; SELECT pg_advisory_unlock(830571)`)
 	require.NoError(t, err)
@@ -578,7 +578,12 @@ func TestPostgresConcurrentDuplicateRemovalAndAtomicBatch(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
-		go func() { defer wg.Done(); <-start; _, e := s.Remove(ctx, h, "blocking", "synthetic", time.Now()); errs <- e }()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, e := s.Remove(ctx, h, "blocking", "synthetic", time.Now())
+			errs <- e
+		}()
 	}
 	close(start)
 	wg.Wait()
@@ -1068,6 +1073,9 @@ func TestPostgresRestoredBloomTagPrivacyPreservesPublicAuthority(t *testing.T) {
 func TestPostgresGroupedPagingIndexMigrationPreservesCatalogueAndRecovery(t *testing.T) {
 	pool := recoveryPool(t)
 	provider := recoveryMigrationProvider(t, pool)
+	// Exercise exactly migration 60, independently of later empty side tables.
+	_, err := provider.DownTo(ctx, 60)
+	require.NoError(t, err)
 	h := hash(110)
 	seed(t, pool, h, true)
 	before := raw(t, pool, h)

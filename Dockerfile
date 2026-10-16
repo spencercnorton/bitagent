@@ -25,7 +25,7 @@ LABEL org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.source="${SOURCE}"
 
-# TLS roots for metadata/LLM APIs, time zones, and the Compose health probe.
+# TLS roots for metadata and optional service APIs, time zones, and the Compose health probe.
 RUN apk --no-cache add ca-certificates curl tzdata
 # Preserve existing /root/.config/bitmagnet and /root/.local/share/bitmagnet
 # volume paths. The site runs independently with its own user and state.

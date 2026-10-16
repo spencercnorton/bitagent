@@ -53,5 +53,6 @@ change; deploy the qualified published digest.
 Each consumer manages its own secrets, configuration and deployment. Record
 version/digest before upgrading, back up state, rehearse restoration and retain
 the previous artifact. Review [4.0 migration](migration-v4.md) when upgrading
-from a combined 3.x image. Database migrations can require restoration of a
+from a combined 3.x image and [processor migration](processors/migration.md)
+for the 5.x runtime boundary. Database migrations can require restoration of a
 matching backup rather than a binary-only downgrade.

@@ -79,7 +79,8 @@ Drain/resume increments CAS while preserving execution identity and counters;
 pause, mode changes and replacement invalidate execution. Old label sets are
 retired from the current exporter; external time-series storage retains its
 history. `bitmagnet_process_start_time_seconds` identifies core restart/reset.
-Core request duration is distinct from service-reported inference time. Queue
+The native process collector is available on Linux; clients must treat absent
+boot samples as unknown on unsupported platforms. Core request duration is distinct from service-reported inference time. Queue
 means include all retained dispatched attempts; inference means include only
 attempts with a reported measurement. Sample counts make those populations
 explicit. Current status counts may shrink when terminal history expires.
