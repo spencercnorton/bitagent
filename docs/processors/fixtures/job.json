@@ -1,0 +1,36 @@
+{
+  "contract": "bitagent.processor.v1",
+  "job_id": "1111111111111111111111111111111111111111111111111111111111111111",
+  "input_revision": "2222222222222222222222222222222222222222222222222222222222222222",
+  "pipeline_revision": "3333333333333333333333333333333333333333333333333333333333333333",
+  "configuration_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+  "processor": {
+    "id": "reference",
+    "version": "1.0.0",
+    "model_version": "none",
+    "policy_version": "synthetic-v1",
+    "artifact_digest": "none"
+  },
+  "stage": "classify",
+  "configuration": {},
+  "input": {
+    "info_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "name": "Synthetic.Amber.2024.mkv",
+    "size": 734003200,
+    "files": [],
+    "file_count": null,
+    "extension": null,
+    "files_complete": true,
+    "deterministic": {
+      "processing_outcome": "completed",
+      "content_type": "",
+      "title": "Synthetic Amber",
+      "year": 2024,
+      "match": null,
+      "matching_outcome": "not_attempted"
+    },
+    "candidates": [],
+    "prior_results": []
+  },
+  "deadline": "2035-01-01T00:00:00Z"
+}

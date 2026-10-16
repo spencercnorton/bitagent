@@ -41,6 +41,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/metrics/metricsfx"
 	"github.com/spencercnorton/bitagent/internal/namepolicy/namepolicyfx"
 	"github.com/spencercnorton/bitagent/internal/processor/processorfx"
+	"github.com/spencercnorton/bitagent/internal/processors/processorsfx"
 	"github.com/spencercnorton/bitagent/internal/protocol/dht/dhtfx"
 	"github.com/spencercnorton/bitagent/internal/protocol/metainfo/metainfofx"
 	"github.com/spencercnorton/bitagent/internal/queue/queuefx"
@@ -81,6 +82,7 @@ func New() fx.Option {
 		metricsfx.New(),
 		namepolicyfx.New(),
 		processorfx.New(),
+		processorsfx.New(),
 		queuefx.New(),
 		queuecleanfx.New(),
 		junkpurgefx.New(),

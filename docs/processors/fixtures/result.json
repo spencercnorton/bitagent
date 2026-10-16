@@ -1,0 +1,30 @@
+{
+  "contract": "bitagent.processor.v1",
+  "job_id": "1111111111111111111111111111111111111111111111111111111111111111",
+  "input_revision": "2222222222222222222222222222222222222222222222222222222222222222",
+  "pipeline_revision": "3333333333333333333333333333333333333333333333333333333333333333",
+  "configuration_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+  "processor": {
+    "id": "reference",
+    "version": "1.0.0",
+    "model_version": "none",
+    "policy_version": "synthetic-v1",
+    "artifact_digest": "none"
+  },
+  "stage": "classify",
+  "outcome": "completed",
+  "proposal": {
+    "content_type": "movie"
+  },
+  "reasons": [
+    "synthetic_fixture"
+  ],
+  "uncertainty": null,
+  "evidence": [],
+  "retry_after_seconds": 0,
+  "telemetry": {
+    "inference_ms": null,
+    "rss_bytes": null,
+    "cpu_milliseconds": null
+  }
+}

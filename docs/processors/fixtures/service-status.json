@@ -1,0 +1,21 @@
+{
+  "instance_id": "synthetic-instance",
+  "started_at": "2026-01-01T00:00:00Z",
+  "contract": "bitagent.processor.v1",
+  "processor": {
+    "id": "reference",
+    "version": "1.0.0",
+    "model_version": "none",
+    "policy_version": "synthetic-v1",
+    "artifact_digest": "none"
+  },
+  "state": "ready",
+  "attempts": null,
+  "unique_torrents": null,
+  "outcomes": null,
+  "telemetry": {
+    "inference_ms": null,
+    "rss_bytes": null,
+    "cpu_milliseconds": null
+  }
+}

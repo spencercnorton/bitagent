@@ -31,6 +31,7 @@ func New() fx.Option {
 				if err != nil {
 					return nil, err
 				}
+				cfg.ProcessorExclusions = true
 				return serving.NewPolicy(cfg, strong, media, names)
 			},
 			cache.NewInMemoryCacher,
