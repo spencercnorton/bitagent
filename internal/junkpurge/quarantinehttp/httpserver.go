@@ -15,15 +15,15 @@ import (
 	"github.com/spencercnorton/bitagent/internal/junkpurge"
 	"github.com/spencercnorton/bitagent/internal/lazy"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
-	"go.uber.org/zap"
 	"go.uber.org/fx"
+	"go.uber.org/zap"
 )
 
 type Params struct {
 	fx.In
 	Pool     lazy.Lazy[*pgxpool.Pool]
 	Config   junkpurge.Config
-	Verdicts *verdicts.Store `optional:"true"`
+	Verdicts *verdicts.Store          `optional:"true"`
 	Recovery *cataloguerecovery.Store `optional:"true"`
 	Logger   *zap.SugaredLogger
 }

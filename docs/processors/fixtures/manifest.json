@@ -1,0 +1,18 @@
+{
+  "contract": "bitagent.processor.v1",
+  "processor": {
+    "id": "reference",
+    "version": "1.0.0",
+    "model_version": "none",
+    "policy_version": "synthetic-v1",
+    "artifact_digest": "none"
+  },
+  "capabilities": [
+    "classify"
+  ],
+  "configuration_schema": {
+    "type": "object",
+    "additionalProperties": false
+  },
+  "qualification": "synthetic"
+}

@@ -18,7 +18,6 @@ import (
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/database/query"
 	dbsearch "github.com/spencercnorton/bitagent/internal/database/search"
-	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
@@ -70,6 +69,7 @@ type blockRecord struct {
 }
 
 var _ blocking.Manager = (*recordingBlockingManager)(nil)
+
 type recordingBlockingManager struct {
 	mu      sync.Mutex
 	blocked []protocol.ID
@@ -118,31 +118,6 @@ type processExporterStub struct {
 }
 
 func (processExporterStub) Record(context.Context, protocol.ID, string, []string) {}
-
-type unavailableProcessLLM struct{}
-
-func (unavailableProcessLLM) Classify(
-	context.Context,
-	string,
-) (contentfilter.LLMVerdict, error) {
-	return contentfilter.LLMVerdict{}, contentfilter.ErrLLMUnavailable
-}
-
-func (unavailableProcessLLM) ClassifyWithResult(
-	context.Context,
-	string,
-) (contentfilter.LLMVerdict, llmcapture.HTTPResult, error) {
-	return contentfilter.LLMVerdict{}, llmcapture.HTTPResult{ErrorClass: "transport"}, contentfilter.ErrLLMUnavailable
-}
-
-func unavailableAuditedFilter(cfg contentfilter.Config) *contentfilter.Filter {
-	return contentfilter.NewWithLLMAdmission(
-		cfg,
-		unavailableProcessLLM{},
-		contentfilter.LLMCallbacks{},
-		contentfilter.Admission{Budget: processorBudgetProbe{}, Capture: &processorCaptureProbe{}},
-	)
-}
 
 func processTestHash(prefix byte) protocol.ID {
 	return protocol.ID{prefix}
@@ -363,51 +338,6 @@ func TestProcessMixedKeepAndDeletePersistsBoth(t *testing.T) {
 	}
 }
 
-func TestProcessDeletePersistsAlongsideFailedAndDeferredRepublishes(t *testing.T) {
-	deleteHash := processTestHash(5)
-	failedHash := processTestHash(6)
-	deferredHash := processTestHash(7)
-	p, mock, blocker := newProcessTestProcessor(t,
-		[]model.Torrent{
-			processTestTorrent(deleteHash, "blocked title", "mkv"),
-			processTestTorrent(failedHash, "classifier failure", "mkv"),
-			processTestTorrent(deferredHash, "Pelicula 2026", "mkv"),
-		},
-		processRunnerStub{run: func(torrent model.Torrent) (classification.Result, error) {
-			switch torrent.InfoHash {
-			case deleteHash:
-				return classification.Result{}, classification.ErrDeleteTorrent
-			case failedHash:
-				return classification.Result{}, errors.New("classifier unavailable")
-			default:
-				return classification.Result{}, nil
-			}
-		}},
-	)
-	cfg := contentfilter.NewDefaultConfig()
-	cfg.Enabled = true
-	cfg.Enforce = true
-	cfg.LLMEnabled = true
-	cfg.LLMDeferOnUnavailable = true
-	cfg.LLMDailyBudget = 10
-	p.contentFilter = unavailableAuditedFilter(cfg)
-
-	expectQueueJob(mock, "failed-republish")
-	expectQueueJob(mock, "deferred-republish")
-
-	if err := p.Process(context.Background(), MessageParams{
-		InfoHashes: []protocol.ID{deleteHash, failedHash, deferredHash},
-	}); err != nil {
-		t.Fatalf("Process: %v", err)
-	}
-	if got := blocker.blockedHashes(); len(got) != 1 || got[0] != deleteHash {
-		t.Fatalf("blocked hashes = %v, want [%s]", got, deleteHash)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("SQL expectations: %v", err)
-	}
-}
-
 func TestProcessOnlyFailureStillReturnsWithoutRepublish(t *testing.T) {
 	hash := processTestHash(8)
 	p, mock, _ := newProcessTestProcessor(t,
@@ -422,34 +352,6 @@ func TestProcessOnlyFailureStillReturnsWithoutRepublish(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unexpected SQL: %v", err)
-	}
-}
-
-func TestProcessOnlyDeferredRepublishesWithoutTransaction(t *testing.T) {
-	hash := processTestHash(9)
-	p, mock, blocker := newProcessTestProcessor(t,
-		[]model.Torrent{processTestTorrent(hash, "Pelicula 2026", "mkv")},
-		processRunnerStub{run: func(model.Torrent) (classification.Result, error) {
-			return classification.Result{}, nil
-		}},
-	)
-	cfg := contentfilter.NewDefaultConfig()
-	cfg.Enabled = true
-	cfg.Enforce = true
-	cfg.LLMEnabled = true
-	cfg.LLMDeferOnUnavailable = true
-	cfg.LLMDailyBudget = 10
-	p.contentFilter = unavailableAuditedFilter(cfg)
-	expectQueueJob(mock, "deferred-republish")
-
-	if err := p.Process(context.Background(), MessageParams{InfoHashes: []protocol.ID{hash}}); err != nil {
-		t.Fatalf("Process: %v", err)
-	}
-	if got := blocker.blockedHashes(); len(got) != 0 {
-		t.Fatalf("blocked hashes = %v, want none", got)
-	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("SQL expectations: %v", err)
 	}
 }
 
@@ -519,4 +421,6 @@ func expectReleaseAttributeReads(mock sqlmock.Sqlmock, hash protocol.ID, name st
 	mock.ExpectQuery(`SELECT .* FROM "torrent_contents".*FOR UPDATE`).WithArgs(hash.Bytes()).WillReturnRows(sqlmock.NewRows([]string{"info_hash", "release_attributes"}))
 }
 
-func (m *recordingBlockingManager) Filter(ctx context.Context, hashes []protocol.ID) ([]protocol.ID, error) { return hashes, nil }
+func (m *recordingBlockingManager) Filter(ctx context.Context, hashes []protocol.ID) ([]protocol.ID, error) {
+	return hashes, nil
+}

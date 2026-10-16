@@ -79,7 +79,7 @@ func TestTypeFallbackLocalContinuationRunsOnceAndRetainsSourceAttributes(t *test
 			require.Equal(t, model.NewNullVideoCodec(model.VideoCodecX265), got.VideoCodec)
 			require.Equal(t, model.NewNullString("GROUP"), got.ReleaseGroup)
 			require.Contains(t, got.Tags, typeLocalEnrichedTagName)
-			require.NotContains(t, got.Tags, llmMatchedTagName)
+			require.NotContains(t, got.Tags, "llm-matched")
 			require.Equal(t, 1, calls, "nested default workflows cannot infer twice")
 			require.Equal(t, 1, local.calls, "the continuation cannot recurse or enrich twice")
 			if tc.ct == model.ContentTypeTvShow {

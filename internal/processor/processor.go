@@ -6,21 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/spencercnorton/bitagent/internal/anime"
 	"github.com/spencercnorton/bitagent/internal/blocking"
 	"github.com/spencercnorton/bitagent/internal/classifier"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter"
-	"github.com/spencercnorton/bitagent/internal/classifier/llmsignal"
 	"github.com/spencercnorton/bitagent/internal/csamblocklist"
 	"github.com/spencercnorton/bitagent/internal/database/dao"
 	"github.com/spencercnorton/bitagent/internal/database/query"
 	"github.com/spencercnorton/bitagent/internal/database/search"
-	"github.com/spencercnorton/bitagent/internal/llmwork"
 	"github.com/spencercnorton/bitagent/internal/model"
 	"github.com/spencercnorton/bitagent/internal/namepolicy"
+	"github.com/spencercnorton/bitagent/internal/processingstate"
 	"github.com/spencercnorton/bitagent/internal/protocol"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
 	"go.uber.org/zap"
@@ -32,15 +30,8 @@ type Processor interface {
 	Process(ctx context.Context, params MessageParams) error
 }
 
-// contentFilterDeferRetryDelay is how long a content-filter-deferred
-// torrent waits before re-processing. The filter defers (rather than
-// keeps) a residual torrent only when its LLM endpoint is unreachable
-// and LLMDeferOnUnavailable is set; a fixed backoff keeps a long
-// outage from hot-looping while still draining promptly once the
-// endpoint returns.
-const contentFilterDeferRetryDelay = 15 * time.Minute
-
 type processor struct {
+	coreRecorder    processingstate.Recorder
 	namePolicy      *namepolicy.Policy
 	defaultWorkflow string
 	search          search.Search
@@ -54,22 +45,11 @@ type processor struct {
 	// CSAM_BLOCKLIST_EXPORT_ENABLED=false. See internal/csamblocklist
 	// for the export contract.
 	csamExporter csamblocklist.Exporter
-	// contentFilter + contentFilterMetrics are the post-classifier
-	// hook for the content-filter LLM tier. The dhtcrawler runs a
-	// PRE-classifier deterministic pass (DecideDeterministic) to drop
-	// obvious junk early; here, after the classifier has populated
-	// `cl.ContentType` and `cl.Languages`, we call Filter.Decide
-	// which adds the LLM tier on top — the residual cohort
-	// (Latin-script titles where TMDB couldn't language-tag) gets a
-	// configured hosted-LLM verdict gated by daily budget + cache. Both fields
-	// are nil-safe; absence skips the hook entirely.
+	// Deterministic policy runs again after classification has supplied types
+	// and languages. Missing optional processors do not affect this decision.
 	contentFilter        *contentfilter.Filter
 	contentFilterMetrics *contentfilter.Metrics
-	// privacy gates the post-classifier content-filter hook so
-	// private-tracker torrents never reach the LLM tier (and therefore
-	// its configured provider). Mirrors classifier/llmstage's wiring; both share the
-	// same *evidence.Store. nil-safe — when unset (e.g. in narrow
-	// tests) the gate is a no-op.
+	// Privacy independently protects catalogue handling and sampled evidence.
 	privacy PrivacyStore
 	// Legacy audit helpers remain available for historical evidence. Removal
 	// authority is now written atomically by the complete recovery transition;
@@ -153,12 +133,12 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		errs               []error
 		idsToDelete        []string
 		infoHashesToDelete []protocol.ID
-		deferredHashes     []protocol.ID
 		deleteObservations []deleteObservation
 		deleteReasons      []string
 	)
 
 	tcs := make([]model.TorrentContent, 0, len(searchResult.Torrents))
+	coreReceipts := []processingstate.Receipt{}
 
 	preserved := map[protocol.ID]*classification.ApplicationPreservation{}
 	tagsToAdd := make(map[protocol.ID]map[string]struct{})
@@ -192,7 +172,6 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 					!torrent.Hint.ContentSource.Valid &&
 					params.ClassifyMode != ClassifyModeRematch &&
 					tc.ContentType.Valid &&
-					tc.ContentSource.Valid &&
 					(torrent.Hint.IsNil() || torrent.Hint.ContentType == tc.ContentType.ContentType) {
 					torrent.Hint.ContentType = tc.ContentType.ContentType
 					torrent.Hint.ContentSource = tc.ContentSource
@@ -201,9 +180,8 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 				}
 			}
 
-			// Per-run sideband for the LLM matcher's English-track read —
-			// survives the find_match result discard on unmatched outcomes.
-			runCtx := llmwork.WithSourceTorrent(llmsignal.WithHolder(ctx), sourceTorrent)
+			// Keep source admission independent of optional processors.
+			runCtx, matchTrace := processingstate.WithTrace(ctx)
 			if c.namePolicy.Enabled() {
 				runCtx = namepolicy.WithAdmission(runCtx, c.providerNameAdmission)
 			}
@@ -214,22 +192,25 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 			defer mtx.Unlock()
 
 			if classifyErr != nil {
+				for _, old := range sourceTorrent.Contents {
+					coreReceipts = append(coreReceipts, processingstate.Receipt{Torrent: sourceTorrent, ContentID: old.ID, Outcome: "deferred", Processing: "deferred"})
+				}
 				if errors.Is(classifyErr, namepolicy.ErrExcluded) {
 					return
 				}
 				if errors.Is(classifyErr, classification.ErrDeleteTorrent) {
 					infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
 					deleteObservations = append(deleteObservations, deleteObservation{cl.ContentType, classifyErr})
-						filePathsForEvidence := make([]string, 0, len(torrent.Files))
-						for _, f := range torrent.Files {
-							filePathsForEvidence = append(filePathsForEvidence, f.Path)
-						}
-						evidenceBytes := classifierDeleteEvidence(workflowName, classifyErr, torrent, filePathsForEvidence, c.deleteAuditBudget)
-						reason := string(evidenceBytes)
-						if reason == "" {
-							reason = "classifier_delete"
-						}
-						deleteReasons = append(deleteReasons, reason)
+					filePathsForEvidence := make([]string, 0, len(torrent.Files))
+					for _, f := range torrent.Files {
+						filePathsForEvidence = append(filePathsForEvidence, f.Path)
+					}
+					evidenceBytes := classifierDeleteEvidence(workflowName, classifyErr, torrent, filePathsForEvidence, c.deleteAuditBudget)
+					reason := string(evidenceBytes)
+					if reason == "" {
+						reason = "classifier_delete"
+					}
+					deleteReasons = append(deleteReasons, reason)
 					// The independent CSAM observation exporter verifies the
 					// name and paths even when destructive admission is held.
 					filePaths := make([]string, 0, len(torrent.Files))
@@ -259,69 +240,25 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 					c.namePolicy.Observe("processor", d)
 					return
 				}
-				// Post-classifier content-filter hook. The classifier has
-				// emitted ContentType + Languages, so Filter.Decide can
-				// run the LLM tier on residual cases (Latin-script titles
-				// with no TMDB-derived language tag). Pre-classifier
-				// dhtcrawler hook used DecideDeterministic — that's the
-				// cheap ladder; this is the language-aware second pass.
-				//
-				// Gating mirrors the pre-classifier hook: skip when the
-				// filter is disabled (no metrics emitted, zero cost) or
-				// not wired (nil — older deploys / partial test wiring).
-				// On a "drop" decision in enforce mode we route the
-				// torrent to infoHashesToDelete, using the same bounded
-				// recovery writer as ErrDeleteTorrent. Recovery-off holds
-				// the action without row deletion or bloom admission.
-				// In shadow mode (Enforce=false) the
-				// metric records the would-drop and we fall through to
-				// the normal persist.
+				// Apply the same deterministic filter after type/language enrichment.
 				if !params.SkipContentFilter &&
 					c.contentFilter != nil &&
 					c.contentFilter.Enabled() &&
 					!c.shouldSkipContentFilter(ctx, torrent, cl) {
 					fi := torrentToFilterInput(torrent, cl)
-					groupKey := []byte(contentfilter.EvaluationGroupKey(fi.Title))
-					if cl.Content != nil {
-						groupKey = []byte(fmt.Sprintf(
-							"%s\x00%s\x00%s", cl.Content.Type, cl.Content.Source, cl.Content.ID,
-						))
-					}
-					d, filterErr := c.contentFilter.DecideAudited(llmwork.WithSourceTorrent(ctx, sourceTorrent), fi, contentfilter.AuditSource{
-						InfoHash: torrent.InfoHash.Bytes(), GroupKey: groupKey,
-					})
-					if filterErr != nil {
-						if errors.Is(filterErr, namepolicy.ErrExcluded) {
-							return
-						}
-						failedHashes = append(failedHashes, torrent.InfoHash)
-						errs = append(errs, fmt.Errorf("contentfilter audited decision: %w", filterErr))
-						return
-					}
+					d := c.contentFilter.DecideDeterministic(fi)
 					if c.contentFilterMetrics != nil {
 						c.contentFilterMetrics.Observe(d)
-					}
-					if d.Defer {
-						// LLM endpoint unreachable + defer-on-unavailable:
-						// re-queue (with backoff) instead of keeping
-						// (foreign leak) or dropping (false positive).
-						deferredHashes = append(deferredHashes, torrent.InfoHash)
-						return
 					}
 					if !d.Allow {
 						infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
 						deleteReasons = append(deleteReasons, "content_filter")
 						return
 					}
-					if d.Review && d.WouldReview && !d.WouldDrop && d.Reason == contentfilter.ReasonLLMNonEnglish {
-						if cl.Tags == nil {
-							cl.Tags = make(map[string]struct{})
-						}
-						cl.Tags[contentfilter.LLMReviewTag] = struct{}{}
-					}
+
 				}
 
-				torrentContent := newTorrentContent(torrent, cl, llmsignal.English(runCtx))
+				torrentContent := newTorrentContent(torrent, cl)
 
 				tcID := torrentContent.InferID()
 				for id := range thisDeleteIDs {
@@ -331,6 +268,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 				}
 
 				tcs = append(tcs, torrentContent)
+				coreReceipts = append(coreReceipts, processingstate.Receipt{Torrent: sourceTorrent, ContentID: torrentContent.InferID(), Outcome: matchTrace.Outcome(cl.Content != nil), Processing: "completed"})
 				if cl.Preserved != nil {
 					preserved[torrent.InfoHash] = cl.Preserved
 				}
@@ -351,7 +289,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		applications:     preserved,
 		deleteIDs:        idsToDelete,
 		deleteInfoHashes: infoHashesToDelete,
-			deleteReasons:    deleteReasons,
+		deleteReasons:    deleteReasons,
 		addTags:          tagsToAdd,
 	}
 
@@ -378,35 +316,19 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		}
 	}
 
-	// Content-filter deferrals: torrents whose LLM classification
-	// couldn't complete (endpoint unreachable, LLMDeferOnUnavailable
-	// set). Re-publish with a backoff so they're retried once the LLM
-	// is back — never kept (leak) or dropped. OnConflict DoNothing
-	// dedups an already-pending defer for the same set.
-	if len(deferredHashes) > 0 {
-		deferJob, deferJobErr := NewQueueJob(MessageParams{
-			InfoHashes:         deferredHashes,
-			ClassifyMode:       params.ClassifyMode,
-			ClassifierWorkflow: workflowName,
-			ClassifierFlags:    params.ClassifierFlags,
-			SkipContentFilter:  params.SkipContentFilter,
-		}, model.QueueJobDelayBy(contentFilterDeferRetryDelay))
-		if deferJobErr != nil {
-			return errors.Join(append(errs, deferJobErr)...)
-		}
-		if err := c.dao.QueueJob.WithContext(ctx).Clauses(clause.OnConflict{
-			DoNothing: true,
-		}).Create(&deferJob); err != nil {
-			return errors.Join(append(errs, err)...)
-		}
-	}
-
 	if payload.isEmpty() {
+		if c.coreRecorder != nil {
+			c.coreRecorder.RecordCore(ctx, coreReceipts)
+		}
 		return nil
 	}
 
 	if err := c.persist(ctx, payload); err != nil {
 		return err
+	}
+
+	if c.coreRecorder != nil {
+		c.coreRecorder.RecordCore(ctx, coreReceipts)
 	}
 
 	// Count fully successful removal calls, never held decisions. The
@@ -531,7 +453,7 @@ func contentFilterEvidence(d contentfilter.Decision) []byte {
 	return b
 }
 
-func newTorrentContent(t model.Torrent, c classification.Result, llmEnglish model.NullEnglishAudio) model.TorrentContent {
+func newTorrentContent(t model.Torrent, c classification.Result) model.TorrentContent {
 	var filesCount model.NullUint
 	if t.FilesCount.Valid {
 		filesCount = t.FilesCount
@@ -578,18 +500,12 @@ func newTorrentContent(t model.Torrent, c classification.Result, llmEnglish mode
 		tc.AnimeAbsoluteEpisode = model.NewNullUint(uint(animeSignals.AbsoluteEpisode))
 	}
 
-	// English availability (anime only), merged with explicit precedence:
-	// a deterministic name signal wins ('name'); otherwise a definite LLM
-	// read from THIS run fills in ('llm' — the only path that can assign
-	// 'none'/raw). The pair is always written together; persist() protects
-	// existing 'llm' rows from cycles that carry no signal at all.
+	// New audio claims come only from deterministic release-name evidence.
+	// Persistence preserves attributed historical results when no new fact exists.
 	tc.EnglishAudio = model.DeriveEnglishAudio(
 		animeSignals.IsAnime(), animeSignals.EnglishAudioSignal, animeSignals.EnglishSubSignal)
 	if tc.EnglishAudio.Valid {
 		tc.EnglishAudioSource = model.NewNullString(model.EnglishAudioSourceName)
-	} else if llmEnglish.Valid {
-		tc.EnglishAudio = llmEnglish
-		tc.EnglishAudioSource = model.NewNullString(model.EnglishAudioSourceLLM)
 	}
 
 	if c.Content != nil {

@@ -293,8 +293,8 @@ func TestYearProximityPenalty(t *testing.T) {
 		{2010, 2009, 1},
 		{2010, 2012, 100},
 		{2010, 2007, 100},
-		{0, 2010, 0},  // zero queryYear -> no penalty (unknown year)
-		{2010, 0, 0},  // zero candidateYear -> no penalty (unknown year)
+		{0, 2010, 0}, // zero queryYear -> no penalty (unknown year)
+		{2010, 0, 0}, // zero candidateYear -> no penalty (unknown year)
 	}
 	for _, tc := range cases {
 		t.Run("", func(t *testing.T) {

@@ -1,5 +1,10 @@
 # Prometheus metrics
 
+Version 5 retires the embedded inference families described in historical
+sections below. The current optional-processor names, populations, reset and
+unknown-value semantics are in [processor operator API](../processors/operator-api.md).
+Those new families use only `bitagent_processors_*`; they are not dual-emitted.
+
 BitAgent exposes raw Prometheus metrics on the HTTP port (`3333`) at `/metrics` with no auth. For public exposure, place a reverse proxy in front. A scrape interval of `30s` is recommended — it balances telemetry granularity with backend overhead.
 
 The metric namespace was migrated from `bitmagnet_*` to `bitagent_*` on 2026-04-24. During the dual-emit window, every metric fires under both namespaces simultaneously. Operators using legacy `bitmagnet_*` names in dashboards or alerts continue to receive data; migrate at your own pace. The legacy emit will be turned off (one-line code change) once we have signal that downstreams are migrated — there is no fixed deadline.

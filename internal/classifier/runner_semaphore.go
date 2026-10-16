@@ -28,10 +28,3 @@ func (r runnerSemaphore) Run(
 
 	return r.runner.Run(ctx, workflow, flags, t)
 }
-
-// EvalMatch delegates without taking the workflow semaphore: the eval command
-// is an offline measurement path that manages its own concurrency, and the
-// matcher's own LLM/TMDB limits already bound it.
-func (r runnerSemaphore) EvalMatch(ctx context.Context, t model.Torrent, ct model.NullContentType) (MatchDecision, error) {
-	return r.runner.EvalMatch(ctx, t, ct)
-}

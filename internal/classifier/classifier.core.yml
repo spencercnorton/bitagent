@@ -165,22 +165,6 @@ workflows:
                 condition: "flags.apis_enabled && flags.tmdb_enabled"
                 if_action: attach_tmdb_content_by_search
                 else_action: unmatched
-    # LLM fallback matcher: for movie/tv torrents that deterministic search
-    # could not attach to a TMDB id (the release name is too messy — alt/foreign
-    # titles, junk prefixes). Two-stage extract+rerank. Gated OFF by default via
-    # flags.llm_match_enabled; the action itself is a further no-op unless the
-    # classifier_llm_match config enables it (shadow) and enable_live (attach).
-    - if_else:
-        condition:
-          and:
-            - "!result.hasAttachedContent && result.hasBaseTitle"
-            - "flags.llm_match_enabled"
-            - "flags.apis_enabled && flags.tmdb_enabled"
-            - "result.contentType in [contentType.movie, contentType.tv_show]"
-        if_action:
-          find_match:
-            - attach_tmdb_content_by_llm_search
-            - unmatched
     # Preserve deterministic exclusions before any optional provider call.
     - run_workflow: [content_type_policy]
     # The optional type-only callback runs in the existing workflow, after
@@ -673,13 +657,11 @@ flag_definitions:
   local_search_enabled: bool
   apis_enabled: bool
   tmdb_enabled: bool
-  llm_match_enabled: bool
   delete_content_types: content_type_list
   delete_xxx: bool
 flags:
   local_search_enabled: true
   apis_enabled: true
   tmdb_enabled: true
-  llm_match_enabled: false
   delete_content_types: []
   delete_xxx: false

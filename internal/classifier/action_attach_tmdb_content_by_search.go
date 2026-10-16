@@ -1,8 +1,10 @@
 package classifier
 
 import (
+	"errors"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
 	"github.com/spencercnorton/bitagent/internal/model"
+	"github.com/spencercnorton/bitagent/internal/processingstate"
 )
 
 const attachTmdbContentBySearchName = "attach_tmdb_content_by_search"
@@ -76,6 +78,7 @@ func (attachTmdbContentBySearchAction) compileAction(ctx compilerContext) (actio
 			switch cl.ContentType.ContentType {
 			case model.ContentTypeTvShow:
 				result, searchErr := ctx.tmdbSearchTVShow(query, cl.Date.Year)
+				processingstate.Search(ctx.Context, searchErr != nil && !errors.Is(searchErr, classification.ErrUnmatched))
 				if searchErr != nil {
 					return cl, searchErr
 				}
@@ -85,6 +88,7 @@ func (attachTmdbContentBySearchAction) compileAction(ctx compilerContext) (actio
 					return cl, classification.ErrUnmatched
 				}
 				result, searchErr := ctx.tmdbSearchMovie(query, cl.Date.Year)
+				processingstate.Search(ctx.Context, searchErr != nil && !errors.Is(searchErr, classification.ErrUnmatched))
 				if searchErr != nil {
 					return cl, searchErr
 				}

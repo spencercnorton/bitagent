@@ -12,7 +12,7 @@ import (
 
 	"github.com/spencercnorton/bitagent/internal/catalogueguard"
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
-	"github.com/spencercnorton/bitagent/internal/llmwork"
+	llmwork "github.com/spencercnorton/bitagent/internal/legacyresults"
 	"github.com/spencercnorton/bitagent/internal/verdicts"
 
 	"github.com/spencercnorton/bitagent/internal/database/dao"

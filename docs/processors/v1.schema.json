@@ -1,0 +1,1127 @@
+{
+  "$defs": {
+    "Candidate": {
+      "additionalProperties": false,
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "content_type": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "year": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source",
+        "id",
+        "content_type",
+        "title",
+        "year",
+        "aliases"
+      ],
+      "type": "object"
+    },
+    "Deterministic": {
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "type": "string"
+        },
+        "match": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MatchRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "matching_outcome": {
+          "enum": [
+            "matched",
+            "completed_unmatched",
+            "deferred",
+            "not_attempted"
+          ]
+        },
+        "processing_outcome": {
+          "enum": [
+            "completed",
+            "deferred",
+            "not_attempted"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "year": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "processing_outcome",
+        "content_type",
+        "title",
+        "year",
+        "matching_outcome"
+      ],
+      "type": "object"
+    },
+    "Embedding": {
+      "additionalProperties": false,
+      "properties": {
+        "space": {
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "type": "number"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "space",
+        "values"
+      ],
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "reference": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "reference"
+      ],
+      "type": "object"
+    },
+    "Exclusion": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "Extraction": {
+      "additionalProperties": false,
+      "properties": {
+        "episodes": {
+          "items": {
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "season": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "year": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "title",
+        "year"
+      ],
+      "type": "object"
+    },
+    "File": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "size"
+      ],
+      "type": "object"
+    },
+    "Identity": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_digest": {
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,95}$",
+          "type": "string"
+        },
+        "model_version": {
+          "type": "string"
+        },
+        "policy_version": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "model_version",
+        "policy_version",
+        "artifact_digest"
+      ],
+      "type": "object"
+    },
+    "Input": {
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/Candidate"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "deterministic": {
+          "$ref": "#/$defs/Deterministic"
+        },
+        "extension": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "file_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/File"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "files_complete": {
+          "type": "boolean"
+        },
+        "info_hash": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "prior_results": {
+          "items": {
+            "$ref": "#/$defs/Result"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "info_hash",
+        "name",
+        "size",
+        "files",
+        "files_complete",
+        "deterministic",
+        "candidates",
+        "prior_results"
+      ],
+      "type": "object"
+    },
+    "Job": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration": {
+          "type": "object"
+        },
+        "configuration_digest": {
+          "type": "string"
+        },
+        "contract": {
+          "const": "bitagent.processor.v1"
+        },
+        "deadline": {
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/Input"
+        },
+        "input_revision": {
+          "type": "string"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "pipeline_revision": {
+          "type": "string"
+        },
+        "processor": {
+          "$ref": "#/$defs/Identity"
+        },
+        "stage": {
+          "enum": [
+            "classify",
+            "extract",
+            "match",
+            "language",
+            "policy",
+            "embed"
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "job_id",
+        "input_revision",
+        "pipeline_revision",
+        "configuration_digest",
+        "processor",
+        "stage",
+        "configuration",
+        "input",
+        "deadline"
+      ],
+      "type": "object"
+    },
+    "JobPage": {
+      "additionalProperties": false,
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/JobSummary"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "next_cursor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "items",
+        "next_cursor"
+      ],
+      "type": "object"
+    },
+    "JobSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "type": "integer"
+        },
+        "available_at": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "execution_generation": {
+          "type": "integer"
+        },
+        "input_revision": {
+          "type": "string"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "lease_until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "pipeline_revision": {
+          "type": "string"
+        },
+        "processor": {
+          "$ref": "#/$defs/Identity"
+        },
+        "processor_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "job_id",
+        "input_revision",
+        "pipeline_revision",
+        "state",
+        "stage",
+        "processor_id",
+        "processor",
+        "execution_generation",
+        "attempts",
+        "created_at",
+        "available_at",
+        "outcome",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "LanguageClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "audio": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "subtitles": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "audio",
+        "subtitles",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "Manifest": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "configuration_schema": {
+          "type": "object"
+        },
+        "contract": {
+          "const": "bitagent.processor.v1"
+        },
+        "processor": {
+          "$ref": "#/$defs/Identity"
+        },
+        "qualification": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract",
+        "processor",
+        "capabilities",
+        "configuration_schema",
+        "qualification"
+      ],
+      "type": "object"
+    },
+    "MatchRef": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "id"
+      ],
+      "type": "object"
+    },
+    "Measurement": {
+      "additionalProperties": false,
+      "properties": {
+        "population": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "unavailable_reason": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "window": {
+          "$ref": "#/$defs/Window"
+        }
+      },
+      "required": [
+        "unit",
+        "window",
+        "population",
+        "source",
+        "unavailable_reason"
+      ],
+      "type": "object"
+    },
+    "ProcessorStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "auth_env": {
+          "type": "string"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "compatibility": {
+          "type": "string"
+        },
+        "configuration": {
+          "type": "object"
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "evaluation": {
+          "type": "null"
+        },
+        "execution_generation": {
+          "type": "integer"
+        },
+        "generation": {
+          "type": "integer"
+        },
+        "health": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "installed": {
+          "type": "boolean"
+        },
+        "instance_id": {
+          "type": "string"
+        },
+        "last_checked_at": {
+          "type": "string"
+        },
+        "last_error": {
+          "type": "string"
+        },
+        "loaded": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "metrics": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Measurement"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "observed_processor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operating_mode": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "processor": {
+          "$ref": "#/$defs/Identity"
+        },
+        "qualification": {
+          "type": "string"
+        },
+        "readiness": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "configuration",
+        "auth_env",
+        "execution_generation",
+        "instance_id",
+        "started_at",
+        "id",
+        "generation",
+        "installed",
+        "configured",
+        "enabled",
+        "state",
+        "mode",
+        "operating_mode",
+        "endpoint",
+        "priority",
+        "contract",
+        "processor",
+        "capabilities",
+        "compatibility",
+        "health",
+        "readiness",
+        "last_checked_at",
+        "last_error",
+        "qualification",
+        "metrics",
+        "evaluation"
+      ],
+      "type": "object"
+    },
+    "Proposal": {
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "type": "string"
+        },
+        "embedding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Embedding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exclusion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Exclusion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extraction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Extraction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "language": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LanguageClaim"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "match": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MatchRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "RegistryControl": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_generation": {
+          "type": "integer"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "expected_generation"
+      ],
+      "type": "object"
+    },
+    "RegistryWrite": {
+      "additionalProperties": false,
+      "properties": {
+        "auth_env": {
+          "type": "string"
+        },
+        "configuration": {
+          "type": "object"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "expected_generation": {
+          "type": "integer"
+        },
+        "expected_processor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Identity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "type": "string"
+        },
+        "priority": {
+          "type": "integer"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "expected_generation",
+        "endpoint",
+        "mode",
+        "state",
+        "priority",
+        "configuration",
+        "auth_env"
+      ],
+      "type": "object"
+    },
+    "Result": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration_digest": {
+          "type": "string"
+        },
+        "contract": {
+          "const": "bitagent.processor.v1"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "input_revision": {
+          "type": "string"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "completed",
+            "abstained",
+            "deferred",
+            "failed",
+            "excluded",
+            "unmatched"
+          ]
+        },
+        "pipeline_revision": {
+          "type": "string"
+        },
+        "processor": {
+          "$ref": "#/$defs/Identity"
+        },
+        "proposal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Proposal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "retry_after_seconds": {
+          "type": "integer"
+        },
+        "stage": {
+          "enum": [
+            "classify",
+            "extract",
+            "match",
+            "language",
+            "policy",
+            "embed"
+          ]
+        },
+        "telemetry": {
+          "$ref": "#/$defs/Telemetry"
+        },
+        "uncertainty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "job_id",
+        "input_revision",
+        "pipeline_revision",
+        "configuration_digest",
+        "processor",
+        "stage",
+        "outcome",
+        "reasons",
+        "evidence",
+        "retry_after_seconds",
+        "telemetry"
+      ],
+      "type": "object"
+    },
+    "ServiceStatus": {
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "contract": {
+          "type": "string"
+        },
+        "instance_id": {
+          "type": "string"
+        },
+        "outcomes": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "processor": {
+          "$ref": "#/$defs/Identity"
+        },
+        "started_at": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "telemetry": {
+          "$ref": "#/$defs/Telemetry"
+        },
+        "unique_torrents": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "processor",
+        "state"
+      ],
+      "type": "object"
+    },
+    "Status": {
+      "additionalProperties": false,
+      "properties": {
+        "contract": {
+          "type": "string"
+        },
+        "core_readiness": {
+          "type": "string"
+        },
+        "limits": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "optional_processors_required": {
+          "type": "boolean"
+        },
+        "pipeline_revision": {
+          "type": "string"
+        },
+        "processors": {
+          "items": {
+            "$ref": "#/$defs/ProcessorStatus"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "queue": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Measurement"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "observed_at",
+        "core_readiness",
+        "optional_processors_required",
+        "pipeline_revision",
+        "processors",
+        "queue",
+        "limits"
+      ],
+      "type": "object"
+    },
+    "Telemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "cpu_milliseconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inference_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "rss_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "Window": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "type": "string"
+        },
+        "start": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:bitagent:processor:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Select a definition for the endpoint. Cross-field validation is normative in the v1 contract."
+}

@@ -14,16 +14,18 @@ import (
 
 // Config applies to consumer APIs, not processing or operator recovery reads.
 type Config struct {
-	ExcludeAdult bool `yaml:"exclude_adult"`
+	ProcessorExclusions bool `yaml:"-"`
+	ExcludeAdult        bool `yaml:"exclude_adult"`
 }
 
 // Policy retains source-complete quarantine exclusion and optionally excludes
 // known adult releases. Legacy incomplete snapshots need separate review.
 type Policy struct {
-	excludeAdult    bool
-	strongPattern   string
-	mediaExtensions []string
-	names           *namepolicy.Policy
+	excludeAdult        bool
+	processorExclusions bool
+	strongPattern       string
+	mediaExtensions     []string
+	names               *namepolicy.Policy
 }
 
 // NewPolicy uses only the core classifier's precision-vetted strong keywords.
@@ -44,7 +46,7 @@ func NewPolicy(cfg Config, strongKeywords, mediaExtensions []string, names ...*n
 	// keyword boundaries on C-locale databases. Go's \d is ASCII, too.
 	pattern := strings.ReplaceAll(r.String(), `\p{L}`, postgresLetterRanges())
 	pattern = strings.ReplaceAll(pattern, `\d`, `0-9`)
-	p := &Policy{excludeAdult: cfg.ExcludeAdult, strongPattern: pattern, mediaExtensions: append([]string(nil), mediaExtensions...)}
+	p := &Policy{processorExclusions: cfg.ProcessorExclusions, excludeAdult: cfg.ExcludeAdult, strongPattern: pattern, mediaExtensions: append([]string(nil), mediaExtensions...)}
 	if len(names) == 1 {
 		p.names = names[0]
 	}
@@ -123,6 +125,9 @@ func (p *Policy) TorrentCondition(table string) clause.Expr {
  AND NOT EXISTS (SELECT 1 FROM label_evidence serving_e WHERE serving_e.info_hash = ` + root + ` AND ` + catalogueguard.QBPrivacySQL("serving_e.source", "serving_e.category", "?") + `)
  AND NOT EXISTS (SELECT 1 FROM torrent_tags serving_tag WHERE serving_tag.info_hash = ` + root + ` AND ` + catalogueguard.PrivacyTagSQL("serving_tag.name", "?") + `)
  AND NOT EXISTS (SELECT 1 FROM torrent_canonical_labels serving_label WHERE serving_label.info_hash = ` + root + ` AND lower(btrim(serving_label.category,?)) IN ('private','bitgrab'))`
+	if p.processorExclusions {
+		sql += " AND NOT EXISTS(SELECT 1 FROM processor_exclusions serving_processor WHERE serving_processor.info_hash=" + root + ")"
+	}
 	args := []any{catalogueguard.TagWhitespace, catalogueguard.TagWhitespace,
 		catalogueguard.TagWhitespace, catalogueguard.TagWhitespace, catalogueguard.TagWhitespace,
 		catalogueguard.TagWhitespace}

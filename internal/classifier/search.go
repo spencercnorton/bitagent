@@ -23,7 +23,7 @@ type LocalSearch interface {
 	// ContentCandidatesBySearch returns up to limit locally stored content
 	// rows matching the title (ranked full-text search over titles incl.
 	// alt_title:* attributes), for callers that do their own candidate
-	// selection — the LLM rerank. No Levenshtein filter is applied.
+	// selection. No Levenshtein filter is applied.
 	ContentCandidatesBySearch(context.Context, model.ContentType, string, model.Year, int) ([]model.Content, error)
 }
 

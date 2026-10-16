@@ -8,7 +8,6 @@ package contentfilter
 // the filter compiles and is wired into the pipeline but every
 // torrent passes through unchanged. Operator flips Enabled+Enforce
 // in two stages once independently reviewed shadow decisions are acceptable.
-// LLMEnforce can then select a separate enforcement mode for model decisions.
 type Config struct {
 	// Enabled — turn the filter on. When false, Decide() returns
 	// Allow for every torrent without inspecting it; no metrics
@@ -16,29 +15,8 @@ type Config struct {
 	// no-op until the operator opts in.
 	Enabled bool `yaml:"enabled"`
 
-	// Enforce applies deterministic drops when Enabled=true. For legacy
-	// configurations it also applies LLM drops/deferral when LLMEnforce is
-	// unset or "inherit". Set LLMEnforce explicitly to isolate model actions.
+	// Enforce applies deterministic drops when Enabled=true.
 	Enforce bool `yaml:"enforce"`
-
-	// LLMEnforce selects model enforcement independently of deterministic
-	// enforcement: "false" observes, "true" applies the selected LLMAction
-	// (with optional unavailable-endpoint deferral only for drops), and
-	// "inherit" (or unset) follows Enforce
-	// for compatibility. Enabled and LLMEnabled are still required. The
-	// default inherited mode is off because Enforce defaults false. New
-	// deployments should set the gate explicitly. Destructive drops require
-	// independently labeled evaluation of the model, prompt and contract.
-	// YAML values must be quoted strings; env: CONTENT_FILTER_LLM_ENFORCE.
-	LLMEnforce string `yaml:"llm_enforce" validate:"omitempty,oneof=inherit true false"`
-
-	// LLMAction selects the disposition of an audited residual non-English
-	// verdict: "drop" preserves legacy behavior; "review" keeps the torrent
-	// and, only when LLMEnforce is live, adds a model-attributed review tag.
-	// Review never deletes or defers. It requires the same durable request,
-	// response, decision, privacy and budget gates as production drops.
-	// Env: CONTENT_FILTER_LLM_ACTION. Empty means legacy "drop".
-	LLMAction string `yaml:"llm_action" validate:"omitempty,oneof=drop review"`
 
 	// RequireEnglishLanguage — when true, torrents whose
 	// classifier-set language tag is anything other than `en` (or
@@ -102,8 +80,7 @@ type Config struct {
 	// tags anime `ja`), and — for a KNOWN fansub group only, which is
 	// disjoint from adult studios so porn is never rescued — the NSFW
 	// keyword drop (rating tokens like "18+"/"r18" collide with ecchi/
-	// seinen). Detected anime also bypasses the LLM English-language tier
-	// (anime is kept, not classified). Default true: the drops it guards
+	// seinen). Default true: the drops it guards
 	// were the single largest source of anime data-loss at ingest. Set
 	// CONTENT_FILTER_ANIME_AWARE=false to restore the pre-carve behaviour.
 	// The explicit NSFW content_type tier and the blocked-extension/
@@ -127,129 +104,6 @@ type Config struct {
 	// unset. Default `["en"]`. Empty/unset is handled separately
 	// by DropNonLatinScript.
 	AllowedLanguages []string `yaml:"allowed_languages"`
-
-	// LLMEnabled — turn on the LLM tier (Phase 2). When false,
-	// the deterministic ladder is the entire decision; the
-	// residual (Latin script, no language tag) flows through to
-	// the persist queue. Default false because the LLM path
-	// requires a configured API key + a thoughtful budget cap;
-	// enabling cold could surprise the operator with cost.
-	LLMEnabled bool `yaml:"llm_enabled"`
-
-	// LLMOpenaiApiKey — bearer token for api.openai.com. Empty
-	// disables the LLM tier even if LLMEnabled=true (safe-default).
-	//
-	// NOTE on the field-name spelling (LLMOpenaiApiKey, not
-	// LLMOpenAIAPIKey): the config env resolver derives the env key
-	// from the Go FIELD NAME via strcase.ToSnake (see
-	// internal/config/config.go), NOT from the yaml tag. The triple
-	// acronym "OpenAIAPI" tokenizes as Open+AIAPI, yielding
-	// "llm_open_aiapi_key" → CONTENT_FILTER_LLM_OPEN_AIAPI_KEY, which
-	// does NOT match the documented CONTENT_FILTER_LLM_OPENAI_API_KEY.
-	// "LLMOpenaiApiKey" tokenizes as LLM+Openai+Api+Key →
-	// "llm_openai_api_key" → CONTENT_FILTER_LLM_OPENAI_API_KEY (the
-	// documented name). Do not "correct" the casing back to
-	// LLMOpenAIAPIKey — it silently breaks the env binding.
-	LLMOpenaiApiKey string `yaml:"llm_openai_api_key"`
-
-	// LLMModel — model identifier. Default "gpt-5.4-nano" per the
-	// operator's spec ("small and highly accurate"). Self-hosted
-	// model is configured via LLMBaseURL.
-	LLMModel string `yaml:"llm_model"`
-
-	// LLMBaseURL — override for OpenAI-compatible endpoints
-	// (self-hosted, Ollama, vLLM). Empty defaults to OpenAI.
-	// The path /responses is appended automatically.
-	LLMBaseURL string `yaml:"llm_base_url"`
-
-	// LLMOpenrouterProvider pins OpenRouter to one exact provider. When set,
-	// the runtime accepts only the canonical OpenRouter base URL and sends a
-	// fail-closed provider policy (no fallback, no data collection, ZDR).
-	// The field spelling intentionally binds CONTENT_FILTER_LLM_OPENROUTER_PROVIDER.
-	LLMOpenrouterProvider string `yaml:"llm_openrouter_provider"`
-
-	// LLMOpenaiDataSharing selects the strict direct-OpenAI incentive route.
-	// The env spelling is CONTENT_FILTER_LLM_OPENAI_DATA_SHARING. It is an
-	// operator assertion; provider usage receipts remain the billing proof.
-	LLMOpenaiDataSharing bool `yaml:"llm_openai_data_sharing"`
-
-	// LLMPromptVersion — bumped when the prompt changes. Cache
-	// keys include this so a prompt rewrite atomically invalidates
-	// every cached entry. Default "v1".
-	LLMPromptVersion string `yaml:"llm_prompt_version"`
-
-	// LLMTimeout — per-call timeout. Anything slower than this
-	// just gets a "keep" decision and counts toward the budget.
-	// Default 8 seconds.
-	LLMTimeout string `yaml:"llm_timeout"`
-
-	// LLMDailyBudget / LLMMonthlyBudget cap billed dispatches in PostgreSQL,
-	// so restarts and replicas cannot reset or race the allowance. When the
-	// budget is exhausted, residual cases default to "keep" and
-	// `bitagent_contentfilter_llm_budget_exhausted_total` increments.
-	// Zero disables calls. Production does not support an unlimited sentinel:
-	// every provider dispatch must have both a daily and monthly ceiling.
-	LLMDailyBudget   int `yaml:"llm_daily_budget"`
-	LLMMonthlyBudget int `yaml:"llm_monthly_budget"`
-
-	// LLMMaxConcurrentCalls bounds simultaneous provider work. Request and
-	// output limits cap both accidental payload growth and worst-case spend.
-	LLMMaxConcurrentCalls int `yaml:"llm_max_concurrent_calls"`
-	LLMMaxRequestBytes    int `yaml:"llm_max_request_bytes"`
-	LLMMaxOutputTokens    int `yaml:"llm_max_output_tokens"`
-
-	// LLMCacheMaxEntries / LLMCacheTTL — sha256-keyed LRU bounds.
-	LLMCacheMaxEntries int    `yaml:"llm_cache_max_entries"`
-	LLMCacheTTL        string `yaml:"llm_cache_ttl"`
-
-	// LLMMinConfidenceForDrop is a policy cutoff for an eligible residual
-	// verdict, not an accuracy guarantee. Reports below it keep regardless
-	// of the verdict. Above it, IsEnglish=false is only actionable when the
-	// selected LLM enforcement mode is live. Independent labeled evaluation
-	// must qualify the exact model contract before destructive application.
-	LLMMinConfidenceForDrop float64 `yaml:"llm_min_confidence_for_drop"`
-
-	// LLMRuleMinerThreshold — number of LLM verdicts with the
-	// same (reason, is_english) tuple within the sliding window
-	// before the miner emits a "candidate rule" notification.
-	// Default 100 (per the operator's spec: "implement rules
-	// instead of running hundreds of thousands through an llm").
-	LLMRuleMinerThreshold int    `yaml:"llm_rule_miner_threshold"`
-	LLMRuleMinerWindow    string `yaml:"llm_rule_miner_window"`
-
-	// LLMApiStyle selects the HTTP API the client speaks:
-	//   "responses" — OpenAI Responses API (POST /responses); default
-	//                 for api.openai.com.
-	//   "chat"      — OpenAI chat-completions (POST /chat/completions);
-	//                 generic shape for self-hosted vLLM / LocalAI.
-	//   "ollama"    — Ollama NATIVE chat (POST <host>/api/chat) with
-	//                 think:false. REQUIRED for an Ollama-hosted
-	//                 reasoning model (qwen3): the OpenAI-compat endpoint
-	//                 cannot disable its chain-of-thought, so it burns
-	//                 ~2min/call there. "/v1" is stripped from the base
-	//                 URL for the native path.
-	// Empty = auto: "responses" for the OpenAI default base URL, "chat"
-	// for any overridden base URL. "ollama" must be set explicitly.
-	//
-	// NOTE on the field name (LLMApiStyle, not LLMAPIStyle): the env
-	// resolver derives the env key from the field name via strcase.ToSnake,
-	// NOT the yaml tag. ToSnake("LLMAPIStyle")="llmapi_style" (the stacked
-	// "APIStyle" acronym mis-tokenizes) → would have bound the WRONG var.
-	// "LLMApiStyle" → "llm_api_style" → the documented
-	// CONTENT_FILTER_LLM_API_STYLE. Do not "correct" the casing back.
-	LLMApiStyle string `yaml:"llm_api_style"`
-
-	// LLMDeferOnUnavailable — when true, a residual torrent whose LLM
-	// classification can't complete because the endpoint is UNREACHABLE
-	// (connection refused / timeout / HTTP 5xx / 429) is DEFERRED —
-	// re-queued for a later retry — instead of kept. Prevents
-	// foreign-language leakage when a self-hosted LLM is offline, at
-	// the cost of queue growth during the outage (the backlog drains
-	// when the endpoint returns). Non-availability errors (a 4xx, or an
-	// unparseable response) still fall through to "keep" so a
-	// permanently-bad response can't defer-loop forever. Default false
-	// (preserve fail-open-keep).
-	LLMDeferOnUnavailable bool `yaml:"llm_defer_on_unavailable"`
 }
 
 // NewDefaultConfig returns a config that's safe to ship enabled in
@@ -257,10 +111,8 @@ type Config struct {
 // dropped). The defaults match the operator's 2026-04-25 spec.
 func NewDefaultConfig() Config {
 	return Config{
-		Enabled:    false,
-		Enforce:    false,
-		LLMEnforce: "inherit",
-		LLMAction:  LLMActionDrop,
+		Enabled: false,
+		Enforce: false,
 
 		RequireEnglishLanguage: true,
 		DropNonLatinScript:     true,
@@ -277,64 +129,10 @@ func NewDefaultConfig() Config {
 		},
 		BlockedContentTypes: []string{},
 		AllowedLanguages:    []string{"en"},
-
-		// LLM tier — off by default; needs an API key + an explicit
-		// flip from the operator. Defaults exist so a "just turn it
-		// on" deploy is sensible.
-		LLMEnabled:              false,
-		LLMOpenaiApiKey:         "",
-		LLMModel:                "gpt-5.4-nano",
-		LLMBaseURL:              "",
-		LLMPromptVersion:        "v2", // v2: anime-romaji KEEP rule (bump invalidates stale drops)
-		LLMTimeout:              "8s",
-		LLMDailyBudget:          50,
-		LLMMonthlyBudget:        1500,
-		LLMMaxConcurrentCalls:   1,
-		LLMMaxRequestBytes:      8192,
-		LLMMaxOutputTokens:      64,
-		LLMCacheMaxEntries:      50000,
-		LLMCacheTTL:             "168h", // 7 days
-		LLMMinConfidenceForDrop: 0.85,
-		LLMRuleMinerThreshold:   100,
-		LLMRuleMinerWindow:      "168h", // 7 days
 	}
 }
 
-// LLMEnforcementEnabled resolves the model application gate. It does not
-// enable the filter or provider calls; Enabled and LLMEnabled remain separate
-// opt-ins. An invalid mode fails open for direct constructors; config validation
-// rejects it during application startup.
-func (c Config) LLMEnforcementEnabled() bool {
-	switch c.LLMEnforce {
-	case "true":
-		return true
-	case "", "inherit":
-		return c.Enforce
-	default:
-		return false
-	}
-}
-
-const (
-	LLMActionDrop   = "drop"
-	LLMActionReview = "review"
-	// LLMReviewTag describes a model concern, not an independently established
-	// language fact. It is persisted through the ordinary torrent-tag path.
-	LLMReviewTag = "llm-language-review"
-)
-
-// EffectiveLLMAction preserves the legacy disposition for an unset value.
-// Invalid values cannot authorize model actions in direct constructors.
-func (c Config) EffectiveLLMAction() string {
-	switch c.LLMAction {
-	case "", LLMActionDrop:
-		return LLMActionDrop
-	case LLMActionReview:
-		return LLMActionReview
-	default:
-		return ""
-	}
-}
+const LLMReviewTag = "llm-language-review" // historical catalogue provenance
 
 // DropReason enumerates why a torrent was dropped. Stable strings
 // for `bitagent_contentfilter_drop_total{reason="..."}` labels.

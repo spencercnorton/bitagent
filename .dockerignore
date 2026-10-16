@@ -35,3 +35,6 @@ venv
 *.log
 .DS_Store
 **/.DS_Store
+
+_legacy/
+work/

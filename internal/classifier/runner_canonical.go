@@ -231,13 +231,6 @@ func canonicalContentRef(mediaID string, contentType model.ContentType) (model.C
 	}
 }
 
-// EvalMatch delegates to the inner runner. The canonical preemption check is a
-// pre-classification shortcut that has no bearing on the matcher-only eval
-// path (which operates on already-typed torrents).
-func (r *canonicalRunner) EvalMatch(ctx context.Context, t model.Torrent, ct model.NullContentType) (MatchDecision, error) {
-	return r.inner.EvalMatch(ctx, t, ct)
-}
-
 // canonicalToContentType maps evidence's media vocabulary to
 // bitmagnet's existing ContentType enum. Returns ok=false when the
 // mapping is not decisive, in which case the classifier should run.

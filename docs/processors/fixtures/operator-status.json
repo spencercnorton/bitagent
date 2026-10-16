@@ -1,0 +1,327 @@
+{
+  "contract": "bitagent.processors.status.v1",
+  "observed_at": "2026-10-16T21:14:16.713787Z",
+  "core_readiness": "ready",
+  "optional_processors_required": false,
+  "pipeline_revision": "237a4526d575bc351ce86d87d2db2568944436c92802a446a7b6f28f0a151106",
+  "processors": [
+    {
+      "configuration": {},
+      "auth_env": "",
+      "execution_generation": 1,
+      "observed_processor": {
+        "id": "reference",
+        "version": "1.0.0",
+        "model_version": "none",
+        "policy_version": "test-v1",
+        "artifact_digest": "none"
+      },
+      "instance_id": "test-instance",
+      "started_at": "2026-01-01T00:00:00Z",
+      "id": "reference",
+      "generation": 1,
+      "installed": true,
+      "configured": true,
+      "enabled": true,
+      "loaded": true,
+      "state": "active",
+      "mode": "apply",
+      "operating_mode": "apply",
+      "endpoint": "http://reference:8090",
+      "priority": 0,
+      "contract": "bitagent.processor.v1",
+      "processor": {
+        "id": "reference",
+        "version": "1.0.0",
+        "model_version": "none",
+        "policy_version": "test-v1",
+        "artifact_digest": "none"
+      },
+      "capabilities": [
+        "classify"
+      ],
+      "compatibility": "compatible",
+      "health": "healthy",
+      "readiness": "ready",
+      "last_checked_at": "2026-10-16T21:14:16.68627Z",
+      "last_error": "",
+      "qualification": "synthetic",
+      "metrics": {
+        "abstained": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "attempts": {
+          "value": 1,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "completed": {
+          "value": 1,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "cpu_milliseconds": {
+          "value": null,
+          "unit": "milliseconds",
+          "window": {
+            "start": "",
+            "end": ""
+          },
+          "population": "last measured service computation",
+          "source": "service_reported",
+          "unavailable_reason": "not_measured"
+        },
+        "deferred": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "excluded": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "failed": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "inference_ms": {
+          "value": null,
+          "unit": "milliseconds",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "service_reported_retained_attempts",
+          "unavailable_reason": "not_measured"
+        },
+        "inference_samples": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "queue_wait_ms": {
+          "value": 15.896,
+          "unit": "milliseconds",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "queue_wait_samples": {
+          "value": 1,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "retries": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "rss_bytes": {
+          "value": null,
+          "unit": "bytes",
+          "window": {
+            "start": "",
+            "end": ""
+          },
+          "population": "last measured service computation",
+          "source": "service_reported",
+          "unavailable_reason": "not_measured"
+        },
+        "unique_torrents": {
+          "value": 1,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "unmatched": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        }
+      },
+      "evaluation": null
+    }
+  ],
+  "queue": {
+    "canceled": {
+      "value": 0,
+      "unit": "count",
+      "window": {
+        "start": "2026-10-16T21:14:16.713787Z",
+        "end": "2026-10-16T21:14:16.713787Z"
+      },
+      "population": "current retained jobs",
+      "source": "core_postgres",
+      "unavailable_reason": ""
+    },
+    "capacity_remaining": {
+      "value": 1000,
+      "unit": "count",
+      "window": {
+        "start": "2026-10-16T21:14:16.713787Z",
+        "end": "2026-10-16T21:14:16.713787Z"
+      },
+      "population": "optional admission slots",
+      "source": "core_postgres",
+      "unavailable_reason": ""
+    },
+    "completed": {
+      "value": 1,
+      "unit": "count",
+      "window": {
+        "start": "2026-10-16T21:14:16.713787Z",
+        "end": "2026-10-16T21:14:16.713787Z"
+      },
+      "population": "current retained jobs",
+      "source": "core_postgres",
+      "unavailable_reason": ""
+    },
+    "deferred": {
+      "value": 0,
+      "unit": "count",
+      "window": {
+        "start": "2026-10-16T21:14:16.713787Z",
+        "end": "2026-10-16T21:14:16.713787Z"
+      },
+      "population": "current retained jobs",
+      "source": "core_postgres",
+      "unavailable_reason": ""
+    },
+    "failed": {
+      "value": 0,
+      "unit": "count",
+      "window": {
+        "start": "2026-10-16T21:14:16.713787Z",
+        "end": "2026-10-16T21:14:16.713787Z"
+      },
+      "population": "current retained jobs",
+      "source": "core_postgres",
+      "unavailable_reason": ""
+    },
+    "leased": {
+      "value": 0,
+      "unit": "count",
+      "window": {
+        "start": "2026-10-16T21:14:16.713787Z",
+        "end": "2026-10-16T21:14:16.713787Z"
+      },
+      "population": "current retained jobs",
+      "source": "core_postgres",
+      "unavailable_reason": ""
+    },
+    "oldest_wait_seconds": {
+      "value": null,
+      "unit": "seconds",
+      "window": {
+        "start": "2026-10-16T21:14:16.713787Z",
+        "end": "2026-10-16T21:14:16.713787Z"
+      },
+      "population": "current waiting jobs",
+      "source": "core_postgres",
+      "unavailable_reason": "not_measured"
+    },
+    "queued": {
+      "value": 0,
+      "unit": "count",
+      "window": {
+        "start": "2026-10-16T21:14:16.713787Z",
+        "end": "2026-10-16T21:14:16.713787Z"
+      },
+      "population": "current retained jobs",
+      "source": "core_postgres",
+      "unavailable_reason": ""
+    },
+    "stale": {
+      "value": 0,
+      "unit": "count",
+      "window": {
+        "start": "2026-10-16T21:14:16.713787Z",
+        "end": "2026-10-16T21:14:16.713787Z"
+      },
+      "population": "current retained jobs",
+      "source": "core_postgres",
+      "unavailable_reason": ""
+    }
+  },
+  "limits": {
+    "concurrency": 1,
+    "max_attempts": 2,
+    "queue_capacity": 1000,
+    "request_timeout_ms": 150,
+    "retained_jobs": 10000
+  }
+}

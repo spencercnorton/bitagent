@@ -1,8 +1,8 @@
 # Backend deployment and operations
 
-BitAgent 4.x is a Go backend with PostgreSQL storage. It exposes machine APIs
+BitAgent 5.x is a Go backend with PostgreSQL storage. It exposes machine APIs
 and metrics, and runs independently of any browser interface or hosted account
-system. Optional metadata, evidence, LLM and cleanup features use configuration
+system. Optional metadata, evidence, processor and cleanup features use configuration
 you supply; installation does not establish that those features are active.
 
 ## Install the public stack
@@ -41,7 +41,7 @@ exact network layout and commands.
 | GraphQL/import/metrics | Trusted network or authenticated reverse proxy |
 | Metadata | Provider configuration, quota and actual provider responses |
 | Evidence | Configured source endpoints and independent webhook secret |
-| LLM/cleanup | Explicit mode, budget, dry-run metrics and recovery plan |
+| Processors/cleanup | Explicit mode, bounded resources, status metrics and recovery plan |
 
 [Configuration](configuration.md) documents backend settings. Client services
 on another host cannot use your own `localhost`; choose an address reachable
@@ -66,9 +66,9 @@ deletion or bloom admission. The command's `--force` flag cannot bypass it.
 Ordinary matching and keep/review rows still persist, including independent
 rows in a batch whose removal is held.
 
-Retention purge and both synchronous and Batch junk quarantine are also held:
+Retention purge remains held. Embedded synchronous and Batch junk inference have been retired:
 their previous partial snapshots cannot restore every cascading source row.
-Dry-run observations, retained provider results, keep-only Batch settlement,
+Dry-run observations and retained provider results,
 existing quarantine expiry and operator restoration remain available. A held
 destructive Batch run retains its successful provider receipts in `finalizing`;
 it is not recorded as applied and does not dispatch again for that hold.
@@ -107,6 +107,10 @@ If another operation refreshed or removed that snapshot, the restore rolls
 back; an operator can review the current version and retry. Delayed quarantine
 observations cannot change a completed restore, deletion or expiry back to
 quarantined.
+
+## Processor migration
+
+Read [the v5 migration and rollback procedure](processors/migration.md) before upgrading. Stop retired workers, preserve database/evidence backups and reconcile outstanding provider jobs without redispatch. No plugin is required for startup.
 
 ## Backup, upgrade and recovery
 

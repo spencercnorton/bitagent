@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 5.0.0 — 2026-10-16
+
+- Separate optional processors behind the generic v1 HTTP service contract;
+  dynamic version-pinned registration, ordered stages, PostgreSQL leases,
+  bounded retries/capacity, cancellation and stale-result rejection.
+- Remove embedded model/provider runtimes, prompts, credentials and evaluation
+  commands from the executable dependency path. Core discovery, deterministic
+  processing, catalogue protection, search and indexer APIs remain independent.
+- Freeze outstanding legacy inference jobs with complete before-images while
+  retaining historical results, provider fences and recovery evidence.
+- Publish authenticated generic status/job/configuration APIs, measured metrics,
+  portable conformance fixtures, two independent synthetic processor examples,
+  and migration/rollback procedures. UI and model packaging remain separate.
+
 - Keep matcher provider, rate-limit and catalogue-resolution failures retryable;
   retain attempted queries and candidate details in shadow evaluation exports.
 - Emit standard `tmdbid` and `tvdbid` Torznab attributes for Arr consumers,

@@ -12,7 +12,7 @@ For first-time setup see [Quickstart](quickstart.md). For production layouts see
 
 ```yaml
 environment:
-  JUNKPURGE_LLM_API_KEY_FILE: /run/secrets/openai_api_key
+  PROCESSORS_ADMIN_TOKEN_FILE: /run/secrets/processors_admin_token
 volumes:
   - /srv/secrets/bitagent/openai_api_key:/run/secrets/openai_api_key:ro
 ```
@@ -95,117 +95,31 @@ The classifier runs locally with no external dependencies. TMDB enrichment is op
 |---|---|---|
 | `TMDB_API_KEY` | *(none)* | Free TMDB v3 API key. Enriches movie + TV records with title, release year, and episode metadata. Empty disables the TMDB stage; the rest of the classifier still works. Get a key at <https://www.themoviedb.org/settings/api>. |
 
-## Optional LLM chat backends
+## Optional processors
 
-The TMDB matcher and type fallback each select their chat request contract
-explicitly. Supported values are `openai` and `ollama`; an empty value keeps
-the `openai` default. Endpoint addresses and model names never select a backend
-automatically.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `CLASSIFIER_LLM_MATCH_CHAT_BACKEND` | `openai` | Chat contract for the matcher's extraction and candidate reranking calls. |
-| `CLASSIFIER_LLM_CHAT_BACKEND` | `openai` | Chat contract for the type fallback classifier. |
-| `CLASSIFIER_LLM_LIVE_ALLOWED_TYPES` | unset | Comma-separated canonical `movie,tv,music,audiobook,book` values eligible for type-only application. Unset retains all supported types. For example, `movie,tv` keeps other predictions unknown without newly invoking their exclusion policy. The allowlist also bounds shadow `would_apply` evidence and is captured with each decision. |
-
-For an Ollama server reachable on the same host, configure its full
-OpenAI-compatible chat endpoint and an installed model explicitly:
-
-```dotenv
-CLASSIFIER_LLM_MATCH_CHAT_BACKEND=ollama
-CLASSIFIER_LLM_MATCH_ENDPOINT=http://127.0.0.1:11434/v1/chat/completions
-CLASSIFIER_LLM_MATCH_MODEL=qwen3.6:35b
-CLASSIFIER_LLM_CHAT_BACKEND=ollama
-CLASSIFIER_LLM_ENDPOINT=http://127.0.0.1:11434/v1/chat/completions
-CLASSIFIER_LLM_MODEL=qwen3.6:35b
-```
-
-Use an endpoint reachable from the BitAgent process; container loopback names
-the container itself. Existing API-key requirements still apply: the type
-fallback requires a nonempty configured key. Backend selection leaves both
-stages disabled by default and does not change their separate shadow/live
-switches, budgets, privacy checks, source gates or evaluation capture.
-
-The `openai` contract preserves existing `max_completion_tokens` requests and
-provider controls. The `ollama` contract instead sends the same requested
-limit as `max_tokens`, plus `reasoning_effort: "none"`. Native matcher calls
-still request 120 tokens for single-item extraction and 60 for reranking;
-uncaptured grouped extraction retains its existing per-item scaling. The type fallback
-still uses its configured output cap (64 by default). Ollama's compatibility
-API documents `max_tokens` and reasoning control; its v0.30.7 implementation
-maps those fields to the generation limit and disabled thinking request.
-See [Ollama OpenAI compatibility](https://docs.ollama.com/api/openai-compatibility)
-and the [v0.30.7 request conversion](https://raw.githubusercontent.com/ollama/ollama/v0.30.7/openai/openai.go).
-
-Ollama mode rejects OpenAI/OpenRouter hosts, a configured provider pin,
-data-sharing flags, and endpoint userinfo, query strings or fragments. It requires
-the plain `/v1/chat/completions` path and refuses HTTP redirects. Select
-`openai` for the existing hosted-provider contracts. These selectors cover
-the matcher and type fallback; the content-filter and junk clients retain
-their existing configuration.
-
-Captures identify the selected Ollama contract and retain the exact dispatched
-request. Existing deployed-wire evaluation manifests continue to describe their
-historical OpenAI contract: Ollama controls fail those fidelity checks. Use the
-configured native clients to validate Ollama; do not relabel an old manifest as
-Ollama fidelity evidence.
-
-Validate the chosen server and model independently before enabling live
-decisions. Request compatibility and a parsed response do not establish model
-accuracy, calibrated confidence, provider billing or production acceptance.
-
-## Optional embedding shortlist
-
-The matcher can optionally use an OpenAI-compatible embeddings endpoint to
-shortlist candidates before its existing chat rerank. This feature defaults
-off and requires an explicitly configured route and enabled evaluation capture.
-The embedding route has its own model and credentials; it does not inherit the
-chat model, API key or OpenAI data-sharing setting.
+No model/provider configuration is registered by the core. Optional services
+own inference runtimes, prompts, credentials, caches and budgets. See
+[processor configuration and lifecycle](processors/v1.md) and the
+[authenticated operator API](processors/operator-api.md).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_ENABLED` | `false` | Enable optional shortlisting when there are more candidates than the shortlist size. Matcher `ENABLED` and `ENABLE_LIVE` remain independent. |
-| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_ENDPOINT` | empty | Full embeddings URL. HTTPS required except for loopback; redirects are refused. |
-| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_MODEL` | empty | Explicit embedding model. |
-| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_API_KEY_FILE` | empty | Secret file for the embedding route's key. Plain `API_KEY` is also supported. |
-| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_OPENROUTER_PROVIDER` | empty | Explicit provider pin required for OpenRouter. |
-| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_TIMEOUT` | `15s` | Per-request timeout. |
-| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_MAX_REQUEST_BYTES` | `8192` | Serialized embedding request bound. |
-| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_DIMENSIONS` | `256` | Requested vector length. `0` omits the optional parameter for models that do not support it. |
-| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_MAX_DIMENSIONS` | `4096` | Maximum accepted vector length. |
-| `CLASSIFIER_LLM_MATCH_EMBEDDINGS_SHORTLIST_SIZE` | `3` | Number of candidates shown to chat, in `2..100`. |
-| `LLM_EVALUATION_CAPTURE_ENABLED` | `false` | Must be enabled for the embedding route's request, first response and final chat decision evidence. |
-| `LLM_EVALUATION_CAPTURE_DISPATCH_CONTROL_ENABLED` | `false` | Opt in to durable dispatch ownership and retained first-response replay after migration 56. Requires capture. Keep disabled until the worker and provider boundaries are qualified together. |
+| `PROCESSORS_ADMIN_TOKEN` | unset | Bearer for registry/status/jobs API; unset returns 503 only on that API. |
+| `PROCESSORS_CREDENTIAL_DIRECTORY` | `/run/secrets/bitagent-processors` | Dedicated read-only transport secret directory; files read per request. |
+| `PROCESSORS_CONCURRENCY` | `2` | Global active optional requests across replicas sharing this database. |
+| `PROCESSORS_QUEUE_CAPACITY` | `1000` | Pending optional pipeline jobs. |
+| `PROCESSORS_RETAINED_JOBS` | `10000` | Maximum retained optional jobs; admission pauses at the bound. |
+| `PROCESSORS_REQUEST_TIMEOUT` | `10s` | Hard request deadline; allowed 100ms–60s. |
+| `PROCESSORS_MAX_ATTEMPTS` | `3` | Per-step dispatch limit, at most 5. |
+| `PROCESSORS_POLL_INTERVAL` | `1s` | Optional admission/worker cadence. |
+| `PROCESSORS_SCAN_BATCH` | `32` | Maximum existing torrents inspected per catch-up scan, at most 256. |
+| `PROCESSORS_RETENTION` | `168h` | Terminal job retention, at most 30 days. |
 
-For direct OpenAI, use `https://api.openai.com/v1/embeddings` and a model such
-as `text-embedding-3-small`. OpenAI supports the `dimensions` parameter on
-`text-embedding-3` models; use `0` to omit it for other models. The request
-sends an array containing the release/extraction query and candidate texts,
-with `encoding_format: "float"`. See the
-[OpenAI embeddings guide](https://developers.openai.com/api/docs/guides/embeddings).
-
-OpenRouter requires `https://openrouter.ai/api/v1/embeddings` and an explicit
-provider pin. Requests set `order` and `only` to that provider, disable
-fallback providers, require supported parameters, deny data collection and
-require ZDR. These fields are documented in the
-[embeddings API reference](https://openrouter.ai/docs/api/api-reference/embeddings/submit-an-embedding-request)
-and [provider preferences](https://openrouter.ai/docs/client-sdks/python/components/providerpreferences).
-
-Every embedding attempt consumes the same persisted daily/monthly allowance
-as extraction and chat reranking. Native/private-source checks and a final
-database admission recheck run before embedding egress. The exact request and
-bounded first HTTP response are stored as the separate `matcher_embedding`
-task. The chat capture links that response, records the shortlist and retains
-the complete original candidate set as policy evidence. Response bodies are
-limited to 128 KiB; oversized, zero, inconsistent, nonfinite or ambiguous
-vectors fall back to the original chat candidate list, as do provider outages.
-Privacy and audit failures stop follow-on calls.
-
-Cosine similarity controls order and shortlisting only. The ordinary chat
-confidence threshold, source title, candidate identity/ambiguity/year guards
-and parsed TV episode tuple still control the final match. Shadow remains
-immutable. Evaluate shortlist recall and final match precision on independently
-reviewed cases before enabling this optional path in production.
+The `processors` worker is included by `worker run --all`. Explicit worker lists
+must include it once when migrating the core. Registrations are stored in
+PostgreSQL and discovered without a subsequent restart. The core and optional
+queues have independent worker slots. Transport authentication references
+`BITAGENT_PROCESSOR_TOKEN_*`; no credential value is returned by the registry.
 
 ## Crawler
 
@@ -235,86 +149,16 @@ A pre-fetch double-hashed blocklist filters infohashes before BitAgent ever does
 
 ## Content filter
 
-The deterministic tier checks language tags, title script, release audio
-markers, extensions and NSFW criteria. The optional LLM tier classifies the
-residual cohort after upstream classification. Both tiers can be observed
-before their decisions affect persistence.
+The existing deterministic filter remains opt-in with `CONTENT_FILTER_ENABLED`
+and `CONTENT_FILTER_ENFORCE`. Its language tags, script checks, extension/type
+policy, lossy-audio rule and anime exceptions remain in core. Shadow mode records
+would-drop decisions. Destructive dispositions still require qualified catalogue
+recovery; this refactor does not lift that hold. Model-driven language review and
+junk judgement now belong to optional services. Existing English-audio claims
+retain their historical attribution and are not independently verified audio.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `CONTENT_FILTER_ENABLED` | `false` | Examines inputs and emits counterfactual metrics. Required for either tier. |
-| `CONTENT_FILTER_ENFORCE` | `false` | Applies deterministic drops. Also controls the LLM tier when its mode is inherited. |
-| `CONTENT_FILTER_LLM_ENABLED` | `false` | Allows residual language inference after privacy, durable capture and budget admission. |
-| `CONTENT_FILTER_LLM_ENFORCE` | `inherit` | `false`: model decisions stay shadow; `true`: applies the selected model disposition; `inherit` or unset: follows `CONTENT_FILTER_ENFORCE` for compatibility. |
-| `CONTENT_FILTER_LLM_ACTION` | `drop` | `drop`: legacy destructive disposition; `review`: keeps the torrent and applies the `llm-language-review` tag after a qualifying audited live model decision. Empty means legacy `drop`; invalid values fail startup. |
-| `CONTENT_FILTER_LLM_DEFER_ON_UNAVAILABLE` | `false` | With model enforcement active in `drop` mode, unavailable endpoints can defer an input for retry. Review mode keeps it. Malformed responses, exhausted budgets and low-confidence verdicts keep it. |
-
-Set the model mode explicitly in new configurations. For YAML, quote it:
-`llm_enforce: "false"`. Values are exactly `inherit`, `true` or `false`; invalid
-values fail startup. The shipped defaults keep both tiers inactive, and the
-public environment example sets the model mode to `false`.
-
-With both enable flags true, the application modes are:
-
-| `CONTENT_FILTER_ENFORCE` | `CONTENT_FILTER_LLM_ENFORCE` | Result |
-|---|---|---|
-| `false` | `false` | Both tiers shadow |
-| `true` | `false` | Deterministic live, model shadow |
-| `false` | `true` | Deterministic shadow, model live on the residual cohort |
-| `true` | `true` | Both tiers live |
-| either | `inherit` / unset | Legacy behavior: both follow `CONTENT_FILTER_ENFORCE` |
-
-A deterministic match always ends the decision ladder, including when that
-tier is shadow. Model-only enforcement therefore acts on eligible residuals;
-it does not reclassify deterministic matches. English release tokens (`ENG`,
-`English`, `EN`) veto residual model inference so a title-language guess cannot
-overrule that English-inclusive release evidence. The veto leaves deterministic
-policy unchanged. Existing configurations retain
-the inherited behavior on upgrade. Startup logs show effective modes and
-warn when an inherited model mode is live.
-
-For a nondeleting model stage, set `CONTENT_FILTER_LLM_ACTION=review` and
-`CONTENT_FILTER_LLM_ENFORCE=true` with both enable flags true. A qualifying
-audited non-English model response adds `llm-language-review` through the normal
-torrent-tag transaction; content remains searchable and is neither deleted,
-blocked nor deferred by that model decision. The tag records the model's
-concern, not verified audio language. Deterministic policy still runs first and
-uses its own enforcement flag. Use `CONTENT_FILTER_ENFORCE=false` when the
-desired rollout keeps deterministic matches too.
-
-Review is off by default. With model enforcement false it produces only a
-would-review observation. Request capture and terminal decisions bind the
-selected disposition, cutoff and live mode; a drop capture cannot authorize a
-review tag. Audit failures, private inputs, advertised English tracks, malformed
-results and low-confidence negatives never add the tag. Review does not make
-the model more accurate and cannot qualify destructive drops. Independent labels
-can measure review errors before accepting a later destructive disposition.
-
-Before destructive model enforcement, independently label prospective shadow samples and
-qualify the exact model, provider, prompt and request contract. Separate release
-families across evaluation splits and inspect English, anime, dual-audio and
-ambiguous-title false drops. A model's confidence and the number of shadow
-would-drops do not establish accuracy. Keep the model shadow until the
-operator's accepted harm bound passes; changing a model or prompt requires
-fresh qualification.
-
-Production inference requires durable request, HTTP result and terminal
-decision capture, finite daily/monthly budgets and bounded request/output sizes.
-Each source must pass current privacy admission; title-family cache entries
-cannot authorize a new source. Exact-source durable replay avoids duplicate
-provider calls. A failed audit or privacy recheck returns an error for retry
-before model application. Private inputs never leave the process. Invalid,
-incomplete or malformed results keep; they cannot drop or trigger an
-unavailable-provider deferral loop. Track the `llm_non_english` reason in
-`bitagent_contentfilter_drop_total` and `bitagent_contentfilter_would_drop_total`
-separately from deterministic reasons. To roll back model application, set
-`CONTENT_FILTER_LLM_ENFORCE=false`; set `CONTENT_FILTER_LLM_ENABLED=false` to
-stop new model dispatches too. In review mode these flags stop new tags;
-previous review tags remain ordinary removable torrent tags and do not imply
-an active language exclusion. Review counters are
-`bitagent_contentfilter_llm_review_total` and
-`bitagent_contentfilter_llm_would_review_total`; review decisions never increase
-the model drop counters.
+See `internal/classifier/contentfilter/config.go` for deterministic options and
+[the migration guide](processors/migration.md) for retired settings.
 
 ## Retention
 
@@ -327,23 +171,12 @@ Periodic deletion of torrents that haven't been seen in DHT announcements for a 
 
 The default predicate is conservative: no canonical label, no evidence record, age > 60 days, `updated_at` older than 180 days, and every torrent source reports `seeders=0`. Validate the dry-run trend before flipping `ENABLE_PURGE`.
 
-## Junk classifier
+## Quarantine maintenance
 
-The LLM-backed junk classifier has a separate application gate. Evaluation can
-populate reviewable judgments while quarantine remains disabled.
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `JUNKPURGE_ENABLED` | `false` | Runs candidate capture and judging. |
-| `JUNKPURGE_ENABLE_PURGE` | `false` | Allows confident junk to enter restorable quarantine after every cycle-level safety gate passes. |
-| `JUNKPURGE_LLM_NAMES_PER_CALL` | `1` | Names grouped into one synchronous request; operators may raise this deliberately to amortize prompt tokens. |
-| `JUNKPURGE_LLM_UNAVAILABLE_CONSECUTIVE_LIMIT` | `3` | Stops a synchronous cycle after this many consecutive unavailable groups. One unavailable group always blocks application for the whole cycle; this only bounds provider probing while preserving later successful judgments as evaluation evidence. |
-
-Use `bitagent_junkpurge_cycle_outcomes_total` and
-`bitagent_junkpurge_llm_failures_total` to verify that judging is live and to
-separate timeouts, rate limits, server errors, and invalid responses. Breaker
-cohorts remain queryable through `junkpurge_judgments.reason`; they are never
-included in `would_delete_total` or applied.
+`JUNKPURGE_MAINTENANCE_ENABLED=false` is the default. Enable it to run the
+`quarantine` worker's bounded historical-snapshot expiry maintenance.
+`JUNKPURGE_QUARANTINE_DAYS=30` controls the window. Expiry retains evidence;
+plugins never receive a delete operation or unrestricted database access.
 
 ## Configurable evidence sources
 
@@ -367,59 +200,6 @@ See [evidence](evidence.md) for webhook authentication, evidence precedence,
 liveness and outcome-prior settings. Source credentials belong in an ignored
 environment file or secret manager. Network tunnels and human account services
 are deployment choices rather than backend configuration.
-
-## Durable optional model work
-
-The `llm_work` worker is disabled by default. It collects bounded source cases
-for type inference, language review and identity matching without making
-ingestion wait for provider capacity. Each selected stage must already be
-enabled and evaluation capture plus dispatch control must be enabled. Language
-work requires `CONTENT_FILTER_LLM_ACTION=review`; the worker never runs the
-general classifier deletion pipeline.
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `LLM_WORK_ENABLED` | `false` | Admit source cases and permit owned execution |
-| `LLM_WORK_WORKER_ENABLED` | `true` | Execute admitted cases; `false` collects bounded cases only |
-| `LLM_WORK_KINDS` | `classifier_type,contentfilter,matcher` | Selected stages |
-| `LLM_WORK_POLL_INTERVAL` | `5s` | Owned worker cadence |
-| `LLM_WORK_LEASE_DURATION` | `5m` | Generation-fenced source-case lease |
-| `LLM_WORK_TASK_TIMEOUT` | `3m` | Maximum execution time, below the lease duration |
-| `LLM_WORK_ENQUEUE_TIMEOUT` | `100ms` | Maximum database wait during ingestion |
-| `LLM_WORK_MAX_PENDING` | `2400` | Pending capacity per selected stage |
-| `LLM_WORK_MAX_TASK_AGE` | `168h` | Proposal lifetime |
-| `LLM_WORK_TIME_BUCKETS` | `24` | UTC admission strata that reserve capacity for later traffic |
-| `LLM_WORK_SPREAD_ADMISSION` | `true` | Pace new cases under the existing stage allowance |
-| `LLM_EVALUATION_CAPTURE_DISPATCH_CONTROL_ENABLED` | `false` | Durable request dispatch and retained-response replay |
-
-Allowances and concurrency limits remain stage-owned. Started matcher cases
-receive completion priority. Exact retained first responses replay before a new
-allowance reservation. Only positively undispatched work can resume after a
-deferral or expired lease. An intent, unknown transport outcome or missing
-response body requires explicit reconciliation; it never authorizes automatic
-duplicate calls or allowance refunds.
-
-Task policies carry explicit semantic contract versions; advance the applicable
-`WorkPolicyVersion` when eligibility, interpretation or application semantics
-change. Evaluation captures remain bound to their original binary build. A
-build-only restart reuses a response only after the dispatch controller proves
-the complete source/group/input/prompt/route/model/task contract equivalent.
-Replay retains the original capture, response time and decision generation.
-An equivalent request with unknown outcome or an expired body remains held.
-
-`LLM_WORK_ENABLED=false` disables admission and execution.
-`LLM_WORK_WORKER_ENABLED=false` pauses execution while admission remains bounded.
-When the registered worker runs, proposal cleanup continues with an already
-initialized database pool even if execution is disabled. Expired raw payloads
-and lifecycle events are removed; committed application snapshots retain their
-source and policy bindings. Digest-only dispatch fences survive both task and
-capture cleanup. Snapshots describe committed model applications and cannot
-serve as canonical or independently reviewed labels.
-
-Metrics expose admission outcomes, worker cycles and task depth by stage/state
-under `bitagent_llm_work_*`, including overflow, sampling and expiry. Qualify
-restart, source/privacy mutations, cancellation and concurrent application in
-disposable state before enabling execution.
 
 ## Live config inspection
 

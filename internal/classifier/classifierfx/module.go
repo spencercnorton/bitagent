@@ -3,11 +3,9 @@ package classifierfx
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spencercnorton/bitagent/internal/classifier"
-	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch"
 	"github.com/spencercnorton/bitagent/internal/config/configfx"
 	"github.com/spencercnorton/bitagent/internal/evidence"
 	"github.com/spencercnorton/bitagent/internal/lazy"
-	"github.com/spencercnorton/bitagent/internal/llmcapture"
 	"go.uber.org/fx"
 )
 
@@ -27,7 +25,6 @@ func New() fx.Option {
 	return fx.Module(
 		"workflow",
 		configfx.NewConfigModule[classifier.Config]("classifier", classifier.NewDefaultConfig()),
-		matchDecisionObserverOption(),
 		fx.Provide(
 			classifier.NewPreemptMetrics,
 			provideRunner,
@@ -41,20 +38,6 @@ func New() fx.Option {
 			},
 		}),
 	)
-}
-
-func matchDecisionObserverOption() fx.Option {
-	return fx.Provide(provideMatchDecisionObserver)
-}
-
-type matchDecisionObserverParams struct {
-	fx.In
-	Capture llmcapture.Capturer `optional:"true"`
-	Matcher *llmmatch.Client    `optional:"true"`
-}
-
-func provideMatchDecisionObserver(p matchDecisionObserverParams) classifier.MatchDecisionObserver {
-	return classifier.NewMatchDecisionObserver(p.Capture, p.Matcher)
 }
 
 // provideRunner runs classifier.New and wraps the resulting lazy Runner

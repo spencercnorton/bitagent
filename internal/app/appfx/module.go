@@ -8,14 +8,10 @@ import (
 	"github.com/spencercnorton/bitagent/internal/app/cmd/animebackfillcmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/attributioncmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/backloglocalclassifycmd"
-	"github.com/spencercnorton/bitagent/internal/app/cmd/batchllmmatchcmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/classifiercmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/configcmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/episodesbackfillcmd"
-	"github.com/spencercnorton/bitagent/internal/app/cmd/evalfreezecmd"
-	"github.com/spencercnorton/bitagent/internal/app/cmd/evalreplaycmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/granularitybackfillcmd"
-	"github.com/spencercnorton/bitagent/internal/app/cmd/matcherevalcmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/policyshadowcmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/processcmd"
 	"github.com/spencercnorton/bitagent/internal/app/cmd/purgecontenttypescmd"
@@ -29,8 +25,6 @@ import (
 	"github.com/spencercnorton/bitagent/internal/blocking/blockingfx"
 	"github.com/spencercnorton/bitagent/internal/classifier/classifierfx"
 	"github.com/spencercnorton/bitagent/internal/classifier/contentfilter/contentfilterfx"
-	"github.com/spencercnorton/bitagent/internal/classifier/llmmatch/llmmatchfx"
-	"github.com/spencercnorton/bitagent/internal/classifier/llmstage/llmstagefx"
 	"github.com/spencercnorton/bitagent/internal/config/configfx"
 	"github.com/spencercnorton/bitagent/internal/csamblocklist/csamblocklistfx"
 	"github.com/spencercnorton/bitagent/internal/dashstats/dashstatsfx"
@@ -43,12 +37,11 @@ import (
 	"github.com/spencercnorton/bitagent/internal/httpserver/httpserverfx"
 	"github.com/spencercnorton/bitagent/internal/importer/importerfx"
 	"github.com/spencercnorton/bitagent/internal/junkpurge/junkpurgefx"
-	"github.com/spencercnorton/bitagent/internal/llmcapture/llmcapturefx"
-	"github.com/spencercnorton/bitagent/internal/llmwork/llmworkfx"
 	"github.com/spencercnorton/bitagent/internal/logging/loggingfx"
 	"github.com/spencercnorton/bitagent/internal/metrics/metricsfx"
 	"github.com/spencercnorton/bitagent/internal/namepolicy/namepolicyfx"
 	"github.com/spencercnorton/bitagent/internal/processor/processorfx"
+	"github.com/spencercnorton/bitagent/internal/processors/processorsfx"
 	"github.com/spencercnorton/bitagent/internal/protocol/dht/dhtfx"
 	"github.com/spencercnorton/bitagent/internal/protocol/metainfo/metainfofx"
 	"github.com/spencercnorton/bitagent/internal/queue/queuefx"
@@ -73,8 +66,6 @@ func New() fx.Option {
 		blockingfx.New(),
 		classifierfx.New(),
 		contentfilterfx.New(),
-		llmstagefx.New(),
-		llmmatchfx.New(),
 		configfx.New(),
 		csamblocklistfx.New(),
 		dhtcrawlerfx.New(),
@@ -87,12 +78,11 @@ func New() fx.Option {
 		httpserverfx.New(),
 		importerfx.New(),
 		loggingfx.New(),
-		llmcapturefx.New(),
-		llmworkfx.New(),
 		metainfofx.New(),
 		metricsfx.New(),
 		namepolicyfx.New(),
 		processorfx.New(),
+		processorsfx.New(),
 		queuefx.New(),
 		queuecleanfx.New(),
 		junkpurgefx.New(),
@@ -119,15 +109,11 @@ func New() fx.Option {
 			animebackfillcmd.New,
 			attributioncmd.New,
 			backloglocalclassifycmd.New,
-			batchllmmatchcmd.New,
 			classifiercmd.New,
 			episodesbackfillcmd.New,
 			releasefieldsrepaircmd.New,
 			granularitybackfillcmd.New,
 			configcmd.New,
-			evalfreezecmd.New,
-			evalreplaycmd.New,
-			matcherevalcmd.New,
 			purgecontenttypescmd.New,
 			refreshalttitlescmd.New,
 			refreshanimetitlescmd.New,
@@ -138,16 +124,5 @@ func New() fx.Option {
 			workercmd.New,
 		),
 		fx.Decorate(migrations.NewDecorator),
-		// Parent-scoped LLM-stage decorator. Module-scoped fx.Decorate
-		// inside llmstagefx only affected llmstagefx's own consumers,
-		// silently bypassing the LLM stage for processorfx (where it
-		// matters). Provide-time wrapping handled the canonical preempt
-		// in classifierfx; here we layer the LLM stage at parent scope
-		// so EVERY consumer of `lazy.Lazy[classifier.Runner]` sees:
-		//
-		//   processor → llmStage(canonicalPreempt(celRunner))
-		//
-		// regardless of which module asks for the dependency.
-		fx.Decorate(llmstagefx.WrapWithLLMStage),
 	)
 }
