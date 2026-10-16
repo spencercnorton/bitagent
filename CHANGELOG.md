@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Measure a complete latest-500 terminal attempt window for each processor
+  execution generation. Retention gaps and interrupted work remain explicitly
+  unavailable; expired dispatched leases are recorded as technical failures.
+
 ## 5.0.0 — 2026-10-16
 
 - Separate optional processors behind the generic v1 HTTP service contract;

@@ -132,6 +132,13 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 			}
 			p.Metrics[outcome] = measurement(number(n), "count", start, now, pop, "core_postgres")
 		}
+		window, err := attemptWindow(ctx, tx, entry, now)
+		if err != nil {
+			return out, err
+		}
+		for key, value := range window {
+			p.Metrics[key] = value
+		}
 		telemetryAt := observed.Telemetry.ObservedAt
 		var rss, cpu *float64
 		if telemetryAt != "" && p.Health == "healthy" {

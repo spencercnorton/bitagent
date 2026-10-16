@@ -37,7 +37,9 @@ func TestMigrationFreezesLegacyAndRestoresPreMigrationSnapshot(t *testing.T) {
 	restored, e := recovery.Restore(testContext, snapshot.ID, time.Now())
 	require.NoError(t, e)
 	require.True(t, restored)
-	_, e = m.Down(testContext)
+	// Later additive migrations may be reversible. The evidence-bearing v61
+	// boundary must still refuse a downgrade into the embedded runtime schema.
+	_, e = m.DownTo(testContext, 60)
 	require.ErrorContains(t, e, "evidence prevents destructive downgrade")
 }
 func TestNormalSearchReceiptAndSourceRevision(t *testing.T) {

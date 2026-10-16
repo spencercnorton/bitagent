@@ -211,6 +211,61 @@
           "population": "retained attempts for processor execution generation 1",
           "source": "core_postgres",
           "unavailable_reason": ""
+        },
+        "technical_failure_window_attempts": {
+          "value": null,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.702743Z"
+          },
+          "population": "latest 500 terminal attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": "insufficient_attempt_history"
+        },
+        "technical_failure_window_failures": {
+          "value": null,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.702743Z"
+          },
+          "population": "latest 500 terminal attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": "insufficient_attempt_history"
+        },
+        "technical_failure_window_unknown": {
+          "value": null,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.702743Z",
+            "end": "2026-10-16T21:14:16.702743Z"
+          },
+          "population": "latest 500 terminal attempts for processor execution generation 1",
+          "source": "core_postgres",
+          "unavailable_reason": "insufficient_attempt_history"
+        },
+        "technical_failure_window_progress": {
+          "value": 1,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "retained terminal attempts after the completeness floor, capped at 500",
+          "source": "core_postgres",
+          "unavailable_reason": ""
+        },
+        "technical_failure_window_unfinished": {
+          "value": 0,
+          "unit": "count",
+          "window": {
+            "start": "2026-10-16T21:14:16.713787Z",
+            "end": "2026-10-16T21:14:16.713787Z"
+          },
+          "population": "unfinished retained attempts for the processor execution generation; not counted as successes",
+          "source": "core_postgres",
+          "unavailable_reason": ""
         }
       },
       "evaluation": null

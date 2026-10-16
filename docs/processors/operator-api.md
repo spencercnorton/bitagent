@@ -59,6 +59,34 @@ unavailable_reason. Zero is only a measurement. Standard per-processor keys:
 not a hidden lifetime accuracy population. Service resource measurements carry
 the service observation window. Unsupported measurements are null.
 
+The `technical_failure_window_*` measurements use exactly the latest 500
+terminal attempts for the current **execution generation**, ordered by
+`finished_at DESC, job_id DESC, lease_generation DESC`. They never derive a
+denominator from the jobs page or mix replacement processor versions:
+
+- `attempts` is 500 only when a complete retained population is proved.
+- `failures` counts technical `failed` outcomes. Semantic abstention, deferral,
+  policy exclusion and completed unsuccessful matches remain distinct.
+- `unknown` counts interrupted attempts with no settled result. When nonzero,
+  `failures` is null with `unresolved_attempt_outcomes`, never a success estimate.
+- `progress` counts retained terminal attempts after the completeness floor,
+  capped at 500. It is collection progress, not a smaller accepted denominator.
+- `unfinished` counts retained attempts that have not reached a terminal state;
+  they are outside this terminal population and are not inferred successes.
+
+These keys have the full `technical_failure_window_` prefix. Missing population
+produces null with `insufficient_attempt_history`; a retention gap produces
+`retention_history_incomplete`. Migration establishes a conservative floor at
+upgrade time because older retention cannot be reconstructed. Job pruning raises
+that floor to the newest removed attempt; the window becomes usable again only
+after 500 newer terminal attempts. This can conservatively withhold measurements
+for other processors. No history is fabricated to fill a gap. Expired dispatched
+leases settle as technical failure; cancellation, changed registration and stale
+input settle as unknown interruption. A request that was never dispatched does
+not acquire an attempt. These are operational observations, not accuracy scores
+or automatic promotion decisions; consumers must also assess unfinished work,
+queue age, independent adverse events and their own approved rollout criteria.
+
 Global queue keys are queued, leased, deferred, failed, canceled, stale,
 completed, oldest_wait_seconds and capacity_remaining. Completed job state means
 pipeline execution settled; inspect outcome to distinguish completed proposals,

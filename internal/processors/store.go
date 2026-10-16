@@ -223,7 +223,11 @@ func (s *Store) Register(ctx context.Context, id string, w v1.RegistryWrite) (En
 }
 func invalidate(ctx context.Context, tx pgx.Tx) error {
 	_, e := tx.Exec(ctx, `UPDATE processor_control SET epoch=epoch+1,scan_after=''::bytea,updated_at=clock_timestamp() WHERE singleton;
- UPDATE processor_jobs SET state='stale',reason='registry_changed',lease_until=NULL,finished_at=clock_timestamp() WHERE state IN('queued','deferred','leased')`)
+ WITH invalidated AS (
+ UPDATE processor_jobs SET state='stale',reason='registry_changed',lease_until=NULL,finished_at=clock_timestamp()
+ WHERE state IN('queued','deferred','leased') RETURNING job_id,lease_generation)
+ UPDATE processor_attempts a SET finished_at=clock_timestamp(),outcome='unknown',reason='registry_changed'
+ FROM invalidated j WHERE a.job_id=j.job_id AND a.lease_generation=j.lease_generation AND a.finished_at IS NULL`)
 	return e
 }
 func (s *Store) Control(ctx context.Context, id string, c v1.RegistryControl) error {
@@ -301,7 +305,11 @@ func (s *Store) Cancel(ctx context.Context, id string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	_, e = p.Exec(ctx, `UPDATE processor_jobs SET state='canceled',reason='operator_canceled',lease_until=NULL,finished_at=clock_timestamp() WHERE job_id=$1 AND state IN('queued','deferred','leased')`, id)
+	_, e = p.Exec(ctx, `WITH canceled AS (
+ UPDATE processor_jobs SET state='canceled',reason='operator_canceled',lease_until=NULL,finished_at=clock_timestamp()
+ WHERE job_id=$1 AND state IN('queued','deferred','leased') RETURNING job_id,lease_generation)
+ UPDATE processor_attempts a SET finished_at=clock_timestamp(),outcome='unknown',reason='operator_canceled'
+ FROM canceled j WHERE a.job_id=j.job_id AND a.lease_generation=j.lease_generation AND a.finished_at IS NULL`, id)
 	if e != nil {
 		return "", e
 	}

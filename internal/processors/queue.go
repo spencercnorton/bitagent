@@ -52,7 +52,7 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 	if len(plan.Steps) == 0 || draining {
 		return 0, nil
 	}
-	_, e = tx.Exec(ctx, `DELETE FROM processor_jobs WHERE job_id IN(SELECT job_id FROM processor_jobs WHERE finished_at < clock_timestamp()-$1::interval ORDER BY finished_at LIMIT 128)`, s.cfg.Retention.String())
+	e = pruneJobs(ctx, tx, s.cfg.Retention)
 	if e != nil {
 		return 0, e
 	}
@@ -147,7 +147,11 @@ func (s *Store) Claim(ctx context.Context) (*Lease, error) {
 	if e = tx.QueryRow(ctx, `SELECT epoch FROM processor_control WHERE singleton FOR UPDATE`).Scan(&epoch); e != nil {
 		return nil, e
 	}
-	_, e = tx.Exec(ctx, `UPDATE processor_jobs SET state='queued',lease_until=NULL,reason='lease_expired' WHERE state='leased' AND lease_until<clock_timestamp()`)
+	_, e = tx.Exec(ctx, `WITH expired AS (
+ UPDATE processor_jobs SET state='queued',lease_until=NULL,reason='lease_expired'
+ WHERE state='leased' AND lease_until<clock_timestamp() RETURNING job_id,lease_generation)
+ UPDATE processor_attempts a SET finished_at=clock_timestamp(),outcome='failed',reason='lease_expired'
+ FROM expired j WHERE j.job_id=a.job_id AND j.lease_generation=a.lease_generation AND a.finished_at IS NULL`)
 	if e != nil {
 		return nil, e
 	}
@@ -374,7 +378,11 @@ func (s *Store) abandon(ctx context.Context, l Lease, reason string) {
 	if e != nil {
 		return
 	}
-	_, _ = p.Exec(ctx, `UPDATE processor_jobs SET state='stale',reason=$3,lease_until=NULL,finished_at=clock_timestamp() WHERE job_id=$1 AND state='leased' AND lease_generation=$2`, l.ID, l.Generation, reason)
+	_, _ = p.Exec(ctx, `WITH abandoned AS (
+ UPDATE processor_jobs SET state='stale',reason=$3,lease_until=NULL,finished_at=clock_timestamp()
+ WHERE job_id=$1 AND state='leased' AND lease_generation=$2 RETURNING job_id,lease_generation)
+ UPDATE processor_attempts a SET finished_at=clock_timestamp(),outcome='unknown',reason='source_or_input_invalid'
+ FROM abandoned j WHERE a.job_id=j.job_id AND a.lease_generation=j.lease_generation AND a.finished_at IS NULL`, l.ID, l.Generation, reason)
 }
 func (s *Store) RunOne(ctx context.Context) (bool, error) {
 	l, e := s.Claim(ctx)
