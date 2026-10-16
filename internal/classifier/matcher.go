@@ -23,23 +23,38 @@ import (
 type MatchOutcome string
 
 const (
-	OutcomeDisabled     MatchOutcome = "disabled"      // matcher off
-	OutcomeWrongType    MatchOutcome = "wrong_type"    // not movie/tv_show
-	OutcomeGated        MatchOutcome = "gated"         // pre-extract Allow gate (size/files/plausibility/privacy)
-	OutcomeExtractEmpty MatchOutcome = "extract_empty" // model declined to name a title
-	OutcomePack         MatchOutcome = "pack"          // multi-film bundle
-	OutcomeAdult        MatchOutcome = "adult"         // adult release
-	OutcomeAnimeRaw     MatchOutcome = "anime_raw"     // anime with no English track
-	OutcomeNoCandidates MatchOutcome = "no_candidates" // search returned nothing
-	OutcomeDeclined     MatchOutcome = "declined"      // rerank chose none
-	OutcomeMatched      MatchOutcome = "matched"       // rerank chose a tmdb id
+	OutcomeRetryable    MatchOutcome = "retryable_failure" // infrastructure or budget failure; never no-match
+	OutcomeDisabled     MatchOutcome = "disabled"          // matcher off
+	OutcomeWrongType    MatchOutcome = "wrong_type"        // not movie/tv_show
+	OutcomeGated        MatchOutcome = "gated"             // pre-extract Allow gate (size/files/plausibility/privacy)
+	OutcomeExtractEmpty MatchOutcome = "extract_empty"     // model declined to name a title
+	OutcomePack         MatchOutcome = "pack"              // multi-film bundle
+	OutcomeAdult        MatchOutcome = "adult"             // adult release
+	OutcomeAnimeRaw     MatchOutcome = "anime_raw"         // anime with no English track
+	OutcomeNoCandidates MatchOutcome = "no_candidates"     // search returned nothing
+	OutcomeDeclined     MatchOutcome = "declined"          // rerank chose none
+	OutcomeMatched      MatchOutcome = "matched"           // rerank chose a tmdb id
 )
+
+// MatchQueryAttempt retains actual candidate retrieval, including failed and
+// empty queries. A complete response is search evidence, not identity truth.
+type MatchQueryAttempt struct {
+	Provider   string               `json:"provider"`
+	Title      string               `json:"title"`
+	Year       int                  `json:"year"`
+	MediaType  string               `json:"media_type"`
+	Status     string               `json:"status"`
+	Candidates []llmmatch.Candidate `json:"candidates"`
+	// Keep aliases in the audit export without changing the model prompt.
+	CandidateAliases map[int64][]string `json:"candidate_aliases,omitempty"`
+}
 
 // MatchDecision is the matcher's verdict for one torrent, computed WITHOUT
 // attaching. The workflow action turns a matched decision into an attach via
 // finishLLMMatch; the matcher-eval command records it. Both callers route
 // through matchRunner.decide, so the eval measures exactly the production path.
 type MatchDecision struct {
+	Queries         []MatchQueryAttempt
 	Outcome         MatchOutcome
 	Extract         llmmatch.Extraction
 	ParsedTitle     string
@@ -96,9 +111,10 @@ type MatchDecisionObservation struct {
 
 // matchRunner bundles the matcher dependencies for a single decision.
 type matchRunner struct {
-	search LocalSearch
-	tmdb   tmdb.Client
-	lm     *llmmatch.Client
+	queryTrace *[]MatchQueryAttempt
+	search     LocalSearch
+	tmdb       tmdb.Client
+	lm         *llmmatch.Client
 	// resolver drives deterministic anime romaji/AKA resolution. May be nil in
 	// tests, in which case alias resolution is simply skipped.
 	resolver *animedb.Resolver
@@ -115,7 +131,15 @@ type matchRunner struct {
 // A non-nil error is a genuine infrastructure failure (a TMDB search call
 // failed) that the caller should propagate so the torrent is retried — it is
 // NOT the same as a clean "no match" (which is an Outcome).
-func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullContentType) (MatchDecision, error) {
+func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullContentType) (decision MatchDecision, decisionErr error) {
+	var queries []MatchQueryAttempt
+	r.queryTrace = &queries
+	defer func() {
+		decision.Queries = queries
+		if decisionErr != nil && !errors.Is(decisionErr, namepolicy.ErrExcluded) && !errors.Is(decisionErr, llmcapture.ErrPrivacyBlocked) {
+			decision.Outcome = OutcomeRetryable
+		}
+	}()
 	ctx = llmmatch.WithWorkType(ctx, ct)
 	lm := r.lm
 	if !lm.Enabled() {
@@ -200,8 +224,8 @@ func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullC
 
 	if err != nil {
 		return MatchDecision{
-			Outcome: OutcomeExtractEmpty, Extract: ext, GateReason: "extract_error",
-		}, nil
+			Outcome: OutcomeRetryable, Extract: ext, GateReason: "extract_error",
+		}, err
 	}
 	if !ext.OK {
 		return MatchDecision{Outcome: OutcomeExtractEmpty, Extract: ext}, nil
@@ -276,7 +300,11 @@ func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullC
 
 	// Stage 2a (local) — mirrored content table first; a hit attaches the
 	// stored row directly, costing zero TMDB API calls.
-	if locals, lerr := r.localLLMCandidates(ctx, searchType, ext, lm.MaxCandidates()); lerr == nil && len(locals) > 0 {
+	locals, localErr := r.localLLMCandidates(ctx, searchType, ext, lm.MaxCandidates())
+	if localErr != nil {
+		return MatchDecision{Extract: ext, IsTV: isTV, CandidateSource: "local", GateReason: "catalogue_error"}, localErr
+	}
+	if len(locals) > 0 {
 		localByID := make(map[int64]*model.Content, len(locals))
 		cands := make([]llmmatch.Candidate, 0, len(locals))
 		for i := range locals {
@@ -325,7 +353,10 @@ func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullC
 			if errors.Is(rerr, llmcapture.ErrCaptureUnavailable) {
 				return MatchDecision{}, rerr
 			}
-			if rerr == nil && chosenID != 0 {
+			if rerr != nil {
+				return MatchDecision{Extract: ext, IsTV: isTV, CandidateSource: "local", Candidates: cands, GateReason: "rerank_error"}, rerr
+			}
+			if chosenID != 0 {
 				if content := localByID[chosenID]; content != nil {
 					c := *content
 					chosen, _ := candidateByID(cands, chosenID)
@@ -398,7 +429,7 @@ func (r matchRunner) decide(ctx context.Context, t model.Torrent, ct model.NullC
 		return MatchDecision{
 			Outcome: OutcomeDeclined, Extract: ext, IsTV: isTV,
 			CandidateSource: "api", Candidates: cands, GateReason: "rerank_error",
-		}, nil
+		}, rerr
 	}
 	if chosenID == 0 {
 		return MatchDecision{
@@ -444,6 +475,13 @@ func (r matchRunner) localLLMCandidates(
 ) ([]model.Content, error) {
 	for _, q := range llmCandidateQueries(ext) {
 		locals, err := r.search.ContentCandidatesBySearch(ctx, searchType, q.title, q.year, limit)
+		candidates := make([]llmmatch.Candidate, 0, len(locals))
+		for _, c := range locals {
+			if id, parseErr := strconv.ParseInt(c.ID, 10, 64); parseErr == nil && c.Source == model.SourceTmdb {
+				candidates = append(candidates, llmmatch.Candidate{ID: id, Title: c.Title, Year: int(c.ReleaseYear), AltTitles: altTitlesOf(c)})
+			}
+		}
+		r.recordQuery("local", q.title, int(q.year), string(searchType), candidates, err)
 		if err != nil || len(locals) > 0 {
 			return locals, err
 		}
@@ -463,10 +501,12 @@ func (r matchRunner) apiLLMCandidates(
 			Year:         model.Year(ext.Year),
 			IncludeAdult: true,
 		})
+		candidates := candidatesFromMovie(resp.Results, limit)
+		r.recordQuery("api", ext.Title, ext.Year, "movie", candidates, searchErr)
 		if searchErr != nil {
 			return nil, searchErr
 		}
-		return candidatesFromMovie(resp.Results, limit), nil
+		return candidates, nil
 	}
 	for _, q := range llmCandidateQueries(ext) {
 		resp, searchErr := r.tmdb.SearchTv(ctx, tmdb.SearchTvRequest{
@@ -474,10 +514,12 @@ func (r matchRunner) apiLLMCandidates(
 			FirstAirDateYear: q.year,
 			IncludeAdult:     true,
 		})
+		cands := candidatesFromTv(resp.Results, limit)
+		r.recordQuery("api", q.title, int(q.year), "tv_show", cands, searchErr)
 		if searchErr != nil {
 			return nil, searchErr
 		}
-		if cands := candidatesFromTv(resp.Results, limit); len(cands) > 0 {
+		if len(cands) > 0 {
 			return cands, nil
 		}
 	}
@@ -968,4 +1010,23 @@ func tmdbContentByID(ctx context.Context, client tmdb.Client, isTV bool, id int6
 		return model.Content{}, err
 	}
 	return tmdb.MovieDetailsToMovieModel(d)
+}
+
+func (r matchRunner) recordQuery(provider, title string, year int, mediaType string, candidates []llmmatch.Candidate, err error) {
+	if r.queryTrace == nil {
+		return
+	}
+	status := "complete"
+	if err != nil {
+		status = "retryable_failure"
+	}
+	aliases := make(map[int64][]string)
+	snapshot := append([]llmmatch.Candidate(nil), candidates...)
+	for i := range snapshot {
+		if len(snapshot[i].AltTitles) > 0 {
+			aliases[snapshot[i].ID] = append([]string(nil), snapshot[i].AltTitles...)
+		}
+		snapshot[i].AltTitles = nil
+	}
+	*r.queryTrace = append(*r.queryTrace, MatchQueryAttempt{Provider: provider, Title: title, Year: year, MediaType: mediaType, Status: status, Candidates: snapshot, CandidateAliases: aliases})
 }

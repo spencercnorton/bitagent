@@ -2,6 +2,7 @@ package classifier
 
 import (
 	"context"
+	"errors"
 	"math"
 
 	"github.com/spencercnorton/bitagent/internal/classifier/classification"
@@ -123,12 +124,22 @@ func finishLLMMatch(
 	}
 	content, err := dec.resolve()
 	if err != nil {
-		dec.Outcome = OutcomeDeclined
+		dec.Outcome = OutcomeRetryable
 		dec.GateReason = "resolve"
-		if observeErr := observeLLMMatchDecision(ctx, observer, torrent, dec, minConfidence, nil, false, live, requireSourceTitle); observeErr != nil {
-			return cl, observeErr
+		// An authoritative 404 remains a clean no-match. Transport, quota and
+		// service failures must reach the queue's existing retry handling.
+		if errors.Is(err, classification.ErrUnmatched) {
+			dec.Outcome = OutcomeDeclined
 		}
-		return cl, classification.ErrUnmatched
+		if observeErr := observeLLMMatchDecision(ctx, observer, torrent, dec, minConfidence, nil, false, live, requireSourceTitle); observeErr != nil {
+			if errors.Is(err, classification.ErrUnmatched) {
+				// find_match treats any error containing ErrUnmatched as a
+				// clean miss. Do not hide an audit failure in that chain.
+				return cl, observeErr
+			}
+			return cl, errors.Join(err, observeErr)
+		}
+		return cl, err
 	}
 	// Post-resolve year re-check. llmMatchYearCompatible runs pre-attach against
 	// the CANDIDATE, whose Year comes from a TMDB *search* hit — and a search hit

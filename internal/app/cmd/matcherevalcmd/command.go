@@ -95,27 +95,33 @@ func New(p Params) (Result, error) {
 
 // evalRecord is one JSONL line: the matcher's decision for one torrent.
 type evalRecord struct {
-	Label        string  `json:"label"`
-	Model        string  `json:"model"`
-	TCID         string  `json:"tc_id"`
-	InfoHash     string  `json:"info_hash"`
-	Name         string  `json:"name"`
-	ContentType  string  `json:"content_type"`
-	Outcome      string  `json:"outcome"`
-	ExtractTitle string  `json:"extract_title"`
-	ExtractYear  int     `json:"extract_year"`
-	ExtractType  string  `json:"extract_type"`
-	IsAnime      bool    `json:"is_anime"`
-	English      string  `json:"english,omitempty"`
-	IsPack       bool    `json:"is_pack"`
-	IsAdult      bool    `json:"is_adult"`
-	CandSource   string  `json:"candidate_source"`
-	NumCands     int     `json:"num_candidates"`
-	MatchedID    int64   `json:"matched_tmdb_id"`
-	MatchedTitle string  `json:"matched_title"`
-	Confidence   float64 `json:"confidence"`
-	GateReason   string  `json:"gate_reason,omitempty"`
-	Err          string  `json:"error,omitempty"`
+	IdentityStatus string                         `json:"identity_status"`
+	Queries        []classifier.MatchQueryAttempt `json:"queries"`
+	Candidates     []llmmatch.Candidate           `json:"candidates"`
+	ParsedTitle    string                         `json:"parsed_title"`
+	ExtractSeason  int                            `json:"extract_season"`
+	ExtractEpisode int                            `json:"extract_episode"`
+	Label          string                         `json:"label"`
+	Model          string                         `json:"model"`
+	TCID           string                         `json:"tc_id"`
+	InfoHash       string                         `json:"info_hash"`
+	Name           string                         `json:"name"`
+	ContentType    string                         `json:"content_type"`
+	Outcome        string                         `json:"outcome"`
+	ExtractTitle   string                         `json:"extract_title"`
+	ExtractYear    int                            `json:"extract_year"`
+	ExtractType    string                         `json:"extract_type"`
+	IsAnime        bool                           `json:"is_anime"`
+	English        string                         `json:"english,omitempty"`
+	IsPack         bool                           `json:"is_pack"`
+	IsAdult        bool                           `json:"is_adult"`
+	CandSource     string                         `json:"candidate_source"`
+	NumCands       int                            `json:"num_candidates"`
+	MatchedID      int64                          `json:"matched_tmdb_id"`
+	MatchedTitle   string                         `json:"matched_title"`
+	Confidence     float64                        `json:"confidence"`
+	GateReason     string                         `json:"gate_reason,omitempty"`
+	Err            string                         `json:"error,omitempty"`
 }
 
 func (p Params) action(ctx *cli.Context) error {
@@ -198,26 +204,32 @@ func (p Params) action(ctx *cli.Context) error {
 		dec, decErr := runner.EvalMatch(ctx.Context, tc.Torrent, tc.ContentType)
 
 		rec := evalRecord{
-			Label:        label,
-			Model:        model,
-			TCID:         tc.ID,
-			InfoHash:     tc.InfoHash.String(),
-			Name:         tc.Torrent.Name,
-			ContentType:  string(tc.ContentType.ContentType),
-			Outcome:      string(dec.Outcome),
-			ExtractTitle: dec.Extract.Title,
-			ExtractYear:  dec.Extract.Year,
-			ExtractType:  dec.Extract.Type,
-			IsAnime:      dec.Extract.IsAnime,
-			English:      dec.Extract.English,
-			IsPack:       dec.Extract.IsPack,
-			IsAdult:      dec.Extract.IsAdult,
-			CandSource:   dec.CandidateSource,
-			NumCands:     len(dec.Candidates),
-			MatchedID:    dec.MatchedID,
-			MatchedTitle: dec.MatchedTitle,
-			Confidence:   dec.Confidence,
-			GateReason:   dec.GateReason,
+			IdentityStatus: "candidate_only",
+			Queries:        dec.Queries,
+			Candidates:     dec.Candidates,
+			ParsedTitle:    dec.ParsedTitle,
+			ExtractSeason:  dec.Extract.Season,
+			ExtractEpisode: dec.Extract.Episode,
+			Label:          label,
+			Model:          model,
+			TCID:           tc.ID,
+			InfoHash:       tc.InfoHash.String(),
+			Name:           tc.Torrent.Name,
+			ContentType:    string(tc.ContentType.ContentType),
+			Outcome:        string(dec.Outcome),
+			ExtractTitle:   dec.Extract.Title,
+			ExtractYear:    dec.Extract.Year,
+			ExtractType:    dec.Extract.Type,
+			IsAnime:        dec.Extract.IsAnime,
+			English:        dec.Extract.English,
+			IsPack:         dec.Extract.IsPack,
+			IsAdult:        dec.Extract.IsAdult,
+			CandSource:     dec.CandidateSource,
+			NumCands:       len(dec.Candidates),
+			MatchedID:      dec.MatchedID,
+			MatchedTitle:   dec.MatchedTitle,
+			Confidence:     dec.Confidence,
+			GateReason:     dec.GateReason,
 		}
 		if decErr != nil {
 			rec.Err = decErr.Error()

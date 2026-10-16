@@ -388,13 +388,18 @@ func TestFinishLLMMatchShadowAndLiveApplySameFinalPolicy(t *testing.T) {
 				assert.True(t, observation.RequireSourceTitle)
 				assert.Equal(t, int64(13597), observation.MatchedID)
 				assert.Equal(t, tc.confidence, observation.Confidence)
-				if tc.wantGate != "" {
+				if tc.resolveErr != nil {
+					assert.Equal(t, OutcomeRetryable, observation.Outcome)
+				} else if tc.wantGate != "" {
 					assert.Equal(t, OutcomeDeclined, observation.Outcome)
 				} else {
 					assert.Equal(t, OutcomeMatched, observation.Outcome)
 				}
 
-				if live && tc.wouldAttach {
+				if tc.resolveErr != nil {
+					require.ErrorIs(t, err, tc.resolveErr)
+					require.Nil(t, result.Content)
+				} else if live && tc.wouldAttach {
 					require.NoError(t, err)
 					require.NotNil(t, result.Content)
 					assert.Contains(t, result.Tags, llmMatchedTagName)

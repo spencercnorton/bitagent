@@ -121,6 +121,17 @@ func TestMatcherRerankCaptureFreezesSourceEvidenceOnBothCandidatePaths(
 				Extension:   model.NewNullString("mkv"),
 			}, model.NewNullContentType(model.ContentTypeMovie))
 			require.NoError(t, err)
+			if candidateSource == llmcapture.CandidateSourceLocal {
+				require.Len(t, decision.Queries, 1)
+			} else {
+				require.Len(t, decision.Queries, 2)
+			}
+			for _, q := range decision.Queries {
+				require.Equal(t, "complete", q.Status)
+				require.Equal(t, "Dune", q.Title)
+				require.Equal(t, 2021, q.Year)
+			}
+
 			require.Equal(t, OutcomeMatched, decision.Outcome)
 			require.Equal(t, int64(438631), decision.MatchedID)
 
