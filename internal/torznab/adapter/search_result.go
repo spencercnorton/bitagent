@@ -241,14 +241,19 @@ func torrentContentResultItemToTorznabResultItem(item search.TorrentContentResul
 		}
 	}
 
-	if tmdbID, ok := item.Content.Identifier("tmdb"); ok {
-		attrs = append(attrs, torznab.SearchResultItemTorznabAttr{
-			AttrName:  torznab.AttrTmdb,
-			AttrValue: tmdbID,
-		})
+	if tmdbID, ok := item.Content.Identifier("tmdb"); ok && positiveCatalogueID(tmdbID) {
+		// Retain the legacy extension; Radarr reads the standard tmdbid field.
+		attrs = append(attrs,
+			torznab.SearchResultItemTorznabAttr{AttrName: torznab.AttrTmdb, AttrValue: tmdbID},
+			torznab.SearchResultItemTorznabAttr{AttrName: torznab.AttrTmdbID, AttrValue: tmdbID})
+	}
+	if item.ContentType.Valid && item.ContentType.ContentType == model.ContentTypeTvShow {
+		if tvdbID, ok := item.Content.Identifier("tvdb"); ok && positiveCatalogueID(tvdbID) {
+			attrs = append(attrs, torznab.SearchResultItemTorznabAttr{AttrName: torznab.AttrTvdbID, AttrValue: tvdbID})
+		}
 	}
 
-	if imdbID, ok := item.Content.Identifier("imdb"); ok {
+	if imdbID, ok := item.Content.Identifier("imdb"); ok && strings.HasPrefix(imdbID, "tt") && positiveCatalogueID(strings.TrimPrefix(imdbID, "tt")) {
 		attrs = append(attrs, torznab.SearchResultItemTorznabAttr{
 			AttrName:  torznab.AttrImdb,
 			AttrValue: imdbID[2:],
@@ -268,4 +273,18 @@ func torrentContentResultItemToTorznabResultItem(item search.TorrentContentResul
 		},
 		TorznabAttrs: attrs,
 	}
+}
+
+// Arr parses catalogue identifiers as positive 32-bit integers.
+func positiveCatalogueID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, c := range value {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	n, err := strconv.ParseInt(value, 10, 32)
+	return err == nil && n > 0
 }

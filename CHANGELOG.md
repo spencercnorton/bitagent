@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep matcher provider, rate-limit and catalogue-resolution failures retryable;
+  retain attempted queries and candidate details in shadow evaluation exports.
+- Emit standard `tmdbid` and `tvdbid` Torznab attributes for Arr consumers,
+  preserving the legacy `tmdb` attribute and rejecting malformed identifiers.
+
 ## 4.6.0 — 2026-10-12
 
 - Clarify backend setup, test instructions and classification documentation; correct the Radarr UHD category to 2045.

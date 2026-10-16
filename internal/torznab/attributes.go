@@ -32,6 +32,8 @@ const (
 	AttrTeam                 = "team"
 	AttrImdb                 = "imdb"
 	AttrTmdb                 = "tmdb"
+	AttrTmdbID               = "tmdbid"
+	AttrTvdbID               = "tvdbid"
 	AttrClaimedHDR           = "claimedhdr"
 	AttrClaimedAudio         = "claimedaudio"
 	AttrClaimedAudioChannels = "claimedaudiochannels"
