@@ -44,3 +44,26 @@ func TestCriteriaFreezePreservesEmptyNestedAndDeferredWhere(t *testing.T) {
 		wg.Wait()
 	}
 }
+
+func TestOrCriteriaParenthesizedInOuterWhere(t *testing.T) {
+	db := newDryRunDB(t).Model(&model.Torrent{})
+	q := dao.Use(db)
+	ctx := dbContext{q: q, tableName: "torrents"}
+
+	outerAndOr := And(
+		DBCriteria{SQL: "torrents.private = ?", Args: []interface{}{false}},
+		Or(
+			DBCriteria{SQL: "torrents.size > ?", Args: []interface{}{100}},
+			DBCriteria{SQL: "torrents.size < ?", Args: []interface{}{20}},
+		),
+	)
+	raw, err := outerAndOr.Raw(ctx)
+	require.NoError(t, err)
+
+	sql := db.Session(&gorm.Session{DryRun: true, NewDB: true}).
+		Model(&model.Torrent{}).
+		Where(raw.Query, raw.Args...).
+		Find(&[]model.Torrent{}).Statement.SQL.String()
+
+	require.Contains(t, sql, "torrents.private = $1 AND (torrents.size > $2 OR torrents.size < $3)")
+}
