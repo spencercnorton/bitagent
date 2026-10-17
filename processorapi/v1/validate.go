@@ -18,6 +18,10 @@ const MaxBody = 262144
 var token = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,95}$`)
 var hash = regexp.MustCompile(`^[a-f0-9]{64}$`)
 var infohash = regexp.MustCompile(`^[a-f0-9]{40}$`)
+var tagToken = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,63}$`)
+var langToken = regexp.MustCompile(`^[a-z]{2,3}$`)
+
+var ValidContentTypes = []string{"movie", "tv_show", "music", "ebook", "audiobook", "comic", "game", "software", "xxx"}
 
 // Decode rejects duplicate keys as well as unknown fields. Keeping both checks
 // prevents different parsers from disagreeing about a binding or proposal.
@@ -80,6 +84,69 @@ func scan(d *json.Decoder, depth int) error {
 	}
 	_, e = d.Token()
 	return e
+}
+func (s *Selector) Validate() error {
+	if s == nil {
+		return nil
+	}
+	if len(s.ContentTypes) > 16 || len(s.ExcludeTypes) > 16 || len(s.Extensions) > 64 || len(s.RequiredTags) > 32 || len(s.ScoreThresholds) > 16 {
+		return errors.New("invalid_selector")
+	}
+	for _, ct := range append(append([]string{}, s.ContentTypes...), s.ExcludeTypes...) {
+		if ct != "unknown" && !slices.Contains(ValidContentTypes, ct) {
+			return errors.New("invalid_selector_content_type")
+		}
+	}
+	for _, ext := range s.Extensions {
+		if len(ext) == 0 || len(ext) > 32 {
+			return errors.New("invalid_selector_extension")
+		}
+	}
+	for _, tag := range s.RequiredTags {
+		if !tagToken.MatchString(tag) {
+			return errors.New("invalid_selector_tag")
+		}
+	}
+	if s.MinUncertainty != nil && (!finite(*s.MinUncertainty) || *s.MinUncertainty < 0 || *s.MinUncertainty > 1) {
+		return errors.New("invalid_selector_uncertainty")
+	}
+	if s.SampleBasisPoints != nil && (*s.SampleBasisPoints < 0 || *s.SampleBasisPoints > 10000) {
+		return errors.New("invalid_selector_sample")
+	}
+	for _, st := range s.ScoreThresholds {
+		if !token.MatchString(st.Dimension) {
+			return errors.New("invalid_selector_threshold")
+		}
+		if st.Min != nil && !finite(*st.Min) {
+			return errors.New("invalid_selector_threshold")
+		}
+		if st.Max != nil && !finite(*st.Max) {
+			return errors.New("invalid_selector_threshold")
+		}
+		if st.Min != nil && st.Max != nil && *st.Min > *st.Max {
+			return errors.New("invalid_selector_threshold")
+		}
+	}
+	return nil
+}
+func (l *LearningConfig) Validate() error {
+	if l == nil {
+		return nil
+	}
+	if l.Mode != "" && !slices.Contains([]string{"disabled", "log_only", "online_calibrate", "accumulate_batch"}, l.Mode) {
+		return errors.New("invalid_learning_mode")
+	}
+	if len(l.AcceptedTiers) > len(FeedbackTiers) {
+		return errors.New("invalid_learning_tiers")
+	}
+	seen := map[string]bool{}
+	for _, tier := range l.AcceptedTiers {
+		if !slices.Contains(FeedbackTiers, tier) || seen[tier] {
+			return errors.New("invalid_learning_tiers")
+		}
+		seen[tier] = true
+	}
+	return nil
 }
 func (i Identity) Validate() error {
 	if !token.MatchString(i.ID) || !token.MatchString(i.Version) || !token.MatchString(i.ModelVersion) || !token.MatchString(i.PolicyVersion) {
@@ -150,6 +217,16 @@ func (j Job) Validate() error {
 	if j.Contract != Contract || !hash.MatchString(j.JobID) || !hash.MatchString(j.InputRevision) || !hash.MatchString(j.PipelineRevision) || !hash.MatchString(j.ConfigurationDigest) || !slices.Contains(Stages, j.Stage) {
 		return errors.New("invalid_binding")
 	}
+	if len(j.Capabilities) > len(Stages) {
+		return errors.New("invalid_capabilities")
+	}
+	seenCap := map[Stage]bool{}
+	for _, s := range j.Capabilities {
+		if !slices.Contains(Stages, s) || seenCap[s] {
+			return errors.New("invalid_capabilities")
+		}
+		seenCap[s] = true
+	}
 	if e := j.Processor.Validate(); e != nil {
 		return e
 	}
@@ -182,6 +259,115 @@ func (j Job) Validate() error {
 	}
 	return nil
 }
+
+func validateClassifyProposal(contentType string) error {
+	if !slices.Contains(ValidContentTypes, contentType) {
+		return errors.New("invalid_content_type")
+	}
+	return nil
+}
+
+func validateExtractProposal(ex *Extraction) error {
+	if ex == nil {
+		return errors.New("invalid_extraction")
+	}
+	hasQualityOrMeta := ex.VideoResolution != "" || ex.VideoSource != "" || ex.VideoCodec != "" ||
+		ex.Video3D != "" || ex.VideoModifier != "" || ex.ReleaseGroup != "" ||
+		ex.ReleaseGranularity != "" || ex.ReleaseDate != "" || ex.IsAnime != nil ||
+		ex.AnimeAbsoluteEpisode != nil || len(ex.AudioChannels) > 0 || len(ex.AudioFormats) > 0 ||
+		len(ex.HDRFormats) > 0 || len(ex.VideoEditions) > 0 || len(ex.ReleaseFlags) > 0
+	if len(ex.Title) == 0 && !hasQualityOrMeta {
+		return errors.New("invalid_extraction")
+	}
+	if len(ex.Title) > 512 || ex.Year < 0 || ex.Year > 2200 || len(ex.Episodes) > 100 || len(ex.ReleaseGroup) > 128 {
+		return errors.New("invalid_extraction")
+	}
+	if ex.Season != nil && (*ex.Season < 0 || *ex.Season > 1000) {
+		return errors.New("invalid_season")
+	}
+	if ex.AnimeAbsoluteEpisode != nil && (*ex.AnimeAbsoluteEpisode < 0 || *ex.AnimeAbsoluteEpisode > 100000) {
+		return errors.New("invalid_episode")
+	}
+	for _, e := range ex.Episodes {
+		if e < 0 || e > 10000 {
+			return errors.New("invalid_episode")
+		}
+	}
+	return nil
+}
+
+func validateMatchProposal(m *MatchRef, candidates []Candidate, multiCap bool) error {
+	if m == nil || m.Source == "" || m.ID == "" || len(m.Source) > 64 || len(m.ID) > 128 {
+		return errors.New("unoffered_candidate")
+	}
+	if len(candidates) > 0 || !multiCap {
+		if !slices.ContainsFunc(candidates, func(c Candidate) bool { return c.MatchRef == *m }) {
+			return errors.New("unoffered_candidate")
+		}
+	}
+	return nil
+}
+
+func validateLanguageProposal(l *LanguageClaim) error {
+	if l == nil || len(l.Audio) > 16 || len(l.Subtitles) > 16 || !slices.Contains([]string{"metadata_claim", "verified_reference"}, l.Evidence) {
+		return errors.New("invalid_language")
+	}
+	for _, code := range append(append([]string{}, l.Audio...), l.Subtitles...) {
+		if !langToken.MatchString(code) {
+			return errors.New("invalid_language")
+		}
+	}
+	return nil
+}
+
+func validateLivenessProposal(l *LivenessClaim) error {
+	if l == nil {
+		return nil
+	}
+	if l.Seeders != nil && (*l.Seeders < 0 || *l.Seeders > 10000000) {
+		return errors.New("invalid_liveness")
+	}
+	if l.Leechers != nil && (*l.Leechers < 0 || *l.Leechers > 10000000) {
+		return errors.New("invalid_liveness")
+	}
+	if l.Completed != nil && (*l.Completed < 0 || *l.Completed > 100000000) {
+		return errors.New("invalid_liveness")
+	}
+	if len(l.Observation) > 64 || len(l.Source) > 128 {
+		return errors.New("invalid_liveness")
+	}
+	return nil
+}
+
+func validateTagsAndWeights(addTags, removeTags []string, weights map[string]float64) error {
+	if len(addTags) > 32 || len(removeTags) > 32 || len(weights) > 32 {
+		return errors.New("invalid_policy_operations")
+	}
+	for _, tag := range append(append([]string{}, addTags...), removeTags...) {
+		if !tagToken.MatchString(tag) {
+			return errors.New("invalid_tag")
+		}
+	}
+	for k, v := range weights {
+		if !token.MatchString(k) || !finite(v) || v < -1000 || v > 1000 {
+			return errors.New("invalid_weight")
+		}
+	}
+	return nil
+}
+
+func validateEmbedProposal(em *Embedding) error {
+	if em == nil || !token.MatchString(em.Space) || len(em.Values) == 0 || len(em.Values) > 2048 {
+		return errors.New("invalid_embedding")
+	}
+	for _, v := range em.Values {
+		if !finite(v) {
+			return errors.New("invalid_embedding")
+		}
+	}
+	return nil
+}
+
 func (r Result) Validate(j Job) error {
 	if !reflect.DeepEqual(r.Binding, j.Binding) {
 		return errors.New("binding_mismatch")
@@ -189,7 +375,7 @@ func (r Result) Validate(j Job) error {
 	if !slices.Contains([]Outcome{Completed, Abstained, Deferred, Failed, Excluded, Unmatched}, r.Outcome) {
 		return errors.New("invalid_outcome")
 	}
-	if len(r.Reasons) > 8 || len(r.Evidence) > 8 || r.RetryAfterSeconds < 0 || r.RetryAfterSeconds > 3600 {
+	if len(r.Reasons) > 8 || len(r.Evidence) > 8 || r.RetryAfterSeconds < 0 || r.RetryAfterSeconds > 3600 || len(r.Trace) > 65536 {
 		return errors.New("result_bounds")
 	}
 	for _, s := range r.Reasons {
@@ -216,7 +402,9 @@ func (r Result) Validate(j Job) error {
 	if r.Telemetry.RSSBytes != nil && *r.Telemetry.RSSBytes < 0 {
 		return errors.New("invalid_telemetry")
 	}
-	if r.Outcome == Unmatched && (j.Stage != Match || j.Input.Deterministic.MatchingOutcome != "completed_unmatched") {
+	caps := j.EffectiveCapabilities()
+	multiCap := len(j.Capabilities) > 1
+	if r.Outcome == Unmatched && (!slices.Contains(caps, Match) || j.Input.Deterministic.MatchingOutcome != "completed_unmatched") {
 		return errors.New("unproven_complete_miss")
 	}
 	if r.Outcome != Deferred && r.RetryAfterSeconds != 0 {
@@ -232,76 +420,137 @@ func (r Result) Validate(j Job) error {
 		return errors.New("missing_proposal")
 	}
 	p := r.Proposal
-	count := 0
+	hasPolicyOps := p.Liveness != nil || len(p.AddTags) > 0 || len(p.RemoveTags) > 0 || len(p.Weights) > 0
+	if !multiCap && !hasPolicyOps {
+		count := 0
+		if p.ContentType != "" {
+			count++
+		}
+		if p.Extraction != nil {
+			count++
+		}
+		if p.Match != nil {
+			count++
+		}
+		if p.Language != nil {
+			count++
+		}
+		if p.Exclusion != nil {
+			count++
+		}
+		if p.Embedding != nil {
+			count++
+		}
+		if count != 1 {
+			return errors.New("one_proposal_per_stage")
+		}
+		switch j.Stage {
+		case Classify:
+			if err := validateClassifyProposal(p.ContentType); err != nil {
+				return err
+			}
+		case Extract:
+			if err := validateExtractProposal(p.Extraction); err != nil {
+				return err
+			}
+		case Match:
+			if err := validateMatchProposal(p.Match, j.Input.Candidates, false); err != nil {
+				return err
+			}
+		case Language:
+			if err := validateLanguageProposal(p.Language); err != nil {
+				return err
+			}
+		case Policy:
+			if p.Exclusion == nil || p.Exclusion.Scope != "publication" || len(p.Exclusion.Reason) == 0 || len(p.Exclusion.Reason) > 128 || r.Outcome != Excluded {
+				return errors.New("invalid_exclusion")
+			}
+		case Embed:
+			if err := validateEmbedProposal(p.Embedding); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported_stage")
+		}
+		if r.Outcome == Excluded && j.Stage != Policy {
+			return errors.New("unexpected_exclusion")
+		}
+		return nil
+	}
+
+	// Multi-capability single-pass or Policy operation patch validation.
+	anyField := false
 	if p.ContentType != "" {
-		count++
+		anyField = true
+		if !slices.Contains(caps, Classify) {
+			return errors.New("unauthorized_classify_proposal")
+		}
+		if err := validateClassifyProposal(p.ContentType); err != nil {
+			return err
+		}
 	}
 	if p.Extraction != nil {
-		count++
+		anyField = true
+		if !slices.Contains(caps, Extract) {
+			return errors.New("unauthorized_extract_proposal")
+		}
+		if err := validateExtractProposal(p.Extraction); err != nil {
+			return err
+		}
 	}
 	if p.Match != nil {
-		count++
+		anyField = true
+		if !slices.Contains(caps, Match) {
+			return errors.New("unauthorized_match_proposal")
+		}
+		if err := validateMatchProposal(p.Match, j.Input.Candidates, multiCap); err != nil {
+			return err
+		}
 	}
 	if p.Language != nil {
-		count++
+		anyField = true
+		if !slices.Contains(caps, Language) {
+			return errors.New("unauthorized_language_proposal")
+		}
+		if err := validateLanguageProposal(p.Language); err != nil {
+			return err
+		}
 	}
 	if p.Exclusion != nil {
-		count++
-	}
-	if p.Embedding != nil {
-		count++
-	}
-	if count != 1 {
-		return errors.New("one_proposal_per_stage")
-	}
-	switch j.Stage {
-	case Classify:
-		if !slices.Contains([]string{"movie", "tv_show", "music", "ebook", "audiobook", "comic", "game", "software", "xxx"}, p.ContentType) {
-			return errors.New("invalid_content_type")
+		anyField = true
+		if !slices.Contains(caps, Policy) {
+			return errors.New("unexpected_exclusion")
 		}
-	case Extract:
-		if p.Extraction == nil || len(p.Extraction.Title) == 0 || len(p.Extraction.Title) > 512 || p.Extraction.Year < 0 || p.Extraction.Year > 2200 || len(p.Extraction.Episodes) > 100 {
-			return errors.New("invalid_extraction")
-		}
-		if p.Extraction.Season != nil && (*p.Extraction.Season < 0 || *p.Extraction.Season > 1000) {
-			return errors.New("invalid_season")
-		}
-		for _, e := range p.Extraction.Episodes {
-			if e < 0 || e > 10000 {
-				return errors.New("invalid_episode")
-			}
-		}
-	case Match:
-		if p.Match == nil || !slices.ContainsFunc(j.Input.Candidates, func(c Candidate) bool { return c.MatchRef == *p.Match }) {
-			return errors.New("unoffered_candidate")
-		}
-	case Language:
-		if p.Language == nil || len(p.Language.Audio) > 16 || len(p.Language.Subtitles) > 16 || !slices.Contains([]string{"metadata_claim", "verified_reference"}, p.Language.Evidence) {
-			return errors.New("invalid_language")
-		}
-		for _, l := range append(append([]string{}, p.Language.Audio...), p.Language.Subtitles...) {
-			if !regexp.MustCompile(`^[a-z]{2,3}$`).MatchString(l) {
-				return errors.New("invalid_language")
-			}
-		}
-	case Policy:
-		if p.Exclusion == nil || p.Exclusion.Scope != "publication" || len(p.Exclusion.Reason) == 0 || len(p.Exclusion.Reason) > 128 || r.Outcome != Excluded {
+		if p.Exclusion.Scope != "publication" || len(p.Exclusion.Reason) == 0 || len(p.Exclusion.Reason) > 128 || r.Outcome != Excluded {
 			return errors.New("invalid_exclusion")
 		}
-	case Embed:
-		if p.Embedding == nil || !token.MatchString(p.Embedding.Space) || len(p.Embedding.Values) == 0 || len(p.Embedding.Values) > 2048 {
-			return errors.New("invalid_embedding")
-		}
-		for _, v := range p.Embedding.Values {
-			if !finite(v) {
-				return errors.New("invalid_embedding")
-			}
-		}
-	default:
-		return fmt.Errorf("unsupported_stage")
 	}
-	if r.Outcome == Excluded && j.Stage != Policy {
-		return errors.New("unexpected_exclusion")
+	if hasPolicyOps {
+		anyField = true
+		if !slices.Contains(caps, Policy) && !multiCap {
+			return errors.New("unauthorized_policy_proposal")
+		}
+		if err := validateLivenessProposal(p.Liveness); err != nil {
+			return err
+		}
+		if err := validateTagsAndWeights(p.AddTags, p.RemoveTags, p.Weights); err != nil {
+			return err
+		}
+	}
+	if p.Embedding != nil {
+		anyField = true
+		if !slices.Contains(caps, Embed) {
+			return errors.New("unauthorized_embed_proposal")
+		}
+		if err := validateEmbedProposal(p.Embedding); err != nil {
+			return err
+		}
+	}
+	if !anyField {
+		return errors.New("missing_proposal")
+	}
+	if r.Outcome == Excluded && p.Exclusion == nil {
+		return errors.New("invalid_exclusion")
 	}
 	return nil
 }

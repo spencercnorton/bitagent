@@ -49,6 +49,10 @@ func (s *Store) Apply(e *gin.Engine) error {
 			"job_export":              v1.JobExportContract,
 			"reprocessing":            v1.ReprocessingContract,
 			"preparation_recovery":    "bounded-local-retries-v1",
+			"core_operations":         v1.CoreOpsContract,
+			"feedback":                v1.FeedbackContract,
+			"stacking":                "selector-priority-v1",
+			"builtin_drivers":         "v1",
 		}})
 	})
 	g.GET("/admission", func(c *gin.Context) {
@@ -115,7 +119,7 @@ func (s *Store) Apply(e *gin.Engine) error {
 		if !body(c, &w) {
 			return
 		}
-		if w.ExpectedGeneration <= 0 || (w.State == nil && w.Mode == nil) {
+		if w.ExpectedGeneration <= 0 || (w.State == nil && w.Mode == nil && w.Selector == nil && w.Learning == nil) {
 			c.JSON(400, gin.H{"error": "invalid_control"})
 			return
 		}
@@ -203,6 +207,91 @@ func (s *Store) Apply(e *gin.Engine) error {
 			return
 		}
 		c.JSON(200, status)
+	})
+	g.POST("/core/parse", func(c *gin.Context) {
+		var req v1.CoreParseRequest
+		if !body(c, &req) {
+			return
+		}
+		out, err := s.CoreParse(c.Request.Context(), req)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, out)
+	})
+	g.POST("/core/search", func(c *gin.Context) {
+		var req v1.CoreSearchRequest
+		if !body(c, &req) {
+			return
+		}
+		out, err := s.CoreSearch(c.Request.Context(), req)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, out)
+	})
+	g.POST("/core/liveness", func(c *gin.Context) {
+		var req v1.CoreLivenessRequest
+		if !body(c, &req) {
+			return
+		}
+		out, err := s.CoreLiveness(c.Request.Context(), req)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, out)
+	})
+	g.POST("/core/policy", func(c *gin.Context) {
+		var req v1.CorePolicyRequest
+		if !body(c, &req) {
+			return
+		}
+		out, err := s.CorePolicy(c.Request.Context(), req)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, out)
+	})
+	g.GET("/feedback", func(c *gin.Context) {
+		after, err := strconv.ParseInt(c.DefaultQuery("after_seq", "0"), 10, 64)
+		limit, limitErr := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		if err != nil || limitErr != nil {
+			apiError(c, ErrControl)
+			return
+		}
+		page, err := s.Feedback(c.Request.Context(), c.Query("processor_id"), after, limit, c.Query("tier"), c.Query("consumer_id"))
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, page)
+	})
+	g.POST("/feedback", func(c *gin.Context) {
+		var w v1.FeedbackWrite
+		if !body(c, &w) {
+			return
+		}
+		events, err := s.RecordFeedback(c.Request.Context(), w)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"contract": v1.FeedbackContract, "events": events})
+	})
+	g.POST("/feedback/ack", func(c *gin.Context) {
+		var ack v1.FeedbackCursorAck
+		if !body(c, &ack) {
+			return
+		}
+		if err := s.AckFeedback(c.Request.Context(), ack); err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"contract": v1.FeedbackContract, "acknowledged": true})
 	})
 	return nil
 }

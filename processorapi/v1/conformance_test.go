@@ -106,3 +106,66 @@ func TestDuplicateAndUnknownFields(t *testing.T) {
 	var m Manifest
 	require.Error(t, Decode([]byte(`{"configuration_schema":{"type":"object","type":"string"}}`), &m))
 }
+
+func TestStackingFeedbackAndCoreOpsValidation(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "processors", "fixtures", "job.json"))
+	require.NoError(t, err)
+	var j Job
+	require.NoError(t, json.Unmarshal(raw, &j))
+	j.Capabilities = []Stage{Classify, Extract, Language, Match, Policy}
+	j.Input.Candidates = []Candidate{{MatchRef: MatchRef{Source: "tmdb", ID: "991051"}, ContentType: "movie", Title: "Synthetic Amber", Year: 2024}}
+	require.NoError(t, j.Validate())
+
+	seeders := 12
+	stateless := Result{
+		Outcome: Completed,
+		Proposal: &Proposal{
+			ContentType: "movie",
+			Extraction:  &Extraction{Title: "Synthetic Amber", Year: 2024, VideoResolution: "1080p", ReleaseGroup: "GROUP"},
+			Language:    &LanguageClaim{Audio: []string{"en"}, Subtitles: []string{"en"}, Evidence: "metadata_claim"},
+			Match:       &MatchRef{Source: "tmdb", ID: "991051"},
+			Liveness:    &LivenessClaim{Seeders: &seeders, Observation: "live", Source: "tracker"},
+			AddTags:     []string{"remux-verified"},
+			Weights:     map[string]float64{"quality": 1.5},
+		},
+		RequestFeedback: true,
+	}
+	stateless.FillDefaultBinding(j)
+	require.Equal(t, j.Binding, stateless.Binding)
+	require.NoError(t, stateless.Validate(j))
+
+	u := 0.5
+	bps := 5000
+	minScore := 1.0
+	sel := &Selector{
+		ContentTypes:      []string{"movie", "tv_show"},
+		ExcludeTypes:      []string{"xxx"},
+		Extensions:        []string{".mkv", "mp4"},
+		MinUncertainty:    &u,
+		RequiredTags:      []string{"hdr-candidate"},
+		ScoreThresholds:   []ScoreThreshold{{Dimension: "quality", Min: &minScore}},
+		SampleBasisPoints: &bps,
+	}
+	require.False(t, sel.IsEmpty())
+	require.NoError(t, sel.Validate())
+
+	badSel := &Selector{ContentTypes: []string{"not_a_type"}}
+	require.Error(t, badSel.Validate())
+
+	lc := &LearningConfig{
+		Enabled:     true,
+		Mode:        "online_calibrate",
+		AcceptedTiers:       []string{FeedbackTierOperationalReceipt, FeedbackTierVerifiedImport},
+		PushEnabled: true,
+	}
+	require.NoError(t, lc.Validate())
+	require.True(t, lc.Accepts(FeedbackTierVerifiedImport))
+	require.False(t, lc.Accepts(FeedbackTierHumanGold))
+
+	var m Manifest
+	m.Contract = Contract
+	m.Processor.ID = "minimal-webhook"
+	m.Capabilities = []Stage{Classify}
+	m.ApplyDefaults("minimal-webhook")
+	require.NoError(t, m.Validate())
+}

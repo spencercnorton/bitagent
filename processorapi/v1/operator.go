@@ -11,10 +11,13 @@ const StatusContract = "bitagent.processors.status.v1"
 type RegistryWrite struct {
 	ExpectedProcessor  *Identity       `json:"expected_processor,omitempty"`
 	ExpectedGeneration int64           `json:"expected_generation"`
+	Driver             string          `json:"driver,omitempty"`
 	Endpoint           string          `json:"endpoint"`
 	Mode               string          `json:"mode"`  // shadow or apply
 	State              string          `json:"state"` // active, paused, draining
 	Priority           int             `json:"priority"`
+	Selector           *Selector       `json:"selector,omitempty"`
+	Learning           *LearningConfig `json:"learning,omitempty"`
 	Configuration      json.RawMessage `json:"configuration"`
 	AuthEnv            string          `json:"auth_env"`
 }
@@ -33,6 +36,9 @@ type Measurement struct {
 type ProcessorStatus struct {
 	Configuration       json.RawMessage        `json:"configuration"`
 	AuthEnv             string                 `json:"auth_env"`
+	Driver              string                 `json:"driver,omitempty"`
+	Selector            *Selector              `json:"selector,omitempty"`
+	Learning            *LearningConfig        `json:"learning,omitempty"`
 	ExecutionGeneration int64                  `json:"execution_generation"`
 	ObservedProcessor   *Identity              `json:"observed_processor"`
 	InstanceID          string                 `json:"instance_id"`
@@ -74,9 +80,11 @@ type Status struct {
 // RegistryControl changes only supplied lifecycle fields; all deployment fields
 // are retained. It uses the same generation CAS as registration.
 type RegistryControl struct {
-	ExpectedGeneration int64   `json:"expected_generation"`
-	State              *string `json:"state,omitempty"`
-	Mode               *string `json:"mode,omitempty"`
+	ExpectedGeneration int64           `json:"expected_generation"`
+	State              *string         `json:"state,omitempty"`
+	Mode               *string         `json:"mode,omitempty"`
+	Selector           *Selector       `json:"selector,omitempty"`
+	Learning           *LearningConfig `json:"learning,omitempty"`
 }
 
 // JobSummary describes the current step (last step for terminal jobs). Results

@@ -37,7 +37,11 @@ func (s *Store) Worker() worker.Worker {
 				s.metrics.admission.WithLabelValues("unavailable").Inc()
 			}
 		})
-		launch(30*time.Second, func(ctx context.Context) { _ = s.Refresh(ctx); s.updateGauges(ctx) })
+		launch(30*time.Second, func(ctx context.Context) {
+			_ = s.Refresh(ctx)
+			_, _ = s.DeliverFeedback(ctx)
+			s.updateGauges(ctx)
+		})
 		for range s.cfg.Concurrency {
 			launch(s.cfg.PollInterval, func(ctx context.Context) { _, _ = s.RunOne(ctx) })
 		}

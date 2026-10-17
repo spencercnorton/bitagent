@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"time"
 
@@ -260,6 +262,19 @@ func (s *Store) fresh(ctx context.Context, tx pgx.Tx, l Lease, lock bool) (sourc
 	return src, nil
 }
 
+func (s *Store) matchesStepSelector(l Lease) (bool, error) {
+	step := l.Plan.Steps[l.Step]
+	if step.Entry.Selector.IsEmpty() {
+		return true, nil
+	}
+	var src source
+	if err := json.Unmarshal(l.Source, &src); err != nil {
+		return false, err
+	}
+	tc := buildTorrentContext(l.Hash, src, l.Input, l.Results, l.Plan, l.Step)
+	return matchesSelector(step.Entry.Selector, step.Entry.ID, tc), nil
+}
+
 // Prepare rechecks authority immediately before disclosure. No transaction is
 // held across the service call. Stable step IDs are reused on every retry.
 func (s *Store) Prepare(ctx context.Context, l Lease) (v1.Job, error) {
@@ -289,12 +304,26 @@ func (s *Store) Prepare(ctx context.Context, l Lease) (v1.Job, error) {
 		saved.Deadline = time.Now().Add(s.cfg.RequestTimeout).UTC().Format(time.RFC3339Nano)
 		return saved, saved.Validate()
 	}
+	var src source
+	_ = json.Unmarshal(l.Source, &src)
+	tc := buildTorrentContext(l.Hash, src, l.Input, l.Results, l.Plan, l.Step)
 	in := l.Input
 	in.PriorResults = []v1.Result{}
 	for _, r := range l.Results {
 		in.PriorResults = append(in.PriorResults, r.Result)
 	}
-	if step.Stage == v1.Match {
+	if len(tc.Scores) > 0 {
+		in.AccumulatedScores = tc.Scores
+	}
+	if len(tc.Tags) > 0 {
+		tags := make([]string, 0, len(tc.Tags))
+		for t := range tc.Tags {
+			tags = append(tags, t)
+		}
+		sort.Strings(tags)
+		in.AccumulatedTags = tags
+	}
+	if slices.Contains(step.EffectiveCapabilities(), v1.Match) {
 		in.Candidates, e = s.candidates(ctx, tx, in, l)
 		if e != nil {
 			return v1.Job{}, e
@@ -302,7 +331,21 @@ func (s *Store) Prepare(ctx context.Context, l Lease) (v1.Job, error) {
 	}
 	// Candidate content and all previous results are part of the step revision.
 	revision := digest([]any{l.InputRevision, in})
-	j := v1.Job{Binding: v1.Binding{Contract: v1.Contract, JobID: digest([]any{l.ID, l.Step, revision}), InputRevision: revision, PipelineRevision: l.PipelineRevision, ConfigurationDigest: digest(step.Entry.Configuration), Processor: step.Entry.Manifest.Processor, Stage: step.Stage}, Configuration: step.Entry.Configuration, Input: in, Deadline: time.Now().Add(s.cfg.RequestTimeout).UTC().Format(time.RFC3339Nano)}
+	j := v1.Job{
+		Binding: v1.Binding{
+			Contract:            v1.Contract,
+			JobID:               digest([]any{l.ID, l.Step, revision}),
+			InputRevision:       revision,
+			PipelineRevision:    l.PipelineRevision,
+			ConfigurationDigest: digest(step.Entry.Configuration),
+			Processor:           step.Entry.Manifest.Processor,
+			Stage:               step.Stage,
+		},
+		Capabilities:  step.Capabilities,
+		Configuration: step.Entry.Configuration,
+		Input:         in,
+		Deadline:      time.Now().Add(s.cfg.RequestTimeout).UTC().Format(time.RFC3339Nano),
+	}
 	if e = j.Validate(); e != nil {
 		return j, e
 	}
@@ -350,7 +393,7 @@ func (s *Store) Finish(ctx context.Context, l Lease, j v1.Job, r v1.Result, disp
 	if e := r.Validate(j); e != nil {
 		return e
 	}
-	ctx, c := context.WithTimeout(ctx, 500*time.Millisecond)
+	ctx, c := context.WithTimeout(ctx, 2*time.Second)
 	defer c()
 	tx, e := s.begin(ctx)
 	if e != nil {
@@ -493,6 +536,15 @@ func (s *Store) RunOne(ctx context.Context) (bool, error) {
 		}
 		return true, fmt.Errorf("prepare processor job: %w", e)
 	}
+	if matched, selErr := s.matchesStepSelector(*l); selErr == nil && !matched {
+		skipRes := v1.Result{
+			Binding:  j.Binding,
+			Outcome:  v1.Abstained,
+			Reasons:  []string{"selector_skipped"},
+			Evidence: []v1.Evidence{},
+		}
+		return true, s.Finish(ctx, *l, j, skipRes, false)
+	}
 	r := v1.Result{Binding: j.Binding, Outcome: v1.Failed, Reasons: []string{"retry_exhausted"}, Evidence: []v1.Evidence{}}
 	dispatched := l.StepAttempts < s.cfg.MaxAttempts
 	if dispatched {
@@ -501,7 +553,13 @@ func (s *Store) RunOne(ctx context.Context) (bool, error) {
 		}
 		st := l.Plan.Steps[l.Step]
 		start := time.Now()
-		result, err := s.transport.Process(bounded, st.Entry.Endpoint, st.Entry.AuthEnv, j)
+		var result v1.Result
+		var err error
+		if st.Entry.Driver != "" && st.Entry.Driver != v1.DriverHTTP {
+			result, err = s.processBuiltin(bounded, st.Entry, j)
+		} else {
+			result, err = s.transport.Process(bounded, st.Entry.Endpoint, st.Entry.AuthEnv, j)
+		}
 		if err == nil {
 			cumulative, _ := json.Marshal(append(l.Results, Receipt{Result: result, Candidates: j.Input.Candidates}))
 			if len(cumulative) <= 100000 {
@@ -523,7 +581,7 @@ func (s *Store) RunOne(ctx context.Context) (bool, error) {
 // Only bounded implementation-owned reason codes reach durable technical errors.
 func failureReason(err error) string {
 	switch err.Error() {
-	case "binding_mismatch", "invalid_outcome", "result_bounds", "unproven_complete_miss", "unexpected_proposal", "missing_proposal", "one_proposal_per_stage", "invalid_content_type", "invalid_telemetry", "invalid_telemetry_time", "invalid_exclusion", "unexpected_exclusion", "invalid_language", "service_unavailable", "transport_failed", "transport_credential_unavailable", "invalid_uncertainty", "incompatible_contract":
+	case "binding_mismatch", "invalid_outcome", "result_bounds", "unproven_complete_miss", "unexpected_proposal", "missing_proposal", "one_proposal_per_stage", "invalid_content_type", "invalid_telemetry", "invalid_telemetry_time", "invalid_exclusion", "unexpected_exclusion", "invalid_language", "invalid_liveness", "invalid_tag", "invalid_weights", "unsupported_driver", "service_unavailable", "transport_failed", "transport_credential_unavailable", "invalid_uncertainty", "incompatible_contract":
 		return err.Error()
 	default:
 		return "malformed_response"

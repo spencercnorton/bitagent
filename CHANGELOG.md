@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 5.2.0 — 2026-10-17
+
+- Add priority-first processor stacking (`Priority ASC`, stage tie-break, `ID ASC`)
+  with dynamic `Selector` evaluation against live `TorrentContext` and single-pass
+  multi-capability dispatch (`Job.Capabilities` + unified `Proposal` patch).
+- Expose the authenticated Core Operations API (`/api/processors/v1/core/parse`,
+  `search`, `liveness`, and `policy`) so processors can invoke deterministic core
+  services without duplicating parsing, search, tracker/liveness or policy logic.
+- Add zero-container built-in processor drivers (`builtin/filter-list`,
+  `builtin/regex-weights`, `builtin/tracker-liveness` and `builtin/llm`) alongside
+  external `http` processors under the same v1 registration and governance contract.
+- Add four-tier bi-directional feedback and online learning (`operational_receipt`,
+  `teacher_consensus`, `verified_import` and `human_gold`) with pull cursor pagination,
+  optional HTTP `/v1/feedback` push delivery, and persistent `learned_state` calibration.
+- Support direct JSON unmarshaling on `model.Null*` and `model.Date` and PostgreSQL
+  default `intervalstyle` day/hour scanning in `model.Duration.Scan`.
+
 ## 5.1.0 — 2026-10-16
 
 - Measure a complete latest-500 terminal attempt window for each processor

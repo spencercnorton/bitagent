@@ -33,13 +33,27 @@ func (s *Store) Refresh(ctx context.Context) error {
 	}
 	s.active.Store(len(es) > 0)
 	for _, entry := range es {
-		bounded, c := context.WithTimeout(ctx, s.cfg.RequestTimeout)
-		observed, err := s.transport.Status(bounded, entry.Endpoint, entry.AuthEnv)
-		c()
 		p, e := s.pool.Get()
 		if e != nil {
 			return e
 		}
+		if entry.Driver != "" && entry.Driver != v1.DriverHTTP {
+			observed := v1.ServiceStatus{
+				Contract:   v1.Contract,
+				Processor:  entry.Manifest.Processor,
+				State:      "ready",
+				InstanceID: "builtin:" + entry.ID,
+				StartedAt:  stamp(time.Now()),
+			}
+			raw, _ := json.Marshal(observed)
+			if _, e = p.Exec(ctx, `UPDATE processor_registry SET observed=$3,observed_at=clock_timestamp(),last_error='' WHERE id=$1 AND generation=$2`, entry.ID, entry.Generation, string(raw)); e != nil {
+				return e
+			}
+			continue
+		}
+		bounded, c := context.WithTimeout(ctx, s.cfg.RequestTimeout)
+		observed, err := s.transport.Status(bounded, entry.Endpoint, entry.AuthEnv)
+		c()
 		code := ""
 		if err != nil {
 			code = "service_unavailable"
@@ -81,7 +95,7 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 		return out, e
 	}
 	for _, entry := range es {
-		p := v1.ProcessorStatus{Configuration: entry.Configuration, AuthEnv: entry.AuthEnv, ID: entry.ID, Generation: entry.Generation, ExecutionGeneration: entry.ExecutionGeneration, Installed: true, Configured: true, Enabled: entry.State == "active", State: entry.State, Mode: entry.Mode, OperatingMode: "unavailable", Endpoint: entry.Endpoint, Priority: entry.Priority, Contract: entry.Manifest.Contract, Processor: entry.Manifest.Processor, Capabilities: entry.Manifest.Capabilities, Compatibility: "unknown", Health: "unknown", Readiness: "unknown", Qualification: entry.Manifest.Qualification, Metrics: map[string]v1.Measurement{}}
+		p := v1.ProcessorStatus{Configuration: entry.Configuration, AuthEnv: entry.AuthEnv, ID: entry.ID, Generation: entry.Generation, ExecutionGeneration: entry.ExecutionGeneration, Installed: true, Configured: true, Enabled: entry.State == "active", State: entry.State, Mode: entry.Mode, OperatingMode: "unavailable", Driver: entry.Driver, Endpoint: entry.Endpoint, Priority: entry.Priority, Selector: entry.Selector, Learning: entry.Learning, Contract: entry.Manifest.Contract, Processor: entry.Manifest.Processor, Capabilities: entry.Manifest.Capabilities, Compatibility: "unknown", Health: "unknown", Readiness: "unknown", Qualification: entry.Manifest.Qualification, Metrics: map[string]v1.Measurement{}}
 		p.Enabled = p.Enabled && plan.Admission.BasisPoints > 0
 		var raw []byte
 		var observedAt *time.Time
@@ -96,7 +110,7 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 			if observedAt != nil {
 				p.LastCheckedAt = stamp(*observedAt)
 			}
-			if observedAt != nil && time.Since(*observedAt) < 2*time.Minute && p.LastError == "" && observed.Processor == entry.Manifest.Processor {
+			if observedAt != nil && (time.Since(*observedAt) < 2*time.Minute || (entry.Driver != "" && entry.Driver != v1.DriverHTTP)) && p.LastError == "" && observed.Processor == entry.Manifest.Processor {
 				p.Compatibility = "compatible"
 				p.Health = "healthy"
 				p.Readiness = observed.State

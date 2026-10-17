@@ -205,7 +205,7 @@ func decodeRow(raw []byte, out any) error {
 				col = strings.TrimPrefix(tag, "column:")
 			}
 		}
-		if col == "info_hash" || col == "created_at" || col == "updated_at" || col == "published_at" {
+		if col == "info_hash" || col == "created_at" || col == "updated_at" || col == "published_at" || col == "tsv" {
 			continue
 		}
 		if value, ok := row[col]; ok {
