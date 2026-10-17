@@ -153,10 +153,10 @@ func TestStackingFeedbackAndCoreOpsValidation(t *testing.T) {
 	require.Error(t, badSel.Validate())
 
 	lc := &LearningConfig{
-		Enabled:     true,
-		Mode:        "online_calibrate",
-		AcceptedTiers:       []string{FeedbackTierOperationalReceipt, FeedbackTierVerifiedImport},
-		PushEnabled: true,
+		Enabled:       true,
+		Mode:          "online_calibrate",
+		AcceptedTiers: []string{FeedbackTierOperationalReceipt, FeedbackTierVerifiedImport},
+		PushEnabled:   true,
 	}
 	require.NoError(t, lc.Validate())
 	require.True(t, lc.Accepts(FeedbackTierVerifiedImport))
@@ -168,4 +168,84 @@ func TestStackingFeedbackAndCoreOpsValidation(t *testing.T) {
 	m.Capabilities = []Stage{Classify}
 	m.ApplyDefaults("minimal-webhook")
 	require.NoError(t, m.Validate())
+}
+
+func TestValidateInputSourcesAndSwarmPrivacyAndBackwardsCompat(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "processors", "fixtures", "job.json"))
+	require.NoError(t, err)
+	var j Job
+	require.NoError(t, json.Unmarshal(raw, &j))
+	require.NoError(t, j.Validate())
+
+	seeds := 42
+	j.Input.Sources = []SourceObservation{{Source: "tracker", Seeders: &seeds}}
+	j.Input.Swarm = &SwarmInput{
+		TrackerScraped: true,
+		TrackerKnown:   true,
+		TrackerSeeders: &seeds,
+		BestTracker:    "udp://open.stealth.si:80/announce",
+		LastPositiveAt: "2026-10-17T00:00:00Z",
+		LivenessStatus: "alive",
+		OutcomePriors:  []PriorObservation{{KeyType: "release_group", KeyValue: "edith", Alpha: 369, Beta: 24}},
+	}
+	require.NoError(t, j.Validate())
+
+	jPriv := j
+	jPriv.Input.Sources = []SourceObservation{{Source: "PassThePopcorn"}}
+	require.ErrorContains(t, jPriv.Validate(), "private_or_invalid_source")
+
+	jPasskey := j
+	jPasskey.Input.Sources = nil
+	jPasskey.Input.Swarm = &SwarmInput{BestTracker: "https://tracker.example.org/announce?passkey=secret"}
+	require.ErrorContains(t, jPasskey.Validate(), "private_or_invalid_tracker")
+}
+
+func TestValidateInputSwarmBoundsAndPriors(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "processors", "fixtures", "job.json"))
+	require.NoError(t, err)
+	base := func() Job {
+		var j Job
+		require.NoError(t, json.Unmarshal(raw, &j))
+		return j
+	}
+	neg := -1
+	huge := 100000001
+
+	jNeg := base()
+	jNeg.Input.Sources = []SourceObservation{{Source: "dht", Seeders: &neg}}
+	require.ErrorContains(t, jNeg.Validate(), "invalid_source_counts")
+
+	jHuge := base()
+	jHuge.Input.Swarm = &SwarmInput{TrackerSeeders: &huge}
+	require.ErrorContains(t, jHuge.Validate(), "invalid_swarm_counts")
+
+	jMany := base()
+	for range 33 {
+		jMany.Input.Sources = append(jMany.Input.Sources, SourceObservation{Source: "dht"})
+	}
+	require.ErrorContains(t, jMany.Validate(), "invalid_sources")
+
+	jTime := base()
+	jTime.Input.Swarm = &SwarmInput{LastPositiveAt: "not-a-time"}
+	require.ErrorContains(t, jTime.Validate(), "invalid_swarm_timestamp")
+
+	jStatus := base()
+	jStatus.Input.Swarm = &SwarmInput{LivenessStatus: "zombie"}
+	require.ErrorContains(t, jStatus.Validate(), "invalid_liveness_status")
+
+	jPriorType := base()
+	jPriorType.Input.Swarm = &SwarmInput{OutcomePriors: []PriorObservation{{KeyType: "indexer_host", KeyValue: "example", Alpha: 2, Beta: 2}}}
+	require.ErrorContains(t, jPriorType.Validate(), "invalid_outcome_prior")
+
+	jPriorAlpha := base()
+	jPriorAlpha.Input.Swarm = &SwarmInput{OutcomePriors: []PriorObservation{{KeyType: "codec", KeyValue: "x264", Alpha: 0, Beta: 2}}}
+	require.ErrorContains(t, jPriorAlpha.Validate(), "invalid_outcome_prior")
+
+	jPriorPrivate := base()
+	jPriorPrivate.Input.Swarm = &SwarmInput{OutcomePriors: []PriorObservation{{KeyType: "source", KeyValue: "passthepopcorn", Alpha: 2, Beta: 2}}}
+	require.ErrorContains(t, jPriorPrivate.Validate(), "invalid_outcome_prior")
+
+	jAlive := base()
+	jAlive.Input.Swarm = &SwarmInput{AliveSource: "BitGrab-Import"}
+	require.ErrorContains(t, jAlive.Validate(), "private_or_invalid_alive_source")
 }

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 5.3.0 — 2026-10-17
+
+- Enrich processor jobs with optional public-safe swarm hints (`input.sources`
+  and `input.swarm`): DHT and tracker-scrape counts, seed history, liveness
+  status, and title-derived grab-outcome priors when available. Hints are
+  frozen with the prepared step input; the stored source revision still
+  digests only stable catalogue facts, so background scrape refreshes cannot
+  stale a lease. Private indexer names and credential-bearing tracker URLs
+  are never disclosed, and absent telemetry remains an honest unknown.
+- Fix `CoreLiveness` to read `torrent_liveness.status`, prefer authoritative
+  `torrent_tracker_seeds` counts when `tracker_known` is true, and report
+  `tracker_count` only for authoritative scrapes.
+- Parenthesize multi-expression `WHERE` criteria so `OR` category branches
+  cannot escape surrounding Torznab filters, and route the Books category
+  through the shared category criteria.
+
 ## 5.2.0 — 2026-10-17
 
 - Add priority-first processor stacking (`Priority ASC`, stage tie-break, `ID ASC`)

@@ -329,6 +329,14 @@ func (s *Store) Prepare(ctx context.Context, l Lease) (v1.Job, error) {
 			return v1.Job{}, e
 		}
 	}
+	// Swarm telemetry is a volatile hint frozen into this step's prepared
+	// job. The stored InputRevision still digests only the stable source
+	// snapshot, so later scrape updates cannot stale the lease or a
+	// reprocess expectation; retries reuse the frozen prepared job.
+	if srcs, sw := s.swarmAndSources(ctx, tx, l.Hash, src.Name, src.Extension); len(srcs) > 0 || sw != nil {
+		in.Sources = srcs
+		in.Swarm = sw
+	}
 	// Candidate content and all previous results are part of the step revision.
 	revision := digest([]any{l.InputRevision, in})
 	j := v1.Job{

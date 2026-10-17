@@ -861,6 +861,25 @@
         },
         "size": {
           "type": "integer"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/SourceObservation"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "swarm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SwarmInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -1224,6 +1243,30 @@
         "population",
         "source",
         "unavailable_reason"
+      ],
+      "type": "object"
+    },
+    "PriorObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "type": "integer"
+        },
+        "beta": {
+          "type": "integer"
+        },
+        "key_type": {
+          "type": "string"
+        },
+        "key_value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key_type",
+        "key_value",
+        "alpha",
+        "beta"
       ],
       "type": "object"
     },
@@ -1912,6 +1955,48 @@
       ],
       "type": "object"
     },
+    "SourceObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "completed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leechers": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seeders": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
     "Status": {
       "additionalProperties": false,
       "properties": {
@@ -1967,6 +2052,129 @@
         "processors",
         "queue",
         "limits"
+      ],
+      "type": "object"
+    },
+    "SwarmInput": {
+      "additionalProperties": false,
+      "properties": {
+        "alive_source": {
+          "type": "string"
+        },
+        "best_tracker": {
+          "type": "string"
+        },
+        "checked_at": {
+          "type": "string"
+        },
+        "dht_leechers": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dht_seeders": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_positive_at": {
+          "type": "string"
+        },
+        "last_qb_state": {
+          "type": "string"
+        },
+        "liveness_status": {
+          "type": "string"
+        },
+        "outcome_priors": {
+          "items": {
+            "$ref": "#/$defs/PriorObservation"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "peak_seeders": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prev_seeders": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "suspect_observations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tracker_completed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tracker_known": {
+          "type": "boolean"
+        },
+        "tracker_leechers": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tracker_scraped": {
+          "type": "boolean"
+        },
+        "tracker_seeders": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "tracker_scraped",
+        "tracker_known"
       ],
       "type": "object"
     },
