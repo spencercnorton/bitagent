@@ -145,11 +145,11 @@ func searchRequestToQueryOptions(r torznab.SearchRequest) ([]query.Option, error
 		case torznab.CategoryBooksComics.Has(cat):
 			catCriteria = append(catCriteria, search.TorrentContentTypeCriteria(model.ContentTypeComic))
 		case torznab.CategoryBooks.Has(cat):
-			options = append(options, query.Where(search.TorrentContentTypeCriteria(
+			catCriteria = append(catCriteria, search.TorrentContentTypeCriteria(
 				model.ContentTypeEbook,
 				model.ContentTypeComic,
 				model.ContentTypeAudiobook,
-			)))
+			))
 		}
 
 		if len(catCriteria) > 0 {

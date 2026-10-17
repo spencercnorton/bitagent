@@ -4,6 +4,7 @@ import (
 	"github.com/spencercnorton/bitagent/internal/maps"
 	"gorm.io/gen/field"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func Where(conditions ...Criteria) Option {
@@ -171,7 +172,11 @@ func whereExpression(db *gorm.DB) interface{} {
 	// run builds SQL without dispatching a query or sharing mutable scopes.
 	db = db.Session(&gorm.Session{DryRun: true, Initialized: true})
 	db.Find(&[]interface{}{})
-	return db.Statement.Clauses["WHERE"].Expression
+	expr := db.Statement.Clauses["WHERE"].Expression
+	if where, ok := expr.(clause.Where); ok && len(where.Exprs) > 1 {
+		return clause.And(where.Exprs...)
+	}
+	return expr
 }
 
 type DBCriteria struct {
