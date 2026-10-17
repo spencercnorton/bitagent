@@ -201,13 +201,27 @@ func (s *Store) CoreLiveness(ctx context.Context, req v1.CoreLivenessRequest) (v
 			Source:      "core_postgres",
 		},
 	}
-	var seeders, leechers *int
-	_ = p.QueryRow(ctx, `SELECT seeders,leechers FROM torrent_contents WHERE info_hash=$1 LIMIT 1`, hash).Scan(&seeders, &leechers)
-	out.Liveness.Seeders = seeders
-	out.Liveness.Leechers = leechers
-	var state string
-	if err := p.QueryRow(ctx, `SELECT state FROM torrent_liveness WHERE info_hash=$1`, hash).Scan(&state); err == nil && state != "" {
-		out.Liveness.Observation = state
+	var seeders, leechers, completed *int
+	var trKnown bool
+	if err := p.QueryRow(ctx, `SELECT tracker_known,seeders,leechers,completed FROM torrent_tracker_seeds WHERE info_hash=$1`, hash).Scan(&trKnown, &seeders, &leechers, &completed); err == nil && trKnown {
+		out.Liveness.Seeders = seeders
+		out.Liveness.Leechers = leechers
+		out.Liveness.Completed = completed
+		out.TrackerCount = 1
+	} else {
+		_ = p.QueryRow(ctx, `SELECT seeders,leechers FROM torrent_contents WHERE info_hash=$1 LIMIT 1`, hash).Scan(&seeders, &leechers)
+		out.Liveness.Seeders = seeders
+		out.Liveness.Leechers = leechers
+	}
+	var status string
+	if err := p.QueryRow(ctx, `SELECT status FROM torrent_liveness WHERE info_hash=$1`, hash).Scan(&status); err == nil && status != "" {
+		out.Liveness.Observation = status
+	} else if trKnown && seeders != nil {
+		if *seeders > 0 {
+			out.Liveness.Observation = "live"
+		} else {
+			out.Liveness.Observation = "dead"
+		}
 	} else if seeders != nil {
 		if *seeders > 0 {
 			out.Liveness.Observation = "live"
@@ -215,7 +229,6 @@ func (s *Store) CoreLiveness(ctx context.Context, req v1.CoreLivenessRequest) (v
 			out.Liveness.Observation = "zero_seeders"
 		}
 	}
-	_ = p.QueryRow(ctx, `SELECT count(*) FROM torrent_tracker_seeds WHERE info_hash=$1`, hash).Scan(&out.TrackerCount)
 	return out, nil
 }
 

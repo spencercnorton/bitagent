@@ -257,6 +257,72 @@ func (j Job) Validate() error {
 			return errors.New("invalid_file")
 		}
 	}
+	if err := validateInputSourcesAndSwarm(j.Input.Sources, j.Input.Swarm); err != nil {
+		return err
+	}
+	return nil
+}
+
+var privateSourceGuard = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:private|bitgrab|passkey|authkey|torrentleech|broadcastthenet|broadcasthenet|passthepopcorn|redacted|orpheus|bibliotik|myanonamouse|filelist|beyondhd|blutopia|uhdbits|morethantv|alpharatio|iptorrents|hdbits|gazellegames|animebytes|avistaz|cinemaz|exoticaz|empirnium)(?:$|[^a-z0-9])`)
+var passkeyQueryGuard = regexp.MustCompile(`(?i)(?:\?|&)(?:passkey|authkey|apikey|key|token|uid|pid)=`)
+
+func isPublicSafeSourceString(s string) bool {
+	if len(s) == 0 || len(s) > 256 {
+		return false
+	}
+	return !privateSourceGuard.MatchString(s) && !passkeyQueryGuard.MatchString(s)
+}
+
+func validateInputSourcesAndSwarm(sources []SourceObservation, sw *SwarmInput) error {
+	if len(sources) > 32 {
+		return errors.New("invalid_sources")
+	}
+	for _, src := range sources {
+		if !isPublicSafeSourceString(src.Source) {
+			return errors.New("private_or_invalid_source")
+		}
+		for _, v := range []*int{src.Seeders, src.Leechers, src.Completed} {
+			if v != nil && (*v < 0 || *v > 100000000) {
+				return errors.New("invalid_source_counts")
+			}
+		}
+	}
+	if sw == nil {
+		return nil
+	}
+	for _, v := range []*int{sw.TrackerSeeders, sw.TrackerLeechers, sw.TrackerCompleted, sw.PrevSeeders, sw.PeakSeeders, sw.DHTSeeders, sw.DHTLeechers, sw.SuspectObservations} {
+		if v != nil && (*v < 0 || *v > 100000000) {
+			return errors.New("invalid_swarm_counts")
+		}
+	}
+	if sw.BestTracker != "" && !isPublicSafeSourceString(sw.BestTracker) {
+		return errors.New("private_or_invalid_tracker")
+	}
+	for _, ts := range []string{sw.LastPositiveAt, sw.CheckedAt} {
+		if ts != "" {
+			if _, err := time.Parse(time.RFC3339Nano, ts); err != nil {
+				return errors.New("invalid_swarm_timestamp")
+			}
+		}
+	}
+	if sw.LivenessStatus != "" && !slices.Contains([]string{"alive", "suspect", "dead", "unknown"}, sw.LivenessStatus) {
+		return errors.New("invalid_liveness_status")
+	}
+	if len(sw.LastQBState) > 64 || len(sw.AliveSource) > 64 {
+		return errors.New("invalid_liveness_metadata")
+	}
+	if sw.AliveSource != "" && !isPublicSafeSourceString(sw.AliveSource) {
+		return errors.New("private_or_invalid_alive_source")
+	}
+	if len(sw.OutcomePriors) > 32 {
+		return errors.New("invalid_outcome_priors")
+	}
+	validPriorTypes := []string{"source", "release_group", "quality_tag", "codec", "container", "extension", "resolution", "language"}
+	for _, p := range sw.OutcomePriors {
+		if !slices.Contains(validPriorTypes, p.KeyType) || !isPublicSafeSourceString(p.KeyValue) || p.Alpha < 1 || p.Beta < 1 {
+			return errors.New("invalid_outcome_prior")
+		}
+	}
 	return nil
 }
 

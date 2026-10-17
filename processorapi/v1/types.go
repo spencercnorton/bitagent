@@ -194,19 +194,52 @@ type Deterministic struct {
 	// sets this from an actual complete search; absence never means a miss.
 	MatchingOutcome string `json:"matching_outcome"`
 }
+type SourceObservation struct {
+	Source    string `json:"source"`
+	Seeders   *int   `json:"seeders,omitempty"`
+	Leechers  *int   `json:"leechers,omitempty"`
+	Completed *int   `json:"completed,omitempty"`
+}
+type PriorObservation struct {
+	KeyType  string `json:"key_type"`
+	KeyValue string `json:"key_value"`
+	Alpha    int64  `json:"alpha"`
+	Beta     int64  `json:"beta"`
+}
+type SwarmInput struct {
+	TrackerScraped      bool               `json:"tracker_scraped"`
+	TrackerKnown        bool               `json:"tracker_known"`
+	TrackerSeeders      *int               `json:"tracker_seeders,omitempty"`
+	TrackerLeechers     *int               `json:"tracker_leechers,omitempty"`
+	TrackerCompleted    *int               `json:"tracker_completed,omitempty"`
+	PrevSeeders         *int               `json:"prev_seeders,omitempty"`
+	PeakSeeders         *int               `json:"peak_seeders,omitempty"`
+	BestTracker         string             `json:"best_tracker,omitempty"`
+	LastPositiveAt      string             `json:"last_positive_at,omitempty"`
+	CheckedAt           string             `json:"checked_at,omitempty"`
+	DHTSeeders          *int               `json:"dht_seeders,omitempty"`
+	DHTLeechers         *int               `json:"dht_leechers,omitempty"`
+	LivenessStatus      string             `json:"liveness_status,omitempty"`
+	LastQBState         string             `json:"last_qb_state,omitempty"`
+	SuspectObservations *int               `json:"suspect_observations,omitempty"`
+	AliveSource         string             `json:"alive_source,omitempty"`
+	OutcomePriors       []PriorObservation `json:"outcome_priors,omitempty"`
+}
 type Input struct {
-	InfoHash          string             `json:"info_hash"`
-	Name              string             `json:"name"`
-	Size              int64              `json:"size"`
-	Files             []File             `json:"files"`
-	FileCount         *int64             `json:"file_count"`
-	Extension         *string            `json:"extension"`
-	FilesComplete     bool               `json:"files_complete"`
-	Deterministic     Deterministic      `json:"deterministic"`
-	Candidates        []Candidate        `json:"candidates"`
-	PriorResults      []Result           `json:"prior_results"`
-	AccumulatedScores map[string]float64 `json:"accumulated_scores,omitempty"`
-	AccumulatedTags   []string           `json:"accumulated_tags,omitempty"`
+	InfoHash          string              `json:"info_hash"`
+	Name              string              `json:"name"`
+	Size              int64               `json:"size"`
+	Files             []File              `json:"files"`
+	FileCount         *int64              `json:"file_count"`
+	Extension         *string             `json:"extension"`
+	FilesComplete     bool                `json:"files_complete"`
+	Deterministic     Deterministic       `json:"deterministic"`
+	Candidates        []Candidate         `json:"candidates"`
+	PriorResults      []Result            `json:"prior_results"`
+	AccumulatedScores map[string]float64  `json:"accumulated_scores,omitempty"`
+	AccumulatedTags   []string            `json:"accumulated_tags,omitempty"`
+	Sources           []SourceObservation `json:"sources,omitempty"`
+	Swarm             *SwarmInput         `json:"swarm,omitempty"`
 }
 type Candidate struct {
 	MatchRef
