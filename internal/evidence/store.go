@@ -36,8 +36,9 @@ type PostInsertHook func(ctx context.Context, ev Evidence)
 // projection. All writes happen inside a single transaction so the
 // evidence row and the canonical row move together or not at all.
 type Store struct {
-	pool lazy.Lazy[*pgxpool.Pool]
-	hook PostInsertHook
+	pool  lazy.Lazy[*pgxpool.Pool]
+	hook  PostInsertHook
+	hooks []PostInsertHook
 }
 
 // NewStore returns a Store bound to the given lazy pool.
@@ -51,6 +52,14 @@ func NewStore(pool lazy.Lazy[*pgxpool.Pool]) *Store {
 // at startup before the workers begin.
 func (s *Store) SetPostInsertHook(hook PostInsertHook) {
 	s.hook = hook
+}
+
+// AddPostInsertHook registers an additional post-insert listener (such as
+// processor bi-directional feedback) without displacing the primary hook.
+func (s *Store) AddPostInsertHook(hook PostInsertHook) {
+	if hook != nil {
+		s.hooks = append(s.hooks, hook)
+	}
 }
 
 // Insert persists an evidence record and, if the record has an
@@ -145,6 +154,9 @@ where
 	}
 	if s.hook != nil {
 		s.hook(ctx, e)
+	}
+	for _, h := range s.hooks {
+		h(ctx, e)
 	}
 	return nil
 }
@@ -384,5 +396,5 @@ func nullableJSON(v []byte) any {
 	if len(v) == 0 {
 		return nil
 	}
-	return v
+	return string(v)
 }

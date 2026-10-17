@@ -567,3 +567,209 @@ func (n NullUint) MarshalGQL(w io.Writer) {
 
 	_, _ = fmt.Fprintf(w, "%d", n.Uint)
 }
+
+func (n NullInt) MarshalJSON() ([]byte, error) {
+	if n.Valid {
+		return json.Marshal(n.Int)
+	}
+	return []byte("null"), nil
+}
+
+func (n *NullInt) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		n.Int, n.Valid = 0, false
+		return nil
+	}
+	if b[0] == '{' {
+		var raw struct {
+			Int   int  `json:"Int"`
+			Valid bool `json:"Valid"`
+		}
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return err
+		}
+		n.Int, n.Valid = raw.Int, raw.Valid
+		return nil
+	}
+	var v int
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	n.Int, n.Valid = v, true
+	return nil
+}
+
+func (n NullBool) MarshalJSON() ([]byte, error) {
+	if n.Valid {
+		return json.Marshal(n.Bool)
+	}
+	return []byte("null"), nil
+}
+
+func (n *NullBool) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		n.Bool, n.Valid = false, false
+		return nil
+	}
+	if b[0] == '{' {
+		var raw struct {
+			Bool  bool `json:"Bool"`
+			Valid bool `json:"Valid"`
+		}
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return err
+		}
+		n.Bool, n.Valid = raw.Bool, raw.Valid
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	return n.UnmarshalGQL(v)
+}
+
+func (n NullFloat32) MarshalJSON() ([]byte, error) {
+	if n.Valid {
+		return json.Marshal(n.Float32)
+	}
+	return []byte("null"), nil
+}
+
+func (n *NullFloat32) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		n.Float32, n.Valid = 0, false
+		return nil
+	}
+	if b[0] == '{' {
+		var raw struct {
+			Float32 float32 `json:"Float32"`
+			Valid   bool    `json:"Valid"`
+		}
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return err
+		}
+		n.Float32, n.Valid = raw.Float32, raw.Valid
+		return nil
+	}
+	return n.UnmarshalGQL(json.Number(string(b)))
+}
+
+func (n NullFloat64) MarshalJSON() ([]byte, error) {
+	if n.Valid {
+		return json.Marshal(n.Float64)
+	}
+	return []byte("null"), nil
+}
+
+func (n *NullFloat64) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		n.Float64, n.Valid = 0, false
+		return nil
+	}
+	if b[0] == '{' {
+		var raw struct {
+			Float64 float64 `json:"Float64"`
+			Valid   bool    `json:"Valid"`
+		}
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return err
+		}
+		n.Float64, n.Valid = raw.Float64, raw.Valid
+		return nil
+	}
+	return n.UnmarshalGQL(json.Number(string(b)))
+}
+
+func (n NullUint64) MarshalJSON() ([]byte, error) {
+	if n.Valid {
+		return json.Marshal(n.Uint64)
+	}
+	return []byte("null"), nil
+}
+
+func (n *NullUint64) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		n.Uint64, n.Valid = 0, false
+		return nil
+	}
+	if b[0] == '{' {
+		var raw struct {
+			Uint64 uint64 `json:"Uint64"`
+			Valid  bool   `json:"Valid"`
+		}
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return err
+		}
+		n.Uint64, n.Valid = raw.Uint64, raw.Valid
+		return nil
+	}
+	var v uint64
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	n.Uint64, n.Valid = v, true
+	return nil
+}
+
+func (n NullUint16) MarshalJSON() ([]byte, error) {
+	if n.Valid {
+		return json.Marshal(n.Uint16)
+	}
+	return []byte("null"), nil
+}
+
+func (n *NullUint16) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		n.Uint16, n.Valid = 0, false
+		return nil
+	}
+	if b[0] == '{' {
+		var raw struct {
+			Uint16 uint16 `json:"Uint16"`
+			Valid  bool   `json:"Valid"`
+		}
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return err
+		}
+		n.Uint16, n.Valid = raw.Uint16, raw.Valid
+		return nil
+	}
+	var v uint16
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	n.Uint16, n.Valid = v, true
+	return nil
+}
+
+func (n NullUint) MarshalJSON() ([]byte, error) {
+	if n.Valid {
+		return json.Marshal(n.Uint)
+	}
+	return []byte("null"), nil
+}
+
+func (n *NullUint) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || string(b) == "null" {
+		n.Uint, n.Valid = 0, false
+		return nil
+	}
+	if b[0] == '{' {
+		var raw struct {
+			Uint  uint `json:"Uint"`
+			Valid bool `json:"Valid"`
+		}
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return err
+		}
+		n.Uint, n.Valid = raw.Uint, raw.Valid
+		return nil
+	}
+	var v uint
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	n.Uint, n.Valid = v, true
+	return nil
+}

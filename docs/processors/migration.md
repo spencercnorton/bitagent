@@ -155,6 +155,12 @@ start at zero because no such retry counter existed; this does not reconstruct
 historical failures or change dispatch measurements. Transient preparation
 errors retry without changing input, within the configured job failure bound.
 Its down migration refuses to discard nonzero counters; restore matched state.
+Schema 67 adds optional processor driver/selector/learning configuration and
+learned-state storage on `processor_registry`, plus `processor_feedback_events`
+and `processor_feedback_cursors` without foreign keys into `torrents`. Existing
+registrations default to `driver='http'` with empty selector and learning settings.
+Its down migration refuses to discard non-default driver/selector/learning state or
+retained feedback events.
 
 After service/worker crashes, expired leases are reclaimed with a larger lease
 generation. Requests reuse frozen semantic inputs and a stable step ID; only the

@@ -38,6 +38,224 @@
       ],
       "type": "object"
     },
+    "CoreLivenessRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "info_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "info_hash"
+      ],
+      "type": "object"
+    },
+    "CoreLivenessResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "contract": {
+          "type": "string"
+        },
+        "info_hash": {
+          "type": "string"
+        },
+        "liveness": {
+          "$ref": "#/$defs/LivenessClaim"
+        },
+        "tracker_count": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "contract",
+        "info_hash",
+        "liveness",
+        "tracker_count"
+      ],
+      "type": "object"
+    },
+    "CoreParseRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/File"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "CoreParseResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "type": "string"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "extraction": {
+          "$ref": "#/$defs/Extraction"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LanguageClaim"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "extraction"
+      ],
+      "type": "object"
+    },
+    "CorePolicyRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "all_extensions": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "content_type": {
+          "type": "string"
+        },
+        "info_hash": {
+          "type": "string"
+        },
+        "languages": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "primary_extension": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "CorePolicyResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {
+          "type": "boolean"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "extension_allowed": {
+          "type": "boolean"
+        },
+        "filter_allowed": {
+          "type": "boolean"
+        },
+        "name_eligible": {
+          "type": "boolean"
+        },
+        "reasons": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "allowed",
+        "name_eligible",
+        "filter_allowed",
+        "extension_allowed",
+        "reasons"
+      ],
+      "type": "object"
+    },
+    "CoreSearchRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "type": "string"
+        },
+        "external_id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "source": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "year": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "content_type"
+      ],
+      "type": "object"
+    },
+    "CoreSearchResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/Candidate"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "contract": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract",
+        "candidates"
+      ],
+      "type": "object"
+    },
     "Deterministic": {
       "additionalProperties": false,
       "properties": {
@@ -142,6 +360,34 @@
     "Extraction": {
       "additionalProperties": false,
       "properties": {
+        "anime_absolute_episode": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "audio_channels": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "audio_formats": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "episodes": {
           "items": {
             "type": "integer"
@@ -150,6 +396,43 @@
             "array",
             "null"
           ]
+        },
+        "hdr_formats": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "is_anime": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "release_date": {
+          "type": "string"
+        },
+        "release_flags": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "release_granularity": {
+          "type": "string"
+        },
+        "release_group": {
+          "type": "string"
         },
         "season": {
           "anyOf": [
@@ -164,6 +447,30 @@
         "title": {
           "type": "string"
         },
+        "video_3d": {
+          "type": "string"
+        },
+        "video_codec": {
+          "type": "string"
+        },
+        "video_editions": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "video_modifier": {
+          "type": "string"
+        },
+        "video_resolution": {
+          "type": "string"
+        },
+        "video_source": {
+          "type": "string"
+        },
         "year": {
           "type": "integer"
         }
@@ -171,6 +478,259 @@
       "required": [
         "title",
         "year"
+      ],
+      "type": "object"
+    },
+    "FeedbackAck": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted": {
+          "type": "integer"
+        },
+        "contract": {
+          "type": "string"
+        },
+        "learned_state": {
+          "type": "object"
+        },
+        "updated_model_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contract",
+        "accepted"
+      ],
+      "type": "object"
+    },
+    "FeedbackBatch": {
+      "additionalProperties": false,
+      "properties": {
+        "contract": {
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/FeedbackEvent"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "processor": {
+          "$ref": "#/$defs/Identity"
+        }
+      },
+      "required": [
+        "contract",
+        "processor",
+        "events"
+      ],
+      "type": "object"
+    },
+    "FeedbackCursorAck": {
+      "additionalProperties": false,
+      "properties": {
+        "consumer_id": {
+          "type": "string"
+        },
+        "last_seq": {
+          "type": "integer"
+        },
+        "processor_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "processor_id",
+        "last_seq"
+      ],
+      "type": "object"
+    },
+    "FeedbackEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "execution_generation": {
+          "type": "integer"
+        },
+        "ground_truth": {
+          "$ref": "#/$defs/FeedbackGroundTruth"
+        },
+        "info_hash": {
+          "type": "string"
+        },
+        "input": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Input"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "prediction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Result"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "processor_id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "tier": {
+          "type": "string"
+        },
+        "trace": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "seq",
+        "event_id",
+        "processor_id",
+        "execution_generation",
+        "info_hash",
+        "tier",
+        "ground_truth",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "FeedbackGroundTruth": {
+      "additionalProperties": false,
+      "properties": {
+        "content_type": {
+          "type": "string"
+        },
+        "excluded": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extraction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Extraction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "language": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LanguageClaim"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "liveness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LivenessClaim"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "match": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MatchRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "FeedbackPage": {
+      "additionalProperties": false,
+      "properties": {
+        "contract": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/FeedbackEvent"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "next_cursor": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "contract",
+        "items",
+        "next_cursor"
+      ],
+      "type": "object"
+    },
+    "FeedbackWrite": {
+      "additionalProperties": false,
+      "properties": {
+        "ground_truth": {
+          "$ref": "#/$defs/FeedbackGroundTruth"
+        },
+        "info_hash": {
+          "type": "string"
+        },
+        "processor_id": {
+          "type": "string"
+        },
+        "tier": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "info_hash",
+        "tier",
+        "ground_truth"
       ],
       "type": "object"
     },
@@ -222,6 +782,24 @@
     "Input": {
       "additionalProperties": false,
       "properties": {
+        "accumulated_scores": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "accumulated_tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "candidates": {
           "items": {
             "$ref": "#/$defs/Candidate"
@@ -300,6 +878,15 @@
     "Job": {
       "additionalProperties": false,
       "properties": {
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "configuration": {
           "type": "object"
         },
@@ -411,6 +998,9 @@
         "pipeline_revision": {
           "type": "string"
         },
+        "preparation_failures": {
+          "type": "integer"
+        },
         "processor": {
           "$ref": "#/$defs/Identity"
         },
@@ -456,6 +1046,9 @@
             "null"
           ]
         },
+        "english_audio": {
+          "type": "string"
+        },
         "evidence": {
           "type": "string"
         },
@@ -474,6 +1067,76 @@
         "subtitles",
         "evidence"
       ],
+      "type": "object"
+    },
+    "LearningConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "accepted_tiers": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "push_enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "LivenessClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "completed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "leechers": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observation": {
+          "type": "string"
+        },
+        "seeders": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [],
       "type": "object"
     },
     "Manifest": {
@@ -591,6 +1254,9 @@
         "contract": {
           "type": "string"
         },
+        "driver": {
+          "type": "string"
+        },
         "enabled": {
           "type": "boolean"
         },
@@ -623,6 +1289,16 @@
         },
         "last_error": {
           "type": "string"
+        },
+        "learning": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LearningConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "loaded": {
           "anyOf": [
@@ -671,6 +1347,16 @@
         "readiness": {
           "type": "string"
         },
+        "selector": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Selector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "started_at": {
           "type": "string"
         },
@@ -711,6 +1397,15 @@
     "Proposal": {
       "additionalProperties": false,
       "properties": {
+        "add_tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "content_type": {
           "type": "string"
         },
@@ -754,6 +1449,16 @@
             }
           ]
         },
+        "liveness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LivenessClaim"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "match": {
           "anyOf": [
             {
@@ -762,6 +1467,24 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "remove_tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "weights": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": [
+            "object",
+            "null"
           ]
         }
       },
@@ -774,10 +1497,30 @@
         "expected_generation": {
           "type": "integer"
         },
+        "learning": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LearningConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "mode": {
           "anyOf": [
             {
               "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selector": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Selector"
             },
             {
               "type": "null"
@@ -809,6 +1552,9 @@
         "configuration": {
           "type": "object"
         },
+        "driver": {
+          "type": "string"
+        },
         "endpoint": {
           "type": "string"
         },
@@ -825,11 +1571,31 @@
             }
           ]
         },
+        "learning": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LearningConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "mode": {
           "type": "string"
         },
         "priority": {
           "type": "integer"
+        },
+        "selector": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Selector"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "state": {
           "type": "string"
@@ -905,6 +1671,9 @@
             "null"
           ]
         },
+        "request_feedback": {
+          "type": "boolean"
+        },
         "retry_after_seconds": {
           "type": "integer"
         },
@@ -920,6 +1689,9 @@
         },
         "telemetry": {
           "$ref": "#/$defs/Telemetry"
+        },
+        "trace": {
+          "type": "object"
         },
         "uncertainty": {
           "anyOf": [
@@ -946,6 +1718,140 @@
         "retry_after_seconds",
         "telemetry"
       ],
+      "type": "object"
+    },
+    "ScoreThreshold": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "type": "string"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "dimension"
+      ],
+      "type": "object"
+    },
+    "Selector": {
+      "additionalProperties": false,
+      "properties": {
+        "content_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "exclude_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "excluded": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "has_content_match": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "is_anime": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_uncertainty": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required_tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "sample_basis_points": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "score_thresholds": {
+          "items": {
+            "$ref": "#/$defs/ScoreThreshold"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [],
       "type": "object"
     },
     "ServiceStatus": {

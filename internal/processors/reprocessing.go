@@ -127,7 +127,7 @@ func (s *Store) Reprocess(ctx context.Context, origin string, w v1.ReprocessWrit
 	}
 	var coreJob string
 	err = tx.QueryRow(ctx, `INSERT INTO queue_jobs(fingerprint,queue,status,payload,retries,max_retries,run_after,deadline,archival_duration,created_at,priority)
- VALUES($1,$2,'pending',$3,0,$4,clock_timestamp(),clock_timestamp()+interval '1 hour',interval '7 days',clock_timestamp(),0) RETURNING id`, job.Fingerprint, job.Queue, job.Payload, job.MaxRetries).Scan(&coreJob)
+ VALUES($1,$2,'pending',$3,0,$4,clock_timestamp(),clock_timestamp()+interval '1 hour',interval '168 hours',clock_timestamp(),0) RETURNING id`, job.Fingerprint, job.Queue, job.Payload, job.MaxRetries).Scan(&coreJob)
 	if err != nil {
 		return v1.ReprocessStatus{}, err
 	}

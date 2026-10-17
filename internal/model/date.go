@@ -2,6 +2,8 @@ package model
 
 import (
 	"database/sql/driver"
+	"encoding/json"
+	"strings"
 	"errors"
 	"io"
 	"time"
@@ -137,4 +139,44 @@ func numDaysInMonth(year Year, month time.Month) uint8 {
 	}
 
 	return 0
+}
+
+func (d Date) MarshalJSON() ([]byte, error) {
+	if d.IsNil() {
+		return []byte("null"), nil
+	}
+	return json.Marshal(d.IsoDateString())
+}
+
+func (d *Date) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	if s == "" || s == "null" || s == `""` {
+		*d = Date{}
+		return nil
+	}
+	if strings.HasPrefix(s, "{") {
+		var raw struct {
+			Year  Year       `json:"Year"`
+			Month time.Month `json:"Month"`
+			Day   uint8      `json:"Day"`
+		}
+		if err := json.Unmarshal(b, &raw); err != nil {
+			return err
+		}
+		*d = Date{Year: raw.Year, Month: raw.Month, Day: raw.Day}
+		return nil
+	}
+	var str string
+	if err := json.Unmarshal(b, &str); err != nil {
+		return err
+	}
+	if len(str) >= 10 {
+		str = str[:10]
+	}
+	parsed, err := NewDateFromIsoString(str)
+	if err != nil {
+		return err
+	}
+	*d = parsed
+	return nil
 }

@@ -203,3 +203,52 @@ values, not the original HTTP serialization; all raw-payload gaps described
 above remain explicit. Schema 64 refuses a destructive downgrade when these
 audit requests exist. Restore the matched database/image/configuration for a
 rollback, retaining intervening evidence and restrictions for reconciliation.
+
+## Built-in drivers, Core Operations API, and bi-directional feedback
+
+`GET /api/processors/v1/capabilities` additionally advertises:
+- `core_operations: bitagent.processors.core-ops.v1`
+- `feedback: bitagent.processors.feedback.v1`
+- `stacking: selector-priority-v1`
+- `builtin_drivers: v1`
+
+### Built-in drivers
+
+`PUT /api/processors/v1/registry/:id` accepts `driver`:
+- `http` (default): external `bitagent.processor.v1` HTTP service.
+- `builtin/filter-list`: in-process regex/extension/release-group/size filter
+  and tagger (`block_patterns`, `allow_patterns`, `blocked_extensions`,
+  `blocked_release_groups`, `min_size_bytes`, `max_size_bytes`, `tag_only`, `tags`).
+- `builtin/regex-weights`: in-process weighted regex scorer, classifier, and
+  extractor (`rules`, `exclude_dimension`, `exclude_threshold`) with optional
+  online weight calibration (`learned_state`).
+- `builtin/tracker-liveness`: in-process swarm liveness evaluator (`min_seeders`,
+  `exclude_dead`, `tag_live`, `tag_dead`, `weight_dimension`, `live_weight`, `dead_weight`).
+- `builtin/llm`: in-process OpenAI-compatible `/v1/chat/completions` JSON-mode
+  driver (`model`, `endpoint`, `system_prompt`, `temperature`, `capabilities`).
+
+### Core Operations API
+
+Authenticated processors and operators can invoke Core's deterministic primitives:
+- `POST /api/processors/v1/core/parse` (`CoreParseRequest` -> `CoreParseResponse`)
+- `POST /api/processors/v1/core/search` (`CoreSearchRequest` -> `CoreSearchResponse`)
+- `POST /api/processors/v1/core/liveness` (`CoreLivenessRequest` -> `CoreLivenessResponse`)
+- `POST /api/processors/v1/core/policy` (`CorePolicyRequest` -> `CorePolicyResponse`)
+
+### Bi-directional feedback and online learning
+
+Processors configured with `learning.enabled=true` (or returning
+`request_feedback=true` on a `Result`) receive structured `FeedbackEvent`
+records (`bitagent.processors.feedback.v1`) across four tiers:
+1. `operational_receipt`: emitted automatically when `apply()` settles a job.
+2. `teacher_consensus`: emitted when a higher-priority/downstream `apply`-mode
+   processor in the stack completes a authoritative proposal on the same job.
+3. `verified_import`: emitted automatically when `internal/evidence.Store`
+   commits a verified `*arr` grab/import or qBittorrent state observation.
+4. `human_gold`: recorded via `POST /api/processors/v1/feedback`.
+
+External trainers and processors can pull feedback via
+`GET /api/processors/v1/feedback?processor_id=...&after_seq=...&consumer_id=...`
+and commit durable consumer offsets via `POST /api/processors/v1/feedback/ack`,
+or receive asynchronous batches via `POST /v1/feedback` (`FeedbackBatch` ->
+`FeedbackAck`) when `learning.push_enabled=true`.

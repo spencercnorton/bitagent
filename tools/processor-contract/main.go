@@ -89,7 +89,7 @@ func main() {
 	if len(os.Args) > 1 {
 		root = os.Args[1]
 	}
-	for _, v := range []any{v1.Manifest{}, v1.Job{}, v1.Result{}, v1.ServiceStatus{}, v1.Status{}, v1.RegistryWrite{}, v1.RegistryControl{}, v1.JobPage{}} {
+	for _, v := range []any{v1.Manifest{}, v1.Job{}, v1.Result{}, v1.ServiceStatus{}, v1.Status{}, v1.RegistryWrite{}, v1.RegistryControl{}, v1.JobPage{}, v1.FeedbackEvent{}, v1.FeedbackBatch{}, v1.FeedbackAck{}, v1.FeedbackPage{}, v1.FeedbackWrite{}, v1.FeedbackCursorAck{}, v1.CoreParseRequest{}, v1.CoreParseResponse{}, v1.CoreSearchRequest{}, v1.CoreSearchResponse{}, v1.CoreLivenessRequest{}, v1.CoreLivenessResponse{}, v1.CorePolicyRequest{}, v1.CorePolicyResponse{}} {
 		shape(reflect.TypeOf(v))
 	}
 	for name, fields := range map[string]map[string]any{
