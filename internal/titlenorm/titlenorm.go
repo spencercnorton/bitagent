@@ -43,6 +43,36 @@ var romanArabic = map[string]string{
 	"xx":    "20",
 }
 
+// partNumberWords maps the number words that follow "part" in catalogue
+// titles ("Part One") to digits, bounded like romanArabic.
+var partNumberWords = map[string]string{
+	"one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+	"six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+}
+
+// isPartNumber reports whether tok can be the number after "part"/"pt":
+// digits, a roman numeral, or a number word.
+func isPartNumber(tok string) bool {
+	if tok == "" {
+		return false
+	}
+	digits := true
+	for _, r := range tok {
+		if r < '0' || r > '9' {
+			digits = false
+			break
+		}
+	}
+	if digits {
+		return true
+	}
+	if _, ok := romanArabic[tok]; ok && isPureRoman(tok) {
+		return true
+	}
+	_, ok := partNumberWords[tok]
+	return ok
+}
+
 // leadingArticles is the set of articles stripped from the start of a
 // normalised title. Includes common English and Romance-language articles
 // that appear in TMDB titles.
@@ -67,8 +97,9 @@ var leadingArticles = map[string]bool{
 //  4. Roman numeral tokens (I-XX) are replaced with arabic digits, ONLY when
 //     the token consists entirely of roman numeral characters so that mixed
 //     tokens like "se7en" are left untouched.
-//  5. A token "part" followed by a roman numeral is normalised so that
-//     "Part II" and "Part 2" compare equal.
+//  5. A token "part" (or a bare "pt" before a part number) followed by a
+//     roman numeral or a number word is normalised so that "Part II",
+//     "Part One" and "Part 2" compare equal.
 func NormalizeTitleForMatch(s string) string {
 	// Step 1: expand '&' to 'and' before NormalizeString swallows it.
 	s = strings.ReplaceAll(s, "&", " and ")
@@ -96,10 +127,20 @@ func NormalizeTitleForMatch(s string) string {
 	for i, tok := range tokens {
 		lower := strings.ToLower(tok)
 
-		// Step 5: "part" followed by a roman numeral token.
+		// "Pt. 1" / "Pt II" spell "Part 1" / "Part 2": expand a bare "pt"
+		// token only when a part number follows it, so words are untouched.
+		if lower == "pt" && i+1 < len(tokens) && isPartNumber(strings.ToLower(tokens[i+1])) {
+			tokens[i] = "part"
+			lower = "part"
+		}
+
+		// Step 5: "part" followed by a roman numeral or a number word token
+		// ("Part One" and "Part 1" compare equal).
 		if lower == "part" && i+1 < len(tokens) {
 			next := strings.ToLower(tokens[i+1])
 			if ar, ok := romanArabic[next]; ok && isPureRoman(next) {
+				tokens[i+1] = ar
+			} else if ar, ok := partNumberWords[next]; ok {
 				tokens[i+1] = ar
 			}
 			continue

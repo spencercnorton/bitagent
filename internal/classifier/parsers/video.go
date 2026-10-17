@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/hedhyw/rex/pkg/dialect"
 	"github.com/hedhyw/rex/pkg/rex"
@@ -46,8 +47,111 @@ type ParseOptions struct {
 	// leading-year rescue (roadmap WI2.3): fullwidth CJK site-tag spans,
 	// www.-prefixed site prefixes on any TLD, extra known torrent-site TLDs,
 	// and adopting a leading bare year ("2019.Title.1080p...") as the release
-	// year when the remainder carries none of its own.
+	// year when the remainder carries none of its own. It also strips a
+	// leading broadcaster token ("PBS.NOVA...") and one unknown leading
+	// "[Group]" bracket before title extraction, and prefers a trailing
+	// parenthesised alternate title on Spanish-tagged releases.
 	NoiseV2 bool
+}
+
+// broadcasterPrefixRegex matches a leading broadcaster token ("PBS.NOVA.2015",
+// "BBC.Great.Crimes...", "ITV.The.Second.World.War..."): the dotted prefix
+// these rips carry names the origin network, not the work, and otherwise
+// becomes the first word of BaseTitle. Only broadcasters attested at the head
+// of production names are listed.
+var broadcasterPrefixRegex = regexp.MustCompile(`(?i)^(?:PBS|BBC|ITV)[\s._-]+`)
+
+// stripBroadcasterPrefix removes a leading broadcaster token when a title
+// word follows it.
+func stripBroadcasterPrefix(name string) string {
+	loc := broadcasterPrefixRegex.FindStringIndex(name)
+	if loc == nil || loc[1] >= len(name) {
+		return name
+	}
+	if r, _ := utf8.DecodeRuneInString(name[loc[1]:]); unicode.IsLetter(r) || unicode.IsNumber(r) {
+		return name[loc[1]:]
+	}
+	return name
+}
+
+// stripLeadingBracketTag removes one leading "[Group]" bracket when a title
+// word follows it, so the title cascade starts at the title instead of gluing
+// the bracket onto it ("[LostYears ]Berserk ..."). A bracket followed by a
+// year or a technical token is left alone: "[REC].2007..." is a title. A
+// bracket holding only a date ("[01.31.2014]") is also left: its year may be
+// the name's only year anchor.
+func stripLeadingBracketTag(name string) string {
+	loc := leadingBracketTagRegex.FindStringIndex(name)
+	if loc == nil || loc[0] != 0 || loc[1] >= len(name) {
+		return name
+	}
+	inner := strings.Trim(name[:loc[1]], "[] ")
+	numeric := true
+	for _, r := range inner {
+		if !unicode.IsDigit(r) && !strings.ContainsRune("._/- ", r) {
+			numeric = false
+			break
+		}
+	}
+	if numeric && inner != "" {
+		return name
+	}
+	if r, _ := utf8.DecodeRuneInString(name[loc[1]:]); unicode.IsLetter(r) {
+		return name[loc[1]:]
+	}
+	return name
+}
+
+var parenAltRegex = regexp.MustCompile(`^(.+?)\s*\(([^()]*)\)$`)
+
+// spanishTagRegex marks a release as a Spanish-language edition by its
+// bracketed language tag: such names routinely carry the English title in
+// parentheses after the Spanish one
+// ("Criaturas luminosas (Remarkably Bright Creatures) (2026) [Esp]").
+var spanishTagRegex = regexp.MustCompile(`(?i)\[(?:esp|spa|es)\]`)
+
+// altEditionWords: a parenthesised tail naming an edition or an audio
+// descriptor, not a title.
+var altEditionWords = map[string]bool{
+	"anniversary": true, "audio": true, "bd": true, "bluray": true, "cd": true,
+	"complete": true, "cut": true, "deluxe": true, "disc": true, "dvd": true,
+	"edition": true, "extended": true, "remastered": true, "season": true,
+	"seasons": true, "unrated": true, "version": true,
+}
+
+// altTitleInParens prefers the parenthesised alternate title of a
+// Spanish-tagged release ("Hermanito (Little Brother)" -> "Little Brother"):
+// the concatenated BaseTitle matches neither the catalogue title nor the
+// Spanish one. The bracketed tag is the only signal used — direction cannot
+// be told from the titles alone ("Layer Cake (Crimen organizado)" reverses
+// the pairing), so unmarked pairings keep the lead title.
+func altTitleInParens(title, name string) string {
+	m := parenAltRegex.FindStringSubmatch(title)
+	if m == nil {
+		return title
+	}
+	lead, alt := strings.TrimSpace(m[1]), strings.TrimSpace(m[2])
+	words := strings.Fields(alt)
+	if lead == "" || len(words) == 0 || len(words) > 6 {
+		return title
+	}
+	for _, w := range words {
+		if altEditionWords[strings.ToLower(w)] {
+			return title
+		}
+		for _, r := range w {
+			if !unicode.In(r, unicode.Latin) && r != '\'' && r != '’' && r != '-' && r != '&' {
+				return title
+			}
+		}
+	}
+	if !spanishTagRegex.MatchString(name) {
+		return title
+	}
+	if cleaned := cleanTitle(alt); cleaned != "" {
+		return cleaned
+	}
+	return title
 }
 
 // cjkSpanRegex matches fullwidth-bracket site/decoration tags
@@ -439,14 +543,33 @@ func ParseVideoContentWithOptions(
 	}
 
 	name := collapseYearRange(stripped)
-	title, year, episodes, rest, err := ParseTitleYearEpisodes(result.ContentType, name)
+
+	// Computed on the original name: the v2 prefix strips below must not hide
+	// a known fansub group's bracket from detection.
+	animeSignals := anime.Detect(name)
+
+	// v2: strip a leading broadcaster token and one leading "[Group]"
+	// bracket before title extraction. Only the generic cascade reads
+	// parseName; the fansub branch (whose CleanTitle wants the bracket),
+	// language inference and release-group recovery keep the original name.
+	// The bracket goes for known groups too: on a conventional SxxExx name
+	// the episodes branch types the release first, the fansub title
+	// override never runs, and the generic title kept the bracket glued on
+	// ("[LostYears ]Berserk ...").
+	parseName := name
+	if opts.NoiseV2 {
+		parseName = stripBroadcasterPrefix(parseName)
+		parseName = stripLeadingBracketTag(parseName)
+	}
+
+	title, year, episodes, rest, err := ParseTitleYearEpisodes(result.ContentType, parseName)
 
 	// v2 leading-year rescue: "2019.The.Irishman.1080p..." — the cascade
 	// either fails outright or swallows the leading year into BaseTitle
 	// (titleTokens must consume a token before yearTokens may match). Only
 	// fires when the normal parse produced no year of its own.
 	if opts.NoiseV2 && year.IsNil() {
-		if m := leadingYearRegex.FindStringSubmatch(name); m != nil {
+		if m := leadingYearRegex.FindStringSubmatch(parseName); m != nil {
 			switch {
 			case err == nil && len(episodes) > 0:
 				// TV parse succeeded but the title carries the year prefix
@@ -457,7 +580,7 @@ func ParseVideoContentWithOptions(
 					year = model.Year(yearVal)
 				}
 			default:
-				if rescueTitle, rescueYear, rescueRest, ok := rescueLeadingYear(name); ok {
+				if rescueTitle, rescueYear, rescueRest, ok := rescueLeadingYear(parseName); ok {
 					title, year, rest, err = rescueTitle, rescueYear, rescueRest, nil
 					episodes = nil
 				}
@@ -492,7 +615,7 @@ func ParseVideoContentWithOptions(
 		(!result.ContentType.Valid || result.ContentType.ContentType == model.ContentTypeTvShow) {
 		// An EP inside a bracketed tag ("[1920x1080p.EP001-151.END]") is not an
 		// episode marker for the title before it.
-		if m := absoluteEpisodeRegex.FindStringSubmatch(name); m != nil &&
+		if m := absoluteEpisodeRegex.FindStringSubmatch(parseName); m != nil &&
 			strings.Count(m[1], "[") == strings.Count(m[1], "]") {
 			before := strings.TrimSpace(leadingBracketTagRegex.ReplaceAllString(m[1], ""))
 			if t, y, _, yerr := parseTitleYear(before + " "); yerr == nil {
@@ -501,7 +624,7 @@ func ParseVideoContentWithOptions(
 				title = cleanTitle(before)
 			}
 			if title != "" {
-				epNumbered, rest = true, name[len(m[1]):]
+				epNumbered, rest = true, parseName[len(m[1]):]
 			}
 		}
 	}
@@ -517,7 +640,6 @@ func ParseVideoContentWithOptions(
 	// from adult studios, whereas IsAnime's unlisted-Latin-group path is
 	// explicitly not porn-safe (see detect.go). Measured over 41k production
 	// names, IsKnownFansub rescues zero adult releases; IsAnime rescues four.
-	animeSignals := anime.Detect(name)
 	// Tracks whether the fansub branch below actually decided the type. The
 	// title override at the end must key on THIS, not on IsKnownFansub() alone:
 	// a known group can also publish a conventional "S01E02" name, which an
@@ -609,6 +731,9 @@ func ParseVideoContentWithOptions(
 
 	if opts.NoiseV2 {
 		title = latinTitleAfterCJK(title)
+		if !animeBranchTaken {
+			title = altTitleInParens(title, name)
+		}
 	}
 
 	attrs := classification.ContentAttributes{
