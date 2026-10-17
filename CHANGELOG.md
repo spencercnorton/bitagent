@@ -7,6 +7,15 @@
   SHA-1(info) against the info hash and stores its piece length and hashes in
   `torrent_pieces`, so releases stay verifiable against their files after the
   client drops them. The crawl itself still stores no pieces by default.
+- Add `internal/classifier/langgate`: deterministic English-audio evidence
+  from release names, a byte-exact port of the Python reference rules v5
+  (bare `DL`/WEB-DL no longer counts as an English track, dual-audio labels
+  need their listed languages, `sub UKR` names subtitles, lower-case
+  rus/ukr tags and Russian dub studios name non-English audio), proven
+  against the reference on 69,346 names across all flag combinations. Also
+  adds the Russian/Chinese title rule and detection of English-original
+  works released under a localized non-English title. Library only: no
+  pipeline stage consumes it yet.
 
 ## 5.3.0 — 2026-10-17
 
