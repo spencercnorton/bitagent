@@ -7,6 +7,13 @@
   SHA-1(info) against the info hash and stores its piece length and hashes in
   `torrent_pieces`, so releases stay verifiable against their files after the
   client drops them. The crawl itself still stores no pieces by default.
+- Handle the remaining measured source-title shapes in the NoiseV2 parse:
+  strip a leading broadcaster token (`PBS`, `BBC`, `ITV`) and one leading
+  `[Group]` bracket before title extraction so neither glues onto
+  `BaseTitle`, and prefer the parenthesised English title on `[Esp]`-tagged
+  Spanish editions. Legacy parse output is unchanged.
+- Normalise part spellings in title matching: `Pt. 1`, `Part II` and
+  `Part One` now key as `part 1` / `part 2`.
 
 ## 5.3.0 — 2026-10-17
 
