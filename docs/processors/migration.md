@@ -129,6 +129,33 @@ replay an application or remove a restriction. Keep exported job histories when
 longer-term evaluation provenance is required. Historical pre-v5 evidence keeps
 its existing retention policy.
 
+Schema 62 adds a conservative terminal-attempt completeness floor and an index
+for the latest-500 technical failure measurements. Existing attempts remain
+unchanged. After upgrade, these measurements are unavailable until 500 fresh
+terminal attempts for the current execution generation are retained. Pruning
+advances the floor before deleting attempt history, so a surviving older row
+cannot fill a missing part of the population. Operational gates must treat null
+as unavailable, never as zero failures. This additive migration can be reversed
+for an isolated schema-61 rollback; it does not relax schema 61's refusal to
+discard processor or legacy evidence when downgrading farther.
+
+Schema 63 adds the audited whole-pipeline admission policy and invalidates older
+in-flight plans; schema 64 retains explicit reprocessing requests and their
+before-images. They preserve previous applications, restrictions, legacy queues
+and recovery snapshots. Existing registrations retain full-cohort admission
+until explicitly changed. Read [operational controls](operations.md) before
+enabling limited coverage or requesting reprocessing. These operations do not
+approve a model or erase an old match. Their audit-bearing down migrations
+refuse destructive loss; use a matched backup for binary/schema rollback.
+Schema 65 records execution start times for future generations, permitting a
+separate complete startup prefix before 500 observations. Historical generation
+starts stay null; upgrade does not manufacture an empty successful population.
+Schema 66 retains a separate per-job preparation-failure counter. Existing jobs
+start at zero because no such retry counter existed; this does not reconstruct
+historical failures or change dispatch measurements. Transient preparation
+errors retry without changing input, within the configured job failure bound.
+Its down migration refuses to discard nonzero counters; restore matched state.
+
 After service/worker crashes, expired leases are reclaimed with a larger lease
 generation. Requests reuse frozen semantic inputs and a stable step ID; only the
 attempt deadline changes. Successful completion and application commit together.

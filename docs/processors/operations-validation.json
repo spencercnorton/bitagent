@@ -1,0 +1,82 @@
+{
+  "baseline_revision": "e59cc02d5dc907c4c6a13671ddb9f98145e1bb00",
+  "method": "ABBA; GOMAXPROCS=2; same synthetic 5000-torrent harness;5samples/run; no parallel database tests",
+  "runs": [
+    {
+      "variant": "baseline",
+      "seconds": 7.99,
+      "torrents_per_second": [
+        9976.4,
+        10197.8,
+        10602.9,
+        9671.4,
+        9673.2
+      ]
+    },
+    {
+      "variant": "candidate",
+      "seconds": 5.3,
+      "torrents_per_second": [
+        9214.3,
+        10271.5,
+        9200.5,
+        7793.2,
+        8085.1
+      ]
+    },
+    {
+      "variant": "candidate",
+      "seconds": 4.098,
+      "torrents_per_second": [
+        10298.3,
+        9391.9,
+        9286.1,
+        9477.8,
+        9339.3
+      ]
+    },
+    {
+      "variant": "baseline",
+      "seconds": 4.171,
+      "torrents_per_second": [
+        8262.5,
+        8220.4,
+        9225.7,
+        9680.4,
+        9862.9
+      ]
+    }
+  ],
+  "median_torrents_per_second": {
+    "baseline": 9676.8,
+    "candidate": 9312.7
+  },
+  "change_percent": -3.7626074735449544,
+  "schema": "bitagent.processor.operations-validation.v1",
+  "date": "2026-10-16",
+  "runtime_checkpoint": "f4a41a61e56c342cd01b85c95b1a5bcd52a27551",
+  "candidate_scope": "Candidate working tree before the final audited-request expiry guard. The measured crawler persistence path is unchanged at the runtime checkpoint. The expiry guard has its own PostgreSQL regression.",
+  "environment": {
+    "go": "1.26.9",
+    "platform": "darwin/arm64",
+    "database": "PostgreSQL16 local disposable Docker container"
+  },
+  "functional_validation": [
+    "full Go race suite with disposable PostgreSQL passed before startup-prefix addition",
+    "affected processors/core/protocol/migration PostgreSQL race suites passed after startup-prefix addition",
+    "final request-expiry PostgreSQL regression passed",
+    "go vet ./... passed",
+    "public-content/headless/dependency boundary checks passed"
+  ],
+  "scope": "Synthetic persistence/correctness and protocol qualification only; no live DHT throughput, model accuracy, production scale or activation claim. Hosted checks, immutable release artifacts, consumer acceptance and production observations remain separate gates.",
+  "preparation_recovery_validation": {
+    "revision": "9f69694361d105f93e1d23362db3c6c344589180",
+    "schema_version": 66,
+    "regression": "Actual PostgreSQL lock makes the prior error branch incorrectly retire unchanged input as stale.",
+    "targeted": "Five race-enabled repetitions passed for preparation timeout/restart, bounded exhaustion, canceled lease, healthy service, transport faults and stale/duplicate handling.",
+    "measurement_scope": "Earlier crawler samples above are retained unchanged; no new throughput claim. The preparation failure path does not change the measured crawler persistence path.",
+    "dispatch_scope": "Preparation failures retain a separate counter and never add dispatched attempts, results, applications or exclusions.",
+    "remaining_gates": "Independent current consumer acceptance, exact-head hosted CI, immutable release artifacts and production qualification.",
+    "full_suite": "Complete go test -race -p 1 -count=1 -timeout=15m ./... passed with disposable PostgreSQL, including preparation/migration regressions."
+  }
+}

@@ -63,6 +63,9 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 	defer c()
 	now := stamp(time.Now())
 	out := v1.Status{Contract: v1.StatusContract, ObservedAt: now, CoreReadiness: "ready", Processors: []v1.ProcessorStatus{}, Queue: map[string]v1.Measurement{}, Limits: map[string]int{"concurrency": s.cfg.Concurrency, "queue_capacity": s.cfg.QueueCapacity, "retained_jobs": s.cfg.RetainedJobs, "max_attempts": s.cfg.MaxAttempts, "request_timeout_ms": int(s.cfg.RequestTimeout.Milliseconds())}}
+	out.Limits["reprocessing_pending"] = min(s.cfg.QueueCapacity, 64)
+	out.Limits["reprocessing_retained"] = min(s.cfg.RetainedJobs, 1000)
+	out.Limits["max_preparation_failures"] = s.cfg.MaxAttempts
 	tx, e := s.begin(ctx)
 	if e != nil {
 		return out, e
@@ -79,6 +82,7 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 	}
 	for _, entry := range es {
 		p := v1.ProcessorStatus{Configuration: entry.Configuration, AuthEnv: entry.AuthEnv, ID: entry.ID, Generation: entry.Generation, ExecutionGeneration: entry.ExecutionGeneration, Installed: true, Configured: true, Enabled: entry.State == "active", State: entry.State, Mode: entry.Mode, OperatingMode: "unavailable", Endpoint: entry.Endpoint, Priority: entry.Priority, Contract: entry.Manifest.Contract, Processor: entry.Manifest.Processor, Capabilities: entry.Manifest.Capabilities, Compatibility: "unknown", Health: "unknown", Readiness: "unknown", Qualification: entry.Manifest.Qualification, Metrics: map[string]v1.Measurement{}}
+		p.Enabled = p.Enabled && plan.Admission.BasisPoints > 0
 		var raw []byte
 		var observedAt *time.Time
 		if e = tx.QueryRow(ctx, `SELECT observed,observed_at,last_error FROM processor_registry WHERE id=$1`, entry.ID).Scan(&raw, &observedAt, &p.LastError); e != nil {
@@ -132,6 +136,13 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 			}
 			p.Metrics[outcome] = measurement(number(n), "count", start, now, pop, "core_postgres")
 		}
+		window, err := attemptWindow(ctx, tx, entry, now)
+		if err != nil {
+			return out, err
+		}
+		for key, value := range window {
+			p.Metrics[key] = value
+		}
 		telemetryAt := observed.Telemetry.ObservedAt
 		var rss, cpu *float64
 		if telemetryAt != "" && p.Health == "healthy" {
@@ -156,6 +167,11 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 		}
 	}
 	var oldest *float64
+	var preparationFailures int64
+	if e = tx.QueryRow(ctx, `SELECT COALESCE(sum(preparation_failures),0) FROM processor_jobs`).Scan(&preparationFailures); e != nil {
+		return out, e
+	}
+	out.Queue["preparation_failures"] = measurement(number(float64(preparationFailures)), "count", now, now, "recorded local preparation failures since schema 66 across current retained jobs; not dispatched attempts", "core_postgres")
 	if e = tx.QueryRow(ctx, `SELECT extract(epoch FROM clock_timestamp()-min(created_at)) FROM processor_jobs WHERE state IN('queued','deferred')`).Scan(&oldest); e != nil {
 		return out, e
 	}

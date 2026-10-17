@@ -1,0 +1,11 @@
+{
+  "contract": "bitagent.processors.operations.v1",
+  "features": {
+    "terminal_attempt_window": "latest-500-v1",
+    "admission": "bitagent.processors.admission.v1",
+    "job_export": "bitagent.processors.job-export.v1",
+    "reprocessing": "bitagent.processors.reprocessing.v1",
+    "terminal_attempt_prefix": "complete-startup-prefix-v1",
+    "preparation_recovery": "bounded-local-retries-v1"
+  }
+}

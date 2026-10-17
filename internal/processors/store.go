@@ -42,9 +42,10 @@ type Step struct {
 	Stage v1.Stage `json:"stage"`
 }
 type Plan struct {
-	Epoch      int64  `json:"epoch"`
-	CorePolicy string `json:"core_policy"`
-	Steps      []Step `json:"steps"`
+	Epoch      int64               `json:"epoch"`
+	CorePolicy string              `json:"core_policy"`
+	Steps      []Step              `json:"steps"`
+	Admission  *v1.AdmissionPolicy `json:"admission,omitempty"`
 }
 type Store struct {
 	filter           *contentfilter.Filter
@@ -126,6 +127,11 @@ func readPlan(ctx context.Context, tx pgx.Tx, policy string) (Plan, bool, error)
 	if e := tx.QueryRow(ctx, `SELECT epoch FROM processor_control WHERE singleton FOR SHARE`).Scan(&p.Epoch); e != nil {
 		return p, false, e
 	}
+	admission, e := readAdmission(ctx, tx)
+	if e != nil {
+		return p, false, e
+	}
+	p.Admission = &admission
 	es, e := entries(ctx, tx)
 	if e != nil {
 		return p, false, e
@@ -207,8 +213,8 @@ func (s *Store) Register(ctx context.Context, id string, w v1.RegistryWrite) (En
 	mb, _ := json.Marshal(m)
 	ob, _ := json.Marshal(status)
 	config := canonical(w.Configuration)
-	_, e = tx.Exec(ctx, `INSERT INTO processor_registry(id,generation,execution_generation,endpoint,auth_env,mode,state,priority,manifest,configuration,observed,observed_at) VALUES($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,clock_timestamp())
- ON CONFLICT(id) DO UPDATE SET generation=$2,execution_generation=$2,endpoint=$3,auth_env=$4,mode=$5,state=$6,priority=$7,manifest=$8,configuration=$9,observed=$10,observed_at=clock_timestamp(),last_error='',updated_at=clock_timestamp()`, id, gen, w.Endpoint, w.AuthEnv, w.Mode, w.State, w.Priority, string(mb), string(config), string(ob))
+	_, e = tx.Exec(ctx, `INSERT INTO processor_registry(id,generation,execution_generation,endpoint,auth_env,mode,state,priority,manifest,configuration,observed,observed_at,execution_started_at) VALUES($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,clock_timestamp(),clock_timestamp())
+ ON CONFLICT(id) DO UPDATE SET generation=$2,execution_generation=$2,endpoint=$3,auth_env=$4,mode=$5,state=$6,priority=$7,manifest=$8,configuration=$9,observed=$10,observed_at=clock_timestamp(),execution_started_at=clock_timestamp(),last_error='',updated_at=clock_timestamp()`, id, gen, w.Endpoint, w.AuthEnv, w.Mode, w.State, w.Priority, string(mb), string(config), string(ob))
 	if e != nil {
 		return Entry{}, e
 	}
@@ -222,8 +228,17 @@ func (s *Store) Register(ctx context.Context, id string, w v1.RegistryWrite) (En
 	return Entry{id, gen, gen, w.Endpoint, w.AuthEnv, w.Mode, w.State, w.Priority, m, config}, nil
 }
 func invalidate(ctx context.Context, tx pgx.Tx) error {
-	_, e := tx.Exec(ctx, `UPDATE processor_control SET epoch=epoch+1,scan_after=''::bytea,updated_at=clock_timestamp() WHERE singleton;
- UPDATE processor_jobs SET state='stale',reason='registry_changed',lease_until=NULL,finished_at=clock_timestamp() WHERE state IN('queued','deferred','leased')`)
+	return invalidateFor(ctx, tx, "registry_changed")
+}
+func invalidateFor(ctx context.Context, tx pgx.Tx, reason string) error {
+	if _, e := tx.Exec(ctx, `UPDATE processor_control SET epoch=epoch+1,scan_after=''::bytea,updated_at=clock_timestamp() WHERE singleton`); e != nil {
+		return e
+	}
+	_, e := tx.Exec(ctx, `WITH invalidated AS (
+ UPDATE processor_jobs SET state='stale',reason=$1,lease_until=NULL,finished_at=clock_timestamp()
+ WHERE state IN('queued','deferred','leased') RETURNING job_id,lease_generation)
+ UPDATE processor_attempts a SET finished_at=clock_timestamp(),outcome='unknown',reason=$1
+ FROM invalidated j WHERE a.job_id=j.job_id AND a.lease_generation=j.lease_generation AND a.finished_at IS NULL`, reason)
 	return e
 }
 func (s *Store) Control(ctx context.Context, id string, c v1.RegistryControl) error {
@@ -269,7 +284,8 @@ func (s *Store) Control(ctx context.Context, id string, c v1.RegistryControl) er
 			return e
 		}
 	}
-	_, e = tx.Exec(ctx, `UPDATE processor_registry SET generation=$2,execution_generation=$3,state=$4,mode=$5,updated_at=clock_timestamp() WHERE id=$1`, id, gen, execGen, newState, newMode)
+	_, e = tx.Exec(ctx, `UPDATE processor_registry SET generation=$2,execution_generation=$3,state=$4,mode=$5,
+ execution_started_at=CASE WHEN execution_generation<>$3 THEN clock_timestamp() ELSE execution_started_at END,updated_at=clock_timestamp() WHERE id=$1`, id, gen, execGen, newState, newMode)
 	if e != nil {
 		return e
 	}
@@ -301,7 +317,11 @@ func (s *Store) Cancel(ctx context.Context, id string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	_, e = p.Exec(ctx, `UPDATE processor_jobs SET state='canceled',reason='operator_canceled',lease_until=NULL,finished_at=clock_timestamp() WHERE job_id=$1 AND state IN('queued','deferred','leased')`, id)
+	_, e = p.Exec(ctx, `WITH canceled AS (
+ UPDATE processor_jobs SET state='canceled',reason='operator_canceled',lease_until=NULL,finished_at=clock_timestamp()
+ WHERE job_id=$1 AND state IN('queued','deferred','leased') RETURNING job_id,lease_generation)
+ UPDATE processor_attempts a SET finished_at=clock_timestamp(),outcome='unknown',reason='operator_canceled'
+ FROM canceled j WHERE a.job_id=j.job_id AND a.lease_generation=j.lease_generation AND a.finished_at IS NULL`, id)
 	if e != nil {
 		return "", e
 	}

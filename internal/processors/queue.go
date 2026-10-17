@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -49,10 +50,13 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 		return 0, e
 	}
 	s.active.Store(len(plan.Steps) > 0)
-	if len(plan.Steps) == 0 || draining {
-		return 0, nil
+	if e = s.settleReprocessing(ctx, tx, plan, draining); e != nil {
+		return 0, e
 	}
-	_, e = tx.Exec(ctx, `DELETE FROM processor_jobs WHERE job_id IN(SELECT job_id FROM processor_jobs WHERE finished_at < clock_timestamp()-$1::interval ORDER BY finished_at LIMIT 128)`, s.cfg.Retention.String())
+	if len(plan.Steps) == 0 || draining || plan.Admission.BasisPoints == 0 {
+		return 0, tx.Commit(ctx)
+	}
+	e = pruneJobs(ctx, tx, s.cfg.Retention)
 	if e != nil {
 		return 0, e
 	}
@@ -65,11 +69,14 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 		s.metrics.admission.WithLabelValues("full").Inc()
 		return 0, tx.Commit(ctx)
 	}
-	rows, e := tx.Query(ctx, `SELECT t.info_hash FROM torrents t WHERE t.info_hash>$1 AND EXISTS(SELECT 1 FROM torrent_contents c WHERE c.info_hash=t.info_hash) ORDER BY t.info_hash LIMIT $2`, after, s.cfg.ScanBatch)
+	// Explicit requests that completed ordinary processing get bounded priority
+	// without moving the catalogue catch-up cursor past unrelated torrents.
+	priority := map[string]bool{}
+	var hashes [][]byte
+	rows, e := tx.Query(ctx, `SELECT info_hash FROM processor_reprocess_requests WHERE state='ready' ORDER BY created_at LIMIT $1`, min(16, capacity))
 	if e != nil {
 		return 0, e
 	}
-	var hashes [][]byte
 	for rows.Next() {
 		var h []byte
 		if e = rows.Scan(&h); e != nil {
@@ -77,6 +84,29 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 			return 0, e
 		}
 		hashes = append(hashes, h)
+		priority[string(h)] = true
+	}
+	rows.Close()
+	if e = rows.Err(); e != nil {
+		return 0, e
+	}
+	rows, e = tx.Query(ctx, `SELECT t.info_hash FROM torrents t WHERE t.info_hash>$1 AND EXISTS(SELECT 1 FROM torrent_contents c WHERE c.info_hash=t.info_hash)
+ AND NOT EXISTS(SELECT 1 FROM processor_reprocess_requests r WHERE r.info_hash=t.info_hash AND r.state='waiting_core')
+ ORDER BY t.info_hash LIMIT $2`, after, s.cfg.ScanBatch-len(hashes))
+	if e != nil {
+		return 0, e
+	}
+	normalCount := 0
+	for rows.Next() {
+		var h []byte
+		if e = rows.Scan(&h); e != nil {
+			rows.Close()
+			return 0, e
+		}
+		normalCount++
+		if !priority[string(h)] {
+			hashes = append(hashes, h)
+		}
 	}
 	rows.Close()
 	if e = rows.Err(); e != nil {
@@ -84,15 +114,30 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 	}
 	admitted := 0
 	for _, h := range hashes {
-		after = h
+		if !priority[string(h)] {
+			after = h
+		}
+		if !admittedByPolicy(h, plan.Admission) {
+			continue
+		}
 		src, raw, err := readSource(ctx, tx, h, false)
 		if err != nil {
 			return 0, err
 		}
 		if !src.admitted() {
+			if priority[string(h)] {
+				if _, err = tx.Exec(ctx, `UPDATE processor_reprocess_requests SET state='held',state_reason='current_authority_denied',updated_at=clock_timestamp() WHERE info_hash=$1 AND state='ready'`, h); err != nil {
+					return 0, err
+				}
+			}
 			continue
 		}
 		if s.names != nil && !s.names.Evaluate(src.torrent(hex.EncodeToString(h)).InfoHash, src.Name).Eligible {
+			if priority[string(h)] {
+				if _, err = tx.Exec(ctx, `UPDATE processor_reprocess_requests SET state='held',state_reason='current_authority_denied',updated_at=clock_timestamp() WHERE info_hash=$1 AND state='ready'`, h); err != nil {
+					return 0, err
+				}
+			}
 			continue
 		}
 		revision, pipeline := digest(raw), digest(plan)
@@ -117,11 +162,18 @@ func (s *Store) Scan(ctx context.Context) (int, error) {
 			return 0, err
 		}
 		admitted += int(tag.RowsAffected())
+		if tag.RowsAffected() == 1 {
+			_, err = tx.Exec(ctx, `UPDATE processor_reprocess_requests SET state='queued',result_job_id=$2,updated_at=clock_timestamp()
+ WHERE info_hash=$1 AND state='ready'`, h, id)
+			if err != nil {
+				return 0, err
+			}
+		}
 		if admitted >= capacity {
 			break
 		}
 	}
-	if len(hashes) == 0 {
+	if normalCount == 0 && len(priority) == 0 {
 		after = []byte{}
 	}
 	_, e = tx.Exec(ctx, `UPDATE processor_control SET scan_after=$1 WHERE singleton`, after)
@@ -147,7 +199,11 @@ func (s *Store) Claim(ctx context.Context) (*Lease, error) {
 	if e = tx.QueryRow(ctx, `SELECT epoch FROM processor_control WHERE singleton FOR UPDATE`).Scan(&epoch); e != nil {
 		return nil, e
 	}
-	_, e = tx.Exec(ctx, `UPDATE processor_jobs SET state='queued',lease_until=NULL,reason='lease_expired' WHERE state='leased' AND lease_until<clock_timestamp()`)
+	_, e = tx.Exec(ctx, `WITH expired AS (
+ UPDATE processor_jobs SET state='queued',lease_until=NULL,reason='lease_expired'
+ WHERE state='leased' AND lease_until<clock_timestamp() RETURNING job_id,lease_generation)
+ UPDATE processor_attempts a SET finished_at=clock_timestamp(),outcome='failed',reason='lease_expired'
+ FROM expired j WHERE j.job_id=a.job_id AND j.lease_generation=a.lease_generation AND a.finished_at IS NULL`)
 	if e != nil {
 		return nil, e
 	}
@@ -367,6 +423,13 @@ func (s *Store) Finish(ctx context.Context, l Lease, j v1.Job, r v1.Result, disp
 	if e != nil {
 		return e
 	}
+	if state == "completed" || state == "stale" {
+		_, e = tx.Exec(ctx, `UPDATE processor_reprocess_requests SET state='settled',state_reason=$2,updated_at=clock_timestamp()
+ WHERE result_job_id=$1 AND state='queued'`, l.ID, state+":"+string(r.Outcome))
+		if e != nil {
+			return e
+		}
+	}
 	return tx.Commit(ctx)
 }
 func (s *Store) abandon(ctx context.Context, l Lease, reason string) {
@@ -374,8 +437,46 @@ func (s *Store) abandon(ctx context.Context, l Lease, reason string) {
 	if e != nil {
 		return
 	}
-	_, _ = p.Exec(ctx, `UPDATE processor_jobs SET state='stale',reason=$3,lease_until=NULL,finished_at=clock_timestamp() WHERE job_id=$1 AND state='leased' AND lease_generation=$2`, l.ID, l.Generation, reason)
+	_, _ = p.Exec(ctx, `WITH abandoned AS (
+ UPDATE processor_jobs SET state='stale',reason=$3,lease_until=NULL,finished_at=clock_timestamp()
+ WHERE job_id=$1 AND state='leased' AND lease_generation=$2 RETURNING job_id,lease_generation)
+ UPDATE processor_attempts a SET finished_at=clock_timestamp(),outcome='unknown',reason='source_or_input_invalid'
+ FROM abandoned j WHERE a.job_id=j.job_id AND a.lease_generation=j.lease_generation AND a.finished_at IS NULL`, l.ID, l.Generation, reason)
 }
+
+// A preparation failure is local work, not a dispatched service attempt. Keep
+// its bounded retry counter separate from plugin outcomes and retain the input.
+func (s *Store) failPreparation(ctx context.Context, l Lease) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	var epoch int64
+	if err = tx.QueryRow(ctx, `SELECT epoch FROM processor_control WHERE singleton FOR SHARE`).Scan(&epoch); err != nil {
+		return err
+	}
+	if epoch != l.Epoch {
+		return ErrStale
+	}
+	tag, err := tx.Exec(ctx, `UPDATE processor_jobs SET
+ preparation_failures=preparation_failures+1,
+ state=CASE WHEN preparation_failures+1 >= $3 THEN 'failed' ELSE 'deferred' END,
+ outcome='failed',reason='preparation_failed',lease_until=NULL,
+ available_at=clock_timestamp()+interval '1 second'*(1 << LEAST(preparation_failures,4)),
+ finished_at=CASE WHEN preparation_failures+1 >= $3 THEN clock_timestamp() END
+ WHERE job_id=$1 AND state='leased' AND lease_generation=$2 AND lease_until>clock_timestamp()`, l.ID, l.Generation, s.cfg.MaxAttempts)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrStale
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) RunOne(ctx context.Context) (bool, error) {
 	l, e := s.Claim(ctx)
 	if e != nil || l == nil {
@@ -385,8 +486,12 @@ func (s *Store) RunOne(ctx context.Context) (bool, error) {
 	defer c()
 	j, e := s.Prepare(bounded, *l)
 	if e != nil {
-		s.abandon(ctx, *l, "source_or_input_invalid")
-		return true, e
+		if errors.Is(e, ErrStale) || errors.Is(e, pgx.ErrNoRows) {
+			s.abandon(ctx, *l, "source_changed")
+		} else if recordErr := s.failPreparation(ctx, *l); recordErr != nil {
+			e = errors.Join(e, recordErr)
+		}
+		return true, fmt.Errorf("prepare processor job: %w", e)
 	}
 	r := v1.Result{Binding: j.Binding, Outcome: v1.Failed, Reasons: []string{"retry_exhausted"}, Evidence: []v1.Evidence{}}
 	dispatched := l.StepAttempts < s.cfg.MaxAttempts

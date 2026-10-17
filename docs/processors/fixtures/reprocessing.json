@@ -1,0 +1,13 @@
+{
+  "contract": "bitagent.processors.reprocessing.v1",
+  "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "origin_job_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "expected_pipeline_revision": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "reason": "synthetic_review",
+  "state": "waiting_core",
+  "state_reason": "",
+  "core_job_id": "00000000-0000-0000-0000-000000000001",
+  "result_job_id": null,
+  "created_at": "2026-10-16T00:00:00Z",
+  "updated_at": "2026-10-16T00:00:00Z"
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sync"
 
 	"github.com/spencercnorton/bitagent/internal/anime"
@@ -74,7 +75,14 @@ func (e MissingHashesError) Error() string {
 	return fmt.Sprintf("missing %d info hashes", len(e.InfoHashes))
 }
 
+var reprocessRequestID = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 func (c processor) Process(ctx context.Context, params MessageParams) error {
+	if params.ReprocessRequestID != "" && (!reprocessRequestID.MatchString(params.ReprocessRequestID) ||
+		len(params.InfoHashes) != 1 || params.ClassifyMode != ClassifyModeDefault || params.SkipContentFilter ||
+		params.ClassifierWorkflow != "" || len(params.ClassifierFlags) != 0) {
+		return errors.New("invalid audited reprocessing message")
+	}
 	if c.namePolicy.Enabled() {
 		hashes, err := c.admitNames(ctx, params.InfoHashes)
 		if err != nil {
@@ -193,12 +201,20 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 
 			if classifyErr != nil {
 				for _, old := range sourceTorrent.Contents {
-					coreReceipts = append(coreReceipts, processingstate.Receipt{Torrent: sourceTorrent, ContentID: old.ID, Outcome: "deferred", Processing: "deferred"})
+					coreReceipts = append(coreReceipts, processingstate.Receipt{ReprocessRequestID: params.ReprocessRequestID, Torrent: sourceTorrent, ContentID: old.ID, Outcome: "deferred", Processing: "deferred"})
 				}
 				if errors.Is(classifyErr, namepolicy.ErrExcluded) {
 					return
 				}
 				if errors.Is(classifyErr, classification.ErrDeleteTorrent) {
+					if params.ReprocessRequestID != "" {
+						paths := make([]string, 0, len(torrent.Files))
+						for _, file := range torrent.Files {
+							paths = append(paths, file.Path)
+						}
+						c.csamExporter.Record(ctx, torrent.InfoHash, torrent.Name, paths)
+						return // retain the source and deferred receipt; never remove it
+					}
 					infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
 					deleteObservations = append(deleteObservations, deleteObservation{cl.ContentType, classifyErr})
 					filePathsForEvidence := make([]string, 0, len(torrent.Files))
@@ -251,6 +267,12 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 						c.contentFilterMetrics.Observe(d)
 					}
 					if !d.Allow {
+						if params.ReprocessRequestID != "" {
+							for _, old := range sourceTorrent.Contents {
+								coreReceipts = append(coreReceipts, processingstate.Receipt{ReprocessRequestID: params.ReprocessRequestID, Torrent: sourceTorrent, ContentID: old.ID, Outcome: "deferred", Processing: "deferred"})
+							}
+							return
+						}
 						infoHashesToDelete = append(infoHashesToDelete, torrent.InfoHash)
 						deleteReasons = append(deleteReasons, "content_filter")
 						return
@@ -268,7 +290,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 				}
 
 				tcs = append(tcs, torrentContent)
-				coreReceipts = append(coreReceipts, processingstate.Receipt{Torrent: sourceTorrent, ContentID: torrentContent.InferID(), Outcome: matchTrace.Outcome(cl.Content != nil), Processing: "completed"})
+				coreReceipts = append(coreReceipts, processingstate.Receipt{ReprocessRequestID: params.ReprocessRequestID, Torrent: sourceTorrent, ContentID: torrentContent.InferID(), Outcome: matchTrace.Outcome(cl.Content != nil), Processing: "completed"})
 				if cl.Preserved != nil {
 					preserved[torrent.InfoHash] = cl.Preserved
 				}
@@ -299,6 +321,7 @@ func (c processor) Process(ctx context.Context, params MessageParams) error {
 		}
 
 		republishJob, republishJobErr := NewQueueJob(MessageParams{
+			ReprocessRequestID: params.ReprocessRequestID,
 			InfoHashes:         failedHashes,
 			ClassifyMode:       params.ClassifyMode,
 			ClassifierWorkflow: workflowName,

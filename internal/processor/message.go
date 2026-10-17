@@ -20,6 +20,9 @@ const (
 )
 
 type MessageParams struct {
+	// ReprocessRequestID links a core-owned audit request. Such requests use
+	// ordinary matching and retain catalogue rows on a destructive policy verdict.
+	ReprocessRequestID string           `json:"ReprocessRequestID,omitempty"`
 	ClassifyMode       ClassifyMode     `json:"ClassifyMode,omitempty"`
 	ClassifierWorkflow string           `json:"ClassifierWorkflow,omitempty"`
 	ClassifierFlags    classifier.Flags `json:"ClassifierFlags,omitempty"`

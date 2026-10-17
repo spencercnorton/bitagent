@@ -41,10 +41,11 @@ func (t *Trace) Outcome(matched bool) string {
 }
 
 type Receipt struct {
-	Processing string
-	Torrent    model.Torrent
-	ContentID  string
-	Outcome    string
+	ReprocessRequestID string
+	Processing         string
+	Torrent            model.Torrent
+	ContentID          string
+	Outcome            string
 }
 type Recorder interface {
 	RecordCore(context.Context, []Receipt)

@@ -42,6 +42,49 @@ func (s *Store) Apply(e *gin.Engine) error {
 		}
 		c.JSON(200, status)
 	})
+	g.GET("/capabilities", func(c *gin.Context) {
+		c.JSON(200, v1.OperationsCapabilities{Contract: v1.OperationsContract, Features: map[string]string{
+			"terminal_attempt_window": "latest-500-v1", "admission": v1.AdmissionContract,
+			"terminal_attempt_prefix": "complete-startup-prefix-v1",
+			"job_export":              v1.JobExportContract,
+			"reprocessing":            v1.ReprocessingContract,
+			"preparation_recovery":    "bounded-local-retries-v1",
+		}})
+	})
+	g.GET("/admission", func(c *gin.Context) {
+		p, err := s.Admission(c.Request.Context())
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, p)
+	})
+	g.PUT("/admission", func(c *gin.Context) {
+		var w v1.AdmissionWrite
+		if !body(c, &w) {
+			return
+		}
+		p, err := s.SetAdmission(c.Request.Context(), w)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, p)
+	})
+	g.GET("/admission/history", func(c *gin.Context) {
+		before, err := strconv.ParseInt(c.DefaultQuery("before", "0"), 10, 64)
+		limit, limitErr := strconv.Atoi(c.DefaultQuery("limit", "50"))
+		if err != nil || limitErr != nil {
+			apiError(c, ErrControl)
+			return
+		}
+		history, err := s.AdmissionHistory(c.Request.Context(), before, limit)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, history)
+	})
 	g.GET("/registry", func(c *gin.Context) {
 		status, err := s.Status(c.Request.Context())
 		if err != nil {
@@ -115,6 +158,52 @@ func (s *Store) Apply(e *gin.Engine) error {
 		}
 		c.JSON(200, gin.H{"job_id": c.Param("job_id"), "state": state})
 	})
+	g.GET("/jobs/:job_id/export", func(c *gin.Context) {
+		export, err := s.ExportJob(c.Request.Context(), c.Param("job_id"))
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		c.JSON(200, export)
+	})
+	g.POST("/jobs/:job_id/reprocess", func(c *gin.Context) {
+		var w v1.ReprocessWrite
+		if !body(c, &w) {
+			return
+		}
+		status, err := s.Reprocess(c.Request.Context(), c.Param("job_id"), w)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, status)
+	})
+	g.GET("/reprocessing/:request_id", func(c *gin.Context) {
+		status, err := s.Reprocessing(c.Request.Context(), c.Param("request_id"))
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, status)
+	})
+	g.GET("/reprocessing/:request_id/export", func(c *gin.Context) {
+		audit, err := s.ExportReprocessing(c.Request.Context(), c.Param("request_id"))
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.Header("Cache-Control", "no-store")
+		c.JSON(200, audit)
+	})
+	g.POST("/reprocessing/:request_id/cancel", func(c *gin.Context) {
+		status, err := s.CancelReprocessing(c.Request.Context(), c.Param("request_id"))
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		c.JSON(200, status)
+	})
 	return nil
 }
 func body(c *gin.Context, v any) bool {
@@ -141,6 +230,9 @@ func apiError(c *gin.Context, e error) {
 	}
 	if errors.Is(e, errCursor) {
 		code, reason = 400, "invalid_cursor"
+	}
+	if errors.Is(e, errExportLimit) {
+		code, reason = 413, "export_limit"
 	}
 	c.JSON(code, gin.H{"error": reason})
 }
@@ -188,7 +280,7 @@ func (s *Store) Jobs(ctx context.Context, limit int, cursor, processor string) (
 		return out, e
 	}
 	// Filtering is performed before LIMIT and may match any step in a pipeline.
-	rows, e := p.Query(ctx, `SELECT job_id,input_revision,pipeline_revision,state,step,attempts,created_at,available_at,lease_until,outcome,reason,plan FROM processor_jobs WHERE (created_at,job_id)<($1,$2) AND ($3='' OR EXISTS(SELECT 1 FROM jsonb_array_elements(plan->'steps') st WHERE st->'entry'->>'id'=$3)) ORDER BY created_at DESC,job_id DESC LIMIT $4`, before, last, processor, limit+1)
+	rows, e := p.Query(ctx, `SELECT job_id,input_revision,pipeline_revision,state,step,attempts,preparation_failures,created_at,available_at,lease_until,outcome,reason,plan FROM processor_jobs WHERE (created_at,job_id)<($1,$2) AND ($3='' OR EXISTS(SELECT 1 FROM jsonb_array_elements(plan->'steps') st WHERE st->'entry'->>'id'=$3)) ORDER BY created_at DESC,job_id DESC LIMIT $4`, before, last, processor, limit+1)
 	if e != nil {
 		return out, e
 	}
@@ -199,7 +291,7 @@ func (s *Store) Jobs(ctx context.Context, limit int, cursor, processor string) (
 		var created, available time.Time
 		var lease *time.Time
 		var raw []byte
-		if e = rows.Scan(&j.JobID, &j.InputRevision, &j.PipelineRevision, &j.State, &step, &j.Attempts, &created, &available, &lease, &j.Outcome, &j.Reason, &raw); e != nil {
+		if e = rows.Scan(&j.JobID, &j.InputRevision, &j.PipelineRevision, &j.State, &step, &j.Attempts, &j.PreparationFailures, &created, &available, &lease, &j.Outcome, &j.Reason, &raw); e != nil {
 			return out, e
 		}
 		if len(out.Items) == limit {

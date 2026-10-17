@@ -91,6 +91,7 @@ type JobSummary struct {
 	Processor           Identity `json:"processor"`
 	ExecutionGeneration int64    `json:"execution_generation"`
 	Attempts            int      `json:"attempts"`
+	PreparationFailures int      `json:"preparation_failures,omitempty"`
 	CreatedAt           string   `json:"created_at"`
 	AvailableAt         string   `json:"available_at"`
 	LeaseUntil          *string  `json:"lease_until"`

@@ -63,7 +63,6 @@ func fixtureAt(t *testing.T, version int64) (*Store, *pgxpool.Pool, *goose.Provi
 		_ = admin.Close(ctx)
 	})
 	conf := NewDefaultConfig()
-	conf.RequestTimeout = 150 * time.Millisecond
 	conf.MaxAttempts = 2
 	conf.Concurrency = 1
 	s, e := NewStore(conf, lazy.New(func() (*pgxpool.Pool, error) { return pool, nil }), "synthetic-core-v1")
@@ -140,7 +139,12 @@ func TestPostgresZeroPluginsAndDeterministicApplication(t *testing.T) {
 	require.NoError(t, e)
 	require.Empty(t, status.Processors)
 	require.Equal(t, "ready", status.CoreReadiness)
-	a := newService(t, "alpha", []v1.Stage{v1.Classify}, func(j v1.Job) v1.Result { return result(j, "movie") })
+	a := newService(t, "alpha", []v1.Stage{v1.Classify}, func(j v1.Job) v1.Result {
+		// A healthy response may exceed the fault test's transport deadline.
+		// Ordinary database work and requests use the production request budget.
+		time.Sleep(200 * time.Millisecond)
+		return result(j, "movie")
+	})
 	register(t, s, a)
 	n, e = s.Scan(testContext)
 	require.NoError(t, e)
@@ -236,6 +240,11 @@ func TestPostgresFailuresAreBoundedAndNeverJunk(t *testing.T) {
 				return result(j, "movie")
 			})
 			register(t, s, a)
+			if behavior == "timeout" {
+				// Isolate the deliberately short deadline to HTTP fault injection;
+				// it must not expire while preparing the job in PostgreSQL.
+				s.transport = NewTransport(150 * time.Millisecond)
+			}
 			if behavior == "crash" {
 				a.server.Close()
 			}
@@ -258,6 +267,13 @@ func TestPostgresFailuresAreBoundedAndNeverJunk(t *testing.T) {
 				require.Equal(t, "deferred", outcome)
 			} else {
 				require.Equal(t, "failed", outcome)
+			}
+			if behavior == "timeout" {
+				require.Equal(t, 2, attempts)
+				require.EqualValues(t, 2, a.calls.Load())
+				var timedOut int
+				require.NoError(t, p.QueryRow(testContext, `SELECT count(*) FROM processor_attempts WHERE outcome='failed' AND reason='transport_failed'`).Scan(&timedOut))
+				require.Equal(t, 2, timedOut)
 			}
 			var kept int
 			require.NoError(t, p.QueryRow(testContext, `SELECT count(*) FROM torrent_contents WHERE info_hash=$1 AND content_type='movie'`, h).Scan(&kept))

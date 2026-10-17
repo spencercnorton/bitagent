@@ -29,10 +29,23 @@ Model credentials never enter this API or the core configuration.
   participant before pagination. Summaries identify the current step (last step
   when terminal), including processor identity and execution_generation. Attempts
   are pipeline totals, not counts for an individual stage. Job summaries contain job_id, input_revision,
-  pipeline_revision, state, stage, processor_id, attempts, created_at,
+  pipeline_revision, state, stage, processor_id, attempts, preparation_failures, created_at,
   available_at, lease_until, outcome and reason. Null timestamps are unknown.
 - `POST /jobs/:job_id/cancel` is idempotent; returns `{job_id, state:"canceled"}`
   for active jobs. Completed jobs return their actual terminal state.
+- `GET /capabilities` returns `bitagent.processors.operations.v1` and a feature
+  map. Negotiate extensions using their exact advertised contract. A 404 from
+  an older core means unsupported; never emulate an unavailable control by
+  editing registry configuration or sampling a jobs page.
+- `GET /admission` and `PUT /admission` expose the versioned whole-pipeline
+  cohort policy. `GET /admission/history?before=N&limit=50` returns its append-only
+  audit, newest first, at most 100 entries. `next_before=0` ends pagination.
+  See [operational controls](operations.md) for the write and sampling contract.
+- `GET /jobs/:job_id/export` captures retained core evidence with explicit
+  coverage gaps. `POST /jobs/:job_id/reprocess` enqueues an audited ordinary core
+  pass before optional work. Read, export and cancel these requests through
+  `/reprocessing/:request_id`, `/export` and `/cancel`; the
+  [operational controls contract](operations.md) defines their bounds/states.
 
 Registry operations are synchronous and bounded, so there is no asynchronous
 operation queue to poll. 400 denotes invalid input, 401 unauthorized, 404 absent,
@@ -58,6 +71,59 @@ unavailable_reason. Zero is only a measurement. Standard per-processor keys:
 `cpu_milliseconds`. Core counters are over retained durable execution history,
 not a hidden lifetime accuracy population. Service resource measurements carry
 the service observation window. Unsupported measurements are null.
+
+The `technical_failure_window_*` measurements use exactly the latest 500
+terminal attempts for the current **execution generation**, ordered by
+`finished_at DESC, job_id DESC, lease_generation DESC`. They never derive a
+denominator from the jobs page or mix replacement processor versions:
+
+- `attempts` is 500 only when a complete retained population is proved.
+- `failures` counts technical `failed` outcomes only when the entire population
+  can be classified. Semantic abstention, policy exclusion and completed
+  unsuccessful matches remain distinct.
+- `deferred` counts work deferred by the service. Its free-form reason cannot
+  prove whether it represents scheduling or a technical dependency failure.
+  When nonzero, `failures` is null with `deferred_attempts_unclassified`.
+  The stored deferred outcome is never rewritten as success or failure.
+- `unknown` counts interrupted attempts with no settled result. When nonzero,
+  `failures` is null with `unresolved_attempt_outcomes`, never a success estimate.
+- `progress` counts retained terminal attempts after the completeness floor,
+  capped at 500. It is collection progress, not a smaller accepted denominator.
+- `unfinished` counts retained attempts that have not reached a terminal state;
+  they are outside this terminal population and are not inferred successes.
+
+These keys have the full `technical_failure_window_` prefix. Missing population
+produces null with `insufficient_attempt_history`; a retention gap produces
+`retention_history_incomplete`. Migration establishes a conservative floor at
+upgrade time because older retention cannot be reconstructed. Job pruning raises
+that floor to the newest removed attempt; the window becomes usable again only
+after 500 newer terminal attempts. This can conservatively withhold measurements
+for other processors. No history is fabricated to fill a gap. Expired dispatched
+leases settle as technical failure; cancellation, changed registration and stale
+input settle as unknown interruption. A request that was never dispatched does
+not acquire an attempt. These are operational observations, not accuracy scores
+or automatic promotion decisions; consumers must also assess unfinished work,
+queue age, independent adverse events and their own approved rollout criteria.
+Local preparation failures have a separate bounded counter in job summaries
+and exports, plus `queue.preparation_failures` over retained jobs. They never
+manufacture dispatch history. See [preparation recovery](operations.md#local-preparation-recovery)
+for feature negotiation, retry bounds and terminal states.
+
+When negotiated as `terminal_attempt_prefix: complete-startup-prefix-v1`, the
+separate `technical_failure_prefix_attempts`, `failures`, `unknown`, `deferred`
+and `unfinished` keys describe a **complete 0–499 terminal-attempt startup
+population**. They require a recorded execution-generation start strictly newer
+than the retention floor, and no retained terminal attempt before that start.
+Unknown creation time yields null/`execution_start_unknown`; any possible
+retention gap yields null/`retention_history_incomplete`. At 500 terminal attempts
+these prefix fields become null/`fixed_window_population_reached`; use the full
+window instead. Deferred/unknown outcomes also make the prefix failure count
+unavailable exactly as above. An explicit fresh prefix can be 0/0/0, with
+unfinished work counted separately; this is not a 500-attempt rate or pass.
+Operators may use it only under an explicit bounded initial-collection policy,
+while respecting all independent adverse-event and scientific gates. The core
+never supplies that authorization. Migration leaves old execution start times
+unknown; only a new execution generation establishes a provable boundary.
 
 Global queue keys are queued, leased, deferred, failed, canceled, stale,
 completed, oldest_wait_seconds and capacity_remaining. Completed job state means
