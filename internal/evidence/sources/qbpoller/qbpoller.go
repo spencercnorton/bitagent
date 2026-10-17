@@ -9,6 +9,10 @@
 // torrent come from a private tracker?" which is load-bearing for
 // later-stage gates (e.g. the LLM classifier must never see private
 // content).
+//
+// Each cycle also keeps the piece hashes of held public torrents that an
+// *arr grabbed or imported, exported from qB and verified against the info
+// hash, so those releases stay byte-verifiable after qB drops them.
 package qbpoller
 
 import (
@@ -26,6 +30,8 @@ import (
 	"time"
 
 	"github.com/spencercnorton/bitagent/internal/evidence"
+	"github.com/spencercnorton/bitagent/internal/protocol"
+	"github.com/spencercnorton/bitagent/internal/protocol/metainfo"
 	"github.com/spencercnorton/bitagent/internal/worker"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -194,6 +200,57 @@ func (p *poller) pollOnce(ctx context.Context, inst evidence.ConfiguredQBInstanc
 			}
 		}
 	}
+
+	p.retainPieces(ctx, client, torrents, log)
+}
+
+// retainPieces stores the piece hashes of held torrents that an *arr grabbed
+// or imported, so a release stays verifiable against its downloaded file after
+// the client and the swarm let it go. It runs after this cycle's category
+// evidence is stored, so the privacy gate sees current categories.
+func (p *poller) retainPieces(ctx context.Context, c *client, torrents []qbTorrent, log *zap.SugaredLogger) {
+	held := make([][]byte, 0, len(torrents))
+	for _, t := range torrents {
+		if ih, err := hex.DecodeString(t.Hash); err == nil && len(ih) == 20 {
+			held = append(held, ih)
+		}
+	}
+	missing, err := p.store.MissingPieces(ctx, held)
+	if err != nil {
+		log.Warnw("qbpoller pieces candidates", "err", err)
+		return
+	}
+	retained := 0
+	for _, ih := range missing {
+		switch err := p.retainOne(ctx, c, ih); {
+		case err == nil:
+			retained++
+		case !errors.Is(err, errNoMetadata): // metadata still downloading: next cycle
+			log.Warnw("qbpoller retain pieces", "hash", hex.EncodeToString(ih), "err", err)
+		}
+	}
+	if retained > 0 {
+		log.Infow("qbpoller retained piece hashes", "count", retained)
+	}
+}
+
+func (p *poller) retainOne(ctx context.Context, c *client, infoHash []byte) error {
+	id, err := protocol.NewIDFromByteSlice(infoHash)
+	if err != nil {
+		return err
+	}
+	torrent, err := c.exportTorrent(ctx, id.String())
+	if err != nil {
+		return err
+	}
+	info, err := metainfo.ParseTorrentFileInfo(id, torrent)
+	if err != nil {
+		return err
+	}
+	if info.Private != nil && *info.Private {
+		return errPrivateTorrent
+	}
+	return p.store.SavePieces(ctx, infoHash, info.PieceLength, info.Pieces)
 }
 
 // persist runs Insert with the standard 3s per-row timeout and
@@ -388,6 +445,39 @@ func checkLoginResponse(status int, body []byte) error {
 		return fmt.Errorf("qb login: unexpected body %q", b)
 	}
 	return nil
+}
+
+var (
+	// errNoMetadata is qB's 409 for a torrent it cannot export yet, normally
+	// a magnet whose metadata is still downloading.
+	errNoMetadata = errors.New("qb torrents/export: metadata not available yet")
+	// errPrivateTorrent refuses to keep pieces of a torrent whose own info
+	// dictionary is private, whatever the catalogue row says.
+	errPrivateTorrent = errors.New("qb torrents/export: torrent is private")
+)
+
+// exportTorrent returns the .torrent file qB holds for hash.
+func (c *client) exportTorrent(ctx context.Context, hash string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.baseURL.String()+"/api/v2/torrents/export?hash="+url.QueryEscape(hash), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusConflict:
+		return nil, errNoMetadata
+	default:
+		return nil, fmt.Errorf("qb torrents/export: http %d", resp.StatusCode)
+	}
+	// A .torrent is its info dictionary plus a few announce fields; anything
+	// past twice the info cap is truncated and then fails to parse.
+	return io.ReadAll(io.LimitReader(resp.Body, 2*metainfo.MaxMetaInfoBytes))
 }
 
 func (c *client) listTorrents(ctx context.Context) ([]qbTorrent, error) {
