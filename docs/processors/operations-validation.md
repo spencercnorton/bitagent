@@ -1,6 +1,6 @@
 # Operational controls validation
 
-Implementation source revision: `f4a41a61e56c342cd01b85c95b1a5bcd52a27551`.
+Historical measurement revision: `f4a41a61e56c342cd01b85c95b1a5bcd52a27551`.
 The [machine-readable measurements](operations-validation.json) retain all
 samples and their scope. Earlier [5.0 validation](validation.md) remains a
 separate historical record.
@@ -22,6 +22,21 @@ implementation. Following the final startup-prefix addition, affected processor,
 core processing, protocol and migration race suites passed again. The final
 expiry regression, `go vet ./...`, public-content tests and headless/dependency
 boundary checks also passed.
+
+Preparation recovery implementation revision:
+`9f69694361d105f93e1d23362db3c6c344589180` adds schema 66 and bounded local
+preparation retries. It does not change the measured crawler persistence path;
+the timings above remain the earlier run, not a new performance measurement.
+A real PostgreSQL table lock reproduces the previous bug: a preparation deadline
+incorrectly retired unchanged input as stale. Five repeated race-enabled runs
+of the corrected preparation, healthy-service, transport-fault and stale-result
+tests passed. They verify restart recovery with the same input, finite exhaustion,
+cancellation, retained failure evidence and no invented service attempts or
+catalogue applications. The normal test fixture uses production request bounds;
+the deliberate 150 ms deadline applies only to the HTTP timeout injection,
+whose two actual dispatches and failed receipts are asserted separately.
+The subsequent complete Go race suite with disposable PostgreSQL passed for
+all packages, including the new preparation recovery and migration checks.
 
 The targeted tests cover:
 

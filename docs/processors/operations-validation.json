@@ -68,5 +68,15 @@
     "go vet ./... passed",
     "public-content/headless/dependency boundary checks passed"
   ],
-  "scope": "Synthetic persistence/correctness and protocol qualification only; no live DHT throughput, model accuracy, production scale or activation claim. Hosted checks, immutable release artifacts, consumer acceptance and production observations remain separate gates."
+  "scope": "Synthetic persistence/correctness and protocol qualification only; no live DHT throughput, model accuracy, production scale or activation claim. Hosted checks, immutable release artifacts, consumer acceptance and production observations remain separate gates.",
+  "preparation_recovery_validation": {
+    "revision": "9f69694361d105f93e1d23362db3c6c344589180",
+    "schema_version": 66,
+    "regression": "Actual PostgreSQL lock makes the prior error branch incorrectly retire unchanged input as stale.",
+    "targeted": "Five race-enabled repetitions passed for preparation timeout/restart, bounded exhaustion, canceled lease, healthy service, transport faults and stale/duplicate handling.",
+    "measurement_scope": "Earlier crawler samples above are retained unchanged; no new throughput claim. The preparation failure path does not change the measured crawler persistence path.",
+    "dispatch_scope": "Preparation failures retain a separate counter and never add dispatched attempts, results, applications or exclusions.",
+    "remaining_gates": "Independent current consumer acceptance, exact-head hosted CI, immutable release artifacts and production qualification.",
+    "full_suite": "Complete go test -race -p 1 -count=1 -timeout=15m ./... passed with disposable PostgreSQL, including preparation/migration regressions."
+  }
 }
