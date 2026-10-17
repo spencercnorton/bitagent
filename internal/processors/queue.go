@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -442,6 +443,40 @@ func (s *Store) abandon(ctx context.Context, l Lease, reason string) {
  UPDATE processor_attempts a SET finished_at=clock_timestamp(),outcome='unknown',reason='source_or_input_invalid'
  FROM abandoned j WHERE a.job_id=j.job_id AND a.lease_generation=j.lease_generation AND a.finished_at IS NULL`, l.ID, l.Generation, reason)
 }
+
+// A preparation failure is local work, not a dispatched service attempt. Keep
+// its bounded retry counter separate from plugin outcomes and retain the input.
+func (s *Store) failPreparation(ctx context.Context, l Lease) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	tx, err := s.begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer rollback(tx)
+	var epoch int64
+	if err = tx.QueryRow(ctx, `SELECT epoch FROM processor_control WHERE singleton FOR SHARE`).Scan(&epoch); err != nil {
+		return err
+	}
+	if epoch != l.Epoch {
+		return ErrStale
+	}
+	tag, err := tx.Exec(ctx, `UPDATE processor_jobs SET
+ preparation_failures=preparation_failures+1,
+ state=CASE WHEN preparation_failures+1 >= $3 THEN 'failed' ELSE 'deferred' END,
+ outcome='failed',reason='preparation_failed',lease_until=NULL,
+ available_at=clock_timestamp()+interval '1 second'*(1 << LEAST(preparation_failures,4)),
+ finished_at=CASE WHEN preparation_failures+1 >= $3 THEN clock_timestamp() END
+ WHERE job_id=$1 AND state='leased' AND lease_generation=$2 AND lease_until>clock_timestamp()`, l.ID, l.Generation, s.cfg.MaxAttempts)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrStale
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) RunOne(ctx context.Context) (bool, error) {
 	l, e := s.Claim(ctx)
 	if e != nil || l == nil {
@@ -451,8 +486,12 @@ func (s *Store) RunOne(ctx context.Context) (bool, error) {
 	defer c()
 	j, e := s.Prepare(bounded, *l)
 	if e != nil {
-		s.abandon(ctx, *l, "source_or_input_invalid")
-		return true, e
+		if errors.Is(e, ErrStale) || errors.Is(e, pgx.ErrNoRows) {
+			s.abandon(ctx, *l, "source_changed")
+		} else if recordErr := s.failPreparation(ctx, *l); recordErr != nil {
+			e = errors.Join(e, recordErr)
+		}
+		return true, fmt.Errorf("prepare processor job: %w", e)
 	}
 	r := v1.Result{Binding: j.Binding, Outcome: v1.Failed, Reasons: []string{"retry_exhausted"}, Evidence: []v1.Evidence{}}
 	dispatched := l.StepAttempts < s.cfg.MaxAttempts

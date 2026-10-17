@@ -29,7 +29,7 @@ Model credentials never enter this API or the core configuration.
   participant before pagination. Summaries identify the current step (last step
   when terminal), including processor identity and execution_generation. Attempts
   are pipeline totals, not counts for an individual stage. Job summaries contain job_id, input_revision,
-  pipeline_revision, state, stage, processor_id, attempts, created_at,
+  pipeline_revision, state, stage, processor_id, attempts, preparation_failures, created_at,
   available_at, lease_until, outcome and reason. Null timestamps are unknown.
 - `POST /jobs/:job_id/cancel` is idempotent; returns `{job_id, state:"canceled"}`
   for active jobs. Completed jobs return their actual terminal state.
@@ -104,6 +104,10 @@ input settle as unknown interruption. A request that was never dispatched does
 not acquire an attempt. These are operational observations, not accuracy scores
 or automatic promotion decisions; consumers must also assess unfinished work,
 queue age, independent adverse events and their own approved rollout criteria.
+Local preparation failures have a separate bounded counter in job summaries
+and exports, plus `queue.preparation_failures` over retained jobs. They never
+manufacture dispatch history. See [preparation recovery](operations.md#local-preparation-recovery)
+for feature negotiation, retry bounds and terminal states.
 
 When negotiated as `terminal_attempt_prefix: complete-startup-prefix-v1`, the
 separate `technical_failure_prefix_attempts`, `failures`, `unknown`, `deferred`

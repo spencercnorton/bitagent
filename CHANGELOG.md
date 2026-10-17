@@ -15,6 +15,9 @@
   queue with correlated receipts, current authority checks, idempotent requests,
   cancellation and preserved before-images. Requests cannot delete torrents,
   clear policy restrictions or silently rematch established identities.
+- Retry local processor preparation failures within a separate durable bound;
+  preserve unchanged input and distinguish exhausted technical failure from
+  stale work without inventing plugin dispatches or applications.
 
 ## 5.0.0 — 2026-10-16
 

@@ -21,7 +21,8 @@
     "available_at": "2026-10-16T21:14:16.712681Z",
     "lease_until": null,
     "outcome": "completed",
-    "reason": ""
+    "reason": "",
+    "preparation_failures": 1
   },
   "input": {
     "info_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

@@ -48,6 +48,7 @@ func (s *Store) Apply(e *gin.Engine) error {
 			"terminal_attempt_prefix": "complete-startup-prefix-v1",
 			"job_export":              v1.JobExportContract,
 			"reprocessing":            v1.ReprocessingContract,
+			"preparation_recovery":    "bounded-local-retries-v1",
 		}})
 	})
 	g.GET("/admission", func(c *gin.Context) {
@@ -279,7 +280,7 @@ func (s *Store) Jobs(ctx context.Context, limit int, cursor, processor string) (
 		return out, e
 	}
 	// Filtering is performed before LIMIT and may match any step in a pipeline.
-	rows, e := p.Query(ctx, `SELECT job_id,input_revision,pipeline_revision,state,step,attempts,created_at,available_at,lease_until,outcome,reason,plan FROM processor_jobs WHERE (created_at,job_id)<($1,$2) AND ($3='' OR EXISTS(SELECT 1 FROM jsonb_array_elements(plan->'steps') st WHERE st->'entry'->>'id'=$3)) ORDER BY created_at DESC,job_id DESC LIMIT $4`, before, last, processor, limit+1)
+	rows, e := p.Query(ctx, `SELECT job_id,input_revision,pipeline_revision,state,step,attempts,preparation_failures,created_at,available_at,lease_until,outcome,reason,plan FROM processor_jobs WHERE (created_at,job_id)<($1,$2) AND ($3='' OR EXISTS(SELECT 1 FROM jsonb_array_elements(plan->'steps') st WHERE st->'entry'->>'id'=$3)) ORDER BY created_at DESC,job_id DESC LIMIT $4`, before, last, processor, limit+1)
 	if e != nil {
 		return out, e
 	}
@@ -290,7 +291,7 @@ func (s *Store) Jobs(ctx context.Context, limit int, cursor, processor string) (
 		var created, available time.Time
 		var lease *time.Time
 		var raw []byte
-		if e = rows.Scan(&j.JobID, &j.InputRevision, &j.PipelineRevision, &j.State, &step, &j.Attempts, &created, &available, &lease, &j.Outcome, &j.Reason, &raw); e != nil {
+		if e = rows.Scan(&j.JobID, &j.InputRevision, &j.PipelineRevision, &j.State, &step, &j.Attempts, &j.PreparationFailures, &created, &available, &lease, &j.Outcome, &j.Reason, &raw); e != nil {
 			return out, e
 		}
 		if len(out.Items) == limit {

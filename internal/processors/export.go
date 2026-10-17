@@ -35,10 +35,10 @@ func (s *Store) ExportJob(ctx context.Context, id string) (v1.JobExport, error) 
 	var step int
 	var created, available, captured time.Time
 	var lease *time.Time
-	err = tx.QueryRow(ctx, `SELECT job_id,info_hash,input_revision,pipeline_revision,state,step,attempts,
+	err = tx.QueryRow(ctx, `SELECT job_id,info_hash,input_revision,pipeline_revision,state,step,attempts,preparation_failures,
  created_at,available_at,lease_until,outcome,reason,input,source,plan,prepared_job,results,transaction_timestamp()
  FROM processor_jobs WHERE job_id=$1`, id).Scan(&out.Job.JobID, &hash, &out.Job.InputRevision, &out.Job.PipelineRevision,
-		&out.Job.State, &step, &out.Job.Attempts, &created, &available, &lease, &out.Job.Outcome, &out.Job.Reason,
+		&out.Job.State, &step, &out.Job.Attempts, &out.Job.PreparationFailures, &created, &available, &lease, &out.Job.Outcome, &out.Job.Reason,
 		&input, &out.SourceSnapshot, &out.FrozenPlan, &prepared, &results, &captured)
 	if err != nil {
 		return out, err

@@ -7,10 +7,31 @@ itself. Check `GET /api/processors/v1/capabilities` before using them. Its
 `terminal_attempt_window: latest-500-v1`,
 `terminal_attempt_prefix: complete-startup-prefix-v1`,
 `admission: bitagent.processors.admission.v1`,
-`job_export: bitagent.processors.job-export.v1`, and
-`reprocessing: bitagent.processors.reprocessing.v1`. Unknown features may be ignored;
+`job_export: bitagent.processors.job-export.v1`,
+`reprocessing: bitagent.processors.reprocessing.v1`, and
+`preparation_recovery: bounded-local-retries-v1`. Unknown features may be ignored;
 unknown required versions must fail closed. Existing core status/registry wire
 types remain valid. Absence is not a measured zero or permission to activate.
+
+## Local preparation recovery
+
+Before disclosure, the core rechecks authority and prepares the bounded input.
+A changed or missing source is stale. Other preparation errors, including a
+database deadline, retain the same job and input for bounded retry. A separate
+durable `preparation_failures` counter caps failures across that job at the
+configured `max_attempts`; retry delays are 1, 2, 4 and 8 seconds as applicable.
+Exhaustion leaves state/outcome `failed` and reason `preparation_failed`, with
+no catalogue application or exclusion. Registration changes and cancellation
+invalidate the lease; recovery cannot revive it. A restart retains the counter.
+
+Job summaries and exports include `preparation_failures` when nonzero. Status
+includes `queue.preparation_failures` across current retained jobs and
+`limits.max_preparation_failures`. Negotiate the feature before treating an
+absent job counter as zero. These failures never create a service attempt or
+enter the latest-500/startup-prefix dispatch population. Assess queue failures
+and waiting age alongside service measurements. Raw database errors are not
+stored in public reason fields. The bounded job audit retains the counter and
+last state/reason, not a timestamped event for every local preparation error.
 
 ## Cohort admission
 

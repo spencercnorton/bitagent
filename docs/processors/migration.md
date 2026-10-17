@@ -150,6 +150,11 @@ refuse destructive loss; use a matched backup for binary/schema rollback.
 Schema 65 records execution start times for future generations, permitting a
 separate complete startup prefix before 500 observations. Historical generation
 starts stay null; upgrade does not manufacture an empty successful population.
+Schema 66 retains a separate per-job preparation-failure counter. Existing jobs
+start at zero because no such retry counter existed; this does not reconstruct
+historical failures or change dispatch measurements. Transient preparation
+errors retry without changing input, within the configured job failure bound.
+Its down migration refuses to discard nonzero counters; restore matched state.
 
 After service/worker crashes, expired leases are reclaimed with a larger lease
 generation. Requests reuse frozen semantic inputs and a stable step ID; only the

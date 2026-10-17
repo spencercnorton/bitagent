@@ -65,6 +65,7 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 	out := v1.Status{Contract: v1.StatusContract, ObservedAt: now, CoreReadiness: "ready", Processors: []v1.ProcessorStatus{}, Queue: map[string]v1.Measurement{}, Limits: map[string]int{"concurrency": s.cfg.Concurrency, "queue_capacity": s.cfg.QueueCapacity, "retained_jobs": s.cfg.RetainedJobs, "max_attempts": s.cfg.MaxAttempts, "request_timeout_ms": int(s.cfg.RequestTimeout.Milliseconds())}}
 	out.Limits["reprocessing_pending"] = min(s.cfg.QueueCapacity, 64)
 	out.Limits["reprocessing_retained"] = min(s.cfg.RetainedJobs, 1000)
+	out.Limits["max_preparation_failures"] = s.cfg.MaxAttempts
 	tx, e := s.begin(ctx)
 	if e != nil {
 		return out, e
@@ -166,6 +167,11 @@ func (s *Store) Status(ctx context.Context) (v1.Status, error) {
 		}
 	}
 	var oldest *float64
+	var preparationFailures int64
+	if e = tx.QueryRow(ctx, `SELECT COALESCE(sum(preparation_failures),0) FROM processor_jobs`).Scan(&preparationFailures); e != nil {
+		return out, e
+	}
+	out.Queue["preparation_failures"] = measurement(number(float64(preparationFailures)), "count", now, now, "recorded local preparation failures since schema 66 across current retained jobs; not dispatched attempts", "core_postgres")
 	if e = tx.QueryRow(ctx, `SELECT extract(epoch FROM clock_timestamp()-min(created_at)) FROM processor_jobs WHERE state IN('queued','deferred')`).Scan(&oldest); e != nil {
 		return out, e
 	}
